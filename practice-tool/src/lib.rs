@@ -18,6 +18,7 @@ mod config;
 mod practice_tool;
 mod util;
 mod widgets;
+mod map;
 
 use std::ffi::c_void;
 use std::sync::atomic::Ordering;

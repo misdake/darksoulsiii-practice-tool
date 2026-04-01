@@ -19,6 +19,7 @@ use windows::Win32::UI::Input::XboxController::{XINPUT_GAMEPAD_A, XINPUT_GAMEPAD
 
 use crate::config::{Config, IndicatorType, RadialMenu, Settings};
 use crate::{util, XINPUTGETSTATE};
+use crate::map::MapViewer;
 
 const MAJOR: usize = pkg_version_major!();
 const MINOR: usize = pkg_version_minor!();
@@ -46,6 +47,7 @@ pub(crate) struct PracticeTool {
     pointers: PointerChains,
     version_label: String,
     widgets: Vec<Box<dyn Widget>>,
+    map_viewer: MapViewer,
     radial_menu: Vec<RadialMenu>,
 
     log: Vec<(Instant, String)>,
@@ -189,6 +191,7 @@ impl PracticeTool {
             pointers,
             version_label,
             widgets,
+            map_viewer: Default::default(),
             radial_menu,
             log: Vec::new(),
             log_rx,
@@ -652,7 +655,7 @@ impl PracticeTool {
 }
 
 impl ImguiRenderLoop for PracticeTool {
-    fn before_render(&mut self, ctx: &mut Context, _: &mut dyn RenderContext) {
+    fn before_render(&mut self, ctx: &mut Context, r: &mut dyn RenderContext) {
         self.release_queue.drain(..).for_each(|key| {
             ctx.io_mut().add_key_event(key, false);
         });
@@ -660,6 +663,7 @@ impl ImguiRenderLoop for PracticeTool {
             ctx.io_mut().add_key_event(key, true);
             self.release_queue.push(key);
         });
+        self.map_viewer.before_render(ctx, r);
     }
 
     fn render(&mut self, ui: &mut imgui::Ui) {
@@ -686,6 +690,7 @@ impl ImguiRenderLoop for PracticeTool {
         }
 
         self.render_radial(ui);
+        self.map_viewer.render(ui);
 
         match &self.ui_state {
             UiState::MenuOpen => {
