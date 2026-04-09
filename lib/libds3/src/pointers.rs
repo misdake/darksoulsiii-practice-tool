@@ -84,6 +84,9 @@ pub struct PointerChains {
     pub travel_ptr: usize,
     pub attune_ptr: usize,
     pub xa: u32,
+    pub camera_angle_follow: PointerChain<[f32; 2]>,
+    pub camera_position_follow: PointerChain<[f32; 3]>,
+    pub camera_position_global: PointerChain<[f32; 3]>,
 
     #[allow(unused)]
     pub world_chr_man: usize,
@@ -101,6 +104,7 @@ impl From<BaseAddresses> for PointerChains {
             xa,
             world_chr_man_dbg,
             base_a,
+            base_d,
             base_fps,
             base_hbd,
             menu_man,
@@ -110,6 +114,7 @@ impl From<BaseAddresses> for PointerChains {
             current_target,
             menu_travel,
             menu_attune,
+            camera_position_global,
             ..
         } = b;
 
@@ -359,6 +364,9 @@ impl From<BaseAddresses> for PointerChains {
             current_target: pointer_chain!(current_target),
             no_logo: pointer_chain!(no_logo as _),
             xa: xa as u32,
+            camera_angle_follow: pointer_chain!(base_d, 0x28, 0x60, 0x140),
+            camera_position_follow: pointer_chain!(base_d, 0x28, 0x60, 0x40),
+            camera_position_global: pointer_chain!(camera_position_global),
         }
     }
 }

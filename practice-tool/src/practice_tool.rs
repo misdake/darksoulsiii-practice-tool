@@ -18,8 +18,8 @@ use tracing_subscriber::prelude::*;
 use windows::Win32::UI::Input::XboxController::{XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_STATE};
 
 use crate::config::{Config, IndicatorType, RadialMenu, Settings};
-use crate::{util, XINPUTGETSTATE};
 use crate::map::MapViewer;
+use crate::{util, XINPUTGETSTATE};
 
 const MAJOR: usize = pkg_version_major!();
 const MINOR: usize = pkg_version_minor!();
@@ -186,12 +186,14 @@ impl PracticeTool {
         let (log_tx, log_rx) = crossbeam_channel::unbounded();
         info!("Initialized");
 
+        let map_viewer = MapViewer::new(&pointers);
+
         PracticeTool {
             settings,
             pointers,
             version_label,
             widgets,
-            map_viewer: Default::default(),
+            map_viewer,
             radial_menu,
             log: Vec::new(),
             log_rx,

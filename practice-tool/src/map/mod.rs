@@ -1,31 +1,40 @@
-use std::io::Cursor;
+mod camera_info;
+mod texture;
 
 use hudhook::RenderContext;
-use image::io::Reader;
-use image::{EncodableLayout, RgbaImage};
-use imgui::{Condition, Context, Image, TextureId};
+use imgui::Context;
+use libds3::pointers::PointerChains;
+
+use crate::map::camera_info::CameraInfo;
+use crate::map::texture::Texture;
+
+// all expected sizes in 1080 height.
+const REFERENCE_HEIGHT: f32 = 1080.;
+const RIGHT: f32 = 23.;
+const TOP: f32 = 30.;
+const COMPASS_SIZE: f32 = 192.;
+const COMPASS_HSIZE: f32 = 96.;
+const POINTER_SIZE: f32 = 128.;
+const POINTER_OFFSET: f32 = 10.;
 
 pub struct MapViewer {
-    image: RgbaImage,
-    image_id: Option<TextureId>,
+    compass: Texture,
+    pointer: Texture,
+    camera_info: CameraInfo,
+
+    prev_size: Option<[f32; 2]>,
+    dir: f32,
+    visible: bool,
 }
 
 impl MapViewer {
-    pub fn new() -> Self {
-        let image = Reader::new(Cursor::new(include_bytes!("../../../lib//data/thingken.webp")))
-            .with_guessed_format()
-            .unwrap()
-            .decode()
-            .unwrap()
-            .into_rgba8();
+    pub fn new(pointers: &PointerChains) -> Self {
+        let compass = Texture::new(include_bytes!("compass.png"), None);
+        let pointer = Texture::new(include_bytes!("pointer.png"), None);
 
-        MapViewer { image, image_id: None }
-    }
-}
+        let camera_info = CameraInfo::new(pointers);
 
-impl Default for MapViewer {
-    fn default() -> Self {
-        Self::new()
+        MapViewer { compass, pointer, camera_info, prev_size: None, dir: 0.0, visible: false }
     }
 }
 
@@ -35,30 +44,38 @@ impl MapViewer {
         _ctx: &mut Context,
         render_context: &'a mut dyn RenderContext,
     ) {
-        if self.image_id.is_none() {
-            self.image_id = render_context
-                .load_texture(
-                    self.image.as_bytes(),
-                    self.image.width() as _,
-                    self.image.height() as _,
-                )
-                .ok();
+        // load textures if not loaded
+        self.compass.prepare(render_context);
+        self.pointer.prepare(render_context);
 
-            println!("{:?}", self.image_id);
-        }
+        // read memory and decide dir & visibility
+        let (visible, dir) = self.camera_info.update();
+        self.visible = visible;
+        self.dir = dir;
     }
 
     pub fn render(&mut self, ui: &imgui::Ui) {
-        ui.window("Hello Map")
-            .size([368.0, 568.0], Condition::FirstUseEver)
-            .position([16.0, 16.0], Condition::FirstUseEver)
-            .build(|| {
-                ui.text("Hello!");
+        let size = ui.io().display_size;
+        let scale = size[1] / REFERENCE_HEIGHT;
 
-                if let Some(tex_id) = self.image_id {
-                    Image::new(tex_id, [self.image.width() as f32, self.image.height() as f32])
-                        .build(ui);
-                }
-            });
+        if self.prev_size != Some(size) {
+            let c = COMPASS_SIZE * scale;
+            let p = POINTER_SIZE * scale;
+            self.compass.resize(c, c);
+            self.pointer.resize(p, p);
+
+            self.prev_size = Some(size);
+        }
+
+        if !self.visible {
+            return;
+        }
+
+        let compass_x = size[0] - (RIGHT + COMPASS_HSIZE) * scale;
+        let compass_y = (TOP + COMPASS_HSIZE) * scale;
+        let pointer_x = size[0] - (RIGHT + COMPASS_HSIZE) * scale;
+        let pointer_y = (TOP + COMPASS_HSIZE + POINTER_OFFSET) * scale;
+        self.compass.render(ui, [compass_x, compass_y]);
+        self.pointer.render_rotate(ui, [pointer_x, pointer_y], self.dir);
     }
 }
