@@ -118,6 +118,10 @@ impl From<BaseAddresses> for PointerChains {
             ..
         } = b;
 
+        if camera_position_global == 0 {
+            std::process::exit(1);
+        }
+
         let offs_all_no_damage = 9;
         let offs_player_exterminate = 1;
         let offs_no_goods_consume = match *VERSION {
