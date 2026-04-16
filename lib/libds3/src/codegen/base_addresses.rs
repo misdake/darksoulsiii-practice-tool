@@ -618,5 +618,5 @@ pub const BASE_ADDRESSES_1_15_2: BaseAddresses = BaseAddresses {
     menu_attune: 0xbec519,
     xa: 0x1f90,
     base_fps: 0x479b9f8,
-    camera_position_global: 0,
+    camera_position_global: 0x46C9710,
 };

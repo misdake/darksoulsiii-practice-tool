@@ -1,7 +1,7 @@
 use std::fmt::Display;
 use std::mem::size_of;
 
-use log::debug;
+use log::{debug, warn};
 use windows::Win32::System::LibraryLoader::GetModuleHandleA;
 
 use crate::memedit::*;
@@ -117,6 +117,10 @@ impl From<BaseAddresses> for PointerChains {
             camera_position_global,
             ..
         } = b;
+
+        if camera_position_global == 0 {
+            warn!("Compass camera pointers are unavailable for this game version; disabling compass rendering.");
+        }
 
         let offs_all_no_damage = 9;
         let offs_player_exterminate = 1;
