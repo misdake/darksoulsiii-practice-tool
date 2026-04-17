@@ -220,6 +220,8 @@ dependencies = [
  "imgui",
  "libds3",
  "once_cell",
+ "serde",
+ "toml 0.8.20",
  "tracing-subscriber",
  "windows",
 ]

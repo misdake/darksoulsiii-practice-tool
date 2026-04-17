@@ -15,9 +15,11 @@ name = "libjdsd_dsiii_practice_tool"
 [dependencies]
 tracing-subscriber = "0.3.17"
 image = "0.24.9"
+toml = "0.8.20"
 
 libds3 = { path = "../lib/libds3" }
 
+serde.workspace = true
 hudhook.workspace = true
 imgui.workspace = true
 once_cell.workspace = true
