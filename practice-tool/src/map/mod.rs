@@ -22,7 +22,8 @@ pub struct MapViewer {
     pointer: Texture,
     camera_info: CameraInfo,
 
-    prev_size: Option<[f32; 2]>,
+    direction_offset_degrees: f32,
+    size_scale: f32,
     dir: f32,
     visible: bool,
 }
@@ -34,11 +35,35 @@ impl MapViewer {
 
         let camera_info = CameraInfo::new(pointers);
 
-        MapViewer { compass, pointer, camera_info, prev_size: None, dir: 0.0, visible: false }
+        MapViewer {
+            compass,
+            pointer,
+            camera_info,
+            direction_offset_degrees: 0.0,
+            size_scale: 1.0,
+            dir: 0.0,
+            visible: false,
+        }
     }
 }
 
 impl MapViewer {
+    pub fn direction_offset_degrees(&self) -> f32 {
+        self.direction_offset_degrees
+    }
+
+    pub fn size_scale(&self) -> f32 {
+        self.size_scale
+    }
+
+    pub fn set_direction_offset_degrees(&mut self, value: f32) {
+        self.direction_offset_degrees = value;
+    }
+
+    pub fn set_size_scale(&mut self, value: f32) {
+        self.size_scale = value.max(0.1);
+    }
+
     pub fn before_render<'a>(
         &'a mut self,
         _ctx: &mut Context,
@@ -56,26 +81,25 @@ impl MapViewer {
 
     pub fn render(&mut self, ui: &imgui::Ui) {
         let size = ui.io().display_size;
-        let scale = size[1] / REFERENCE_HEIGHT;
+        let base_scale = size[1] / REFERENCE_HEIGHT;
+        let scale = base_scale * self.size_scale;
 
-        if self.prev_size != Some(size) {
-            let c = COMPASS_SIZE * scale;
-            let p = POINTER_SIZE * scale;
-            self.compass.resize(c, c);
-            self.pointer.resize(p, p);
-
-            self.prev_size = Some(size);
-        }
+        let c = COMPASS_SIZE * scale;
+        let p = POINTER_SIZE * scale;
+        self.compass.resize(c, c);
+        self.pointer.resize(p, p);
 
         if !self.visible {
             return;
         }
 
-        let compass_x = size[0] - (RIGHT + COMPASS_HSIZE) * scale;
-        let compass_y = (TOP + COMPASS_HSIZE) * scale;
-        let pointer_x = size[0] - (RIGHT + COMPASS_HSIZE) * scale;
-        let pointer_y = (TOP + COMPASS_HSIZE + POINTER_OFFSET) * scale;
+        let compass_hsize = COMPASS_HSIZE * scale;
+        let compass_x = size[0] - RIGHT * base_scale - compass_hsize;
+        let compass_y = TOP * base_scale + compass_hsize;
+        let pointer_x = compass_x;
+        let pointer_y = compass_y + POINTER_OFFSET * scale;
+        let direction_offset = self.direction_offset_degrees.to_radians();
         self.compass.render(ui, [compass_x, compass_y]);
-        self.pointer.render_rotate(ui, [pointer_x, pointer_y], self.dir);
+        self.pointer.render_rotate(ui, [pointer_x, pointer_y], self.dir + direction_offset);
     }
 }
