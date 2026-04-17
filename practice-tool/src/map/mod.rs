@@ -2,7 +2,7 @@ mod camera_info;
 mod texture;
 
 use hudhook::RenderContext;
-use imgui::Context;
+use imgui::{Condition, Context, WindowFlags};
 use libds3::pointers::PointerChains;
 
 use crate::map::camera_info::CameraInfo;
@@ -48,18 +48,6 @@ impl MapViewer {
 }
 
 impl MapViewer {
-    pub fn is_enabled(&self) -> bool {
-        self.visible
-    }
-
-    pub fn player_position(&self) -> Option<[f32; 3]> {
-        self.camera_info.player_position()
-    }
-
-    pub fn camera_position(&self) -> Option<[f32; 3]> {
-        self.camera_info.camera_position()
-    }
-
     pub fn direction_offset_degrees(&self) -> f32 {
         self.direction_offset_degrees
     }
@@ -74,6 +62,57 @@ impl MapViewer {
 
     pub fn set_size_scale(&mut self, value: f32) {
         self.size_scale = value.max(0.1);
+    }
+
+    pub fn render_config_panel(&mut self, ui: &imgui::Ui) -> bool {
+        let mut direction_offset = self.direction_offset_degrees;
+        let mut size_scale = self.size_scale;
+        let map_enabled = self.visible;
+        let player_position = self.camera_info.player_position();
+        let camera_position = self.camera_info.camera_position();
+
+        ui.window("Compass Controls")
+            .position([20.0, 20.0], Condition::FirstUseEver)
+            .bg_alpha(0.85)
+            .flags(WindowFlags::ALWAYS_AUTO_RESIZE)
+            .build(|| {
+                ui.text("Toggle: F6");
+                ui.separator();
+
+                ui.slider_config("Direction Offset (deg)", -180.0, 180.0)
+                    .display_format("%.1f")
+                    .build(&mut direction_offset);
+
+                ui.slider_config("Size Scale", 0.5, 3.0)
+                    .display_format("%.2f")
+                    .build(&mut size_scale);
+
+                ui.separator();
+                ui.text("Debug");
+                ui.text(format!(
+                    "Minimap Enabled: {}",
+                    if map_enabled { "true" } else { "false" }
+                ));
+
+                match player_position {
+                    Some([x, y, z]) => ui.text(format!("Player Pos: {:7.1} {:7.1} {:7.1}", x, y, z)),
+                    None => ui.text("Player Pos: N/A"),
+                }
+
+                match camera_position {
+                    Some([x, y, z]) => ui.text(format!("Camera Pos: {:7.1} {:7.1} {:7.1}", x, y, z)),
+                    None => ui.text("Camera Pos: N/A"),
+                }
+            });
+
+        let old_direction_offset = self.direction_offset_degrees;
+        let old_size_scale = self.size_scale;
+
+        self.direction_offset_degrees = direction_offset.clamp(-180.0, 180.0);
+        self.size_scale = size_scale.clamp(0.5, 3.0);
+
+        (self.direction_offset_degrees - old_direction_offset).abs() > f32::EPSILON
+            || (self.size_scale - old_size_scale).abs() > f32::EPSILON
     }
 
     pub fn before_render<'a>(

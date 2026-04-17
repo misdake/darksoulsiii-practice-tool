@@ -1,7 +1,7 @@
 use std::sync::atomic::AtomicBool;
 
 use hudhook::{ImguiRenderLoop, RenderContext};
-use imgui::{Condition, Context, Key, WindowFlags};
+use imgui::{Context, Key};
 use libds3::pointers::PointerChains;
 
 use crate::config::{ConfigStore, MapConfig};
@@ -28,65 +28,6 @@ impl PracticeTool {
         PracticeTool { config_store, map_viewer, show_panel: false }
     }
 
-    fn render_config_panel(&mut self, ui: &imgui::Ui) {
-        let mut direction_offset = self.map_viewer.direction_offset_degrees();
-        let mut size_scale = self.map_viewer.size_scale();
-        let map_enabled = self.map_viewer.is_enabled();
-        let player_position = self.map_viewer.player_position();
-        let camera_position = self.map_viewer.camera_position();
-
-        ui.window("Compass Controls")
-            .position([20.0, 20.0], Condition::FirstUseEver)
-            .bg_alpha(0.85)
-            .flags(WindowFlags::ALWAYS_AUTO_RESIZE)
-            .build(|| {
-                ui.text("Toggle: F6");
-                ui.separator();
-
-                ui.slider_config("Direction Offset (deg)", -180.0, 180.0)
-                    .display_format("%.1f")
-                    .build(&mut direction_offset);
-
-                ui.slider_config("Size Scale", 0.5, 3.0)
-                    .display_format("%.2f")
-                    .build(&mut size_scale);
-
-                ui.separator();
-                ui.text("Debug");
-
-                ui.text(format!(
-                    "Minimap Enabled: {}",
-                    if map_enabled { "true" } else { "false" }
-                ));
-
-                match player_position {
-                    Some([x, y, z]) => ui.text(format!("Player Pos: {:7.1} {:7.1} {:7.1}", x, y, z)),
-                    None => ui.text("Player Pos: N/A"),
-                }
-
-                match camera_position {
-                    Some([x, y, z]) => ui.text(format!("Camera Pos: {:7.1} {:7.1} {:7.1}", x, y, z)),
-                    None => ui.text("Camera Pos: N/A"),
-                }
-            });
-
-        let old_direction_offset = self.map_viewer.direction_offset_degrees();
-        let old_size_scale = self.map_viewer.size_scale();
-
-        self.map_viewer
-            .set_direction_offset_degrees(direction_offset.clamp(-180.0, 180.0));
-        self.map_viewer.set_size_scale(size_scale.clamp(0.5, 3.0));
-
-        if (self.map_viewer.direction_offset_degrees() - old_direction_offset).abs() > f32::EPSILON
-            || (self.map_viewer.size_scale() - old_size_scale).abs() > f32::EPSILON
-        {
-            self.config_store.set_map(MapConfig {
-                compass_direction_offset_degrees: self.map_viewer.direction_offset_degrees(),
-                compass_size_scale: self.map_viewer.size_scale(),
-            });
-            self.config_store.save();
-        }
-    }
 }
 
 impl ImguiRenderLoop for PracticeTool {
@@ -100,7 +41,14 @@ impl ImguiRenderLoop for PracticeTool {
         }
 
         if self.show_panel {
-            self.render_config_panel(ui);
+            let changed = self.map_viewer.render_config_panel(ui);
+            if changed {
+                self.config_store.set_map(MapConfig {
+                    compass_direction_offset_degrees: self.map_viewer.direction_offset_degrees(),
+                    compass_size_scale: self.map_viewer.size_scale(),
+                });
+                self.config_store.save();
+            }
         }
 
         self.map_viewer.render(ui);
