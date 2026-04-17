@@ -6,6 +6,8 @@ pub struct CameraInfo {
     camera_angle_follow: PointerChain<[f32; 2]>,
     camera_position_follow: PointerChain<[f32; 3]>,
     camera_position_global: PointerChain<[f32; 3]>,
+    player_position: Option<[f32; 3]>,
+    camera_position: Option<[f32; 3]>,
     camera_follow_saved: [f32; 3],
     camera_global_saved: [f32; 3],
     in_game_saved: Vec<bool>,
@@ -18,20 +20,33 @@ impl CameraInfo {
             camera_angle_follow: pointers.camera_angle_follow.clone(),
             camera_position_follow: pointers.camera_position_follow.clone(),
             camera_position_global: pointers.camera_position_global.clone(),
+            player_position: None,
+            camera_position: None,
             camera_follow_saved: [0., 0., 0.],
             camera_global_saved: [0., 0., 0.],
             in_game_saved: vec![],
         }
     }
 
+    pub fn player_position(&self) -> Option<[f32; 3]> {
+        self.player_position
+    }
+
+    pub fn camera_position(&self) -> Option<[f32; 3]> {
+        self.camera_position
+    }
+
     /// returns (visible, dir)
     pub fn update(&mut self) -> (bool, f32) {
-        if let (Some(_), Some(camera_follow), Some(camera_global), Some([_rot_x, rot_y])) = (
+        if let (Some(player_position), Some(camera_follow), Some(camera_global), Some([_rot_x, rot_y])) = (
             self.position.read(),
             self.camera_position_follow.read(),
             self.camera_position_global.read(),
             self.camera_angle_follow.read(),
         ) {
+            self.player_position = Some(player_position);
+            self.camera_position = Some(camera_global);
+
             let rot_y = if rot_y < 0. { rot_y + std::f32::consts::TAU } else { rot_y };
 
             fn almost_same(a: [f32; 3], b: [f32; 3]) -> bool {
@@ -57,6 +72,8 @@ impl CameraInfo {
             (visible, rot_y)
         } else {
             // bad memory => hide compass
+            self.player_position = None;
+            self.camera_position = None;
             self.camera_follow_saved = [0., 0., 0.];
             self.camera_global_saved = [0., 0., 0.];
             self.in_game_saved.clear();

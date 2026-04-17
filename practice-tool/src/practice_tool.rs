@@ -31,6 +31,9 @@ impl PracticeTool {
     fn render_config_panel(&mut self, ui: &imgui::Ui) {
         let mut direction_offset = self.map_viewer.direction_offset_degrees();
         let mut size_scale = self.map_viewer.size_scale();
+        let map_enabled = self.map_viewer.is_enabled();
+        let player_position = self.map_viewer.player_position();
+        let camera_position = self.map_viewer.camera_position();
 
         ui.window("Compass Controls")
             .position([20.0, 20.0], Condition::FirstUseEver)
@@ -47,6 +50,24 @@ impl PracticeTool {
                 ui.slider_config("Size Scale", 0.5, 3.0)
                     .display_format("%.2f")
                     .build(&mut size_scale);
+
+                ui.separator();
+                ui.text("Debug");
+
+                ui.text(format!(
+                    "Minimap Enabled: {}",
+                    if map_enabled { "true" } else { "false" }
+                ));
+
+                match player_position {
+                    Some([x, y, z]) => ui.text(format!("Player Pos: {:7.1} {:7.1} {:7.1}", x, y, z)),
+                    None => ui.text("Player Pos: N/A"),
+                }
+
+                match camera_position {
+                    Some([x, y, z]) => ui.text(format!("Camera Pos: {:7.1} {:7.1} {:7.1}", x, y, z)),
+                    None => ui.text("Camera Pos: N/A"),
+                }
             });
 
         let old_direction_offset = self.map_viewer.direction_offset_degrees();

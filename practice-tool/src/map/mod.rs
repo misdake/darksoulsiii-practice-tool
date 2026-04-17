@@ -48,6 +48,18 @@ impl MapViewer {
 }
 
 impl MapViewer {
+    pub fn is_enabled(&self) -> bool {
+        self.visible
+    }
+
+    pub fn player_position(&self) -> Option<[f32; 3]> {
+        self.camera_info.player_position()
+    }
+
+    pub fn camera_position(&self) -> Option<[f32; 3]> {
+        self.camera_info.camera_position()
+    }
+
     pub fn direction_offset_degrees(&self) -> f32 {
         self.direction_offset_degrees
     }
