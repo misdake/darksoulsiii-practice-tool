@@ -10,7 +10,9 @@ pub struct CameraInfo {
     camera_position: Option<[f32; 3]>,
     camera_follow_saved: [f32; 3],
     camera_global_saved: [f32; 3],
-    in_game_saved: Vec<bool>,
+    in_game_saved: [bool; 5],
+    in_game_saved_len: usize,
+    in_game_saved_next: usize,
 }
 
 impl CameraInfo {
@@ -24,7 +26,9 @@ impl CameraInfo {
             camera_position: None,
             camera_follow_saved: [0., 0., 0.],
             camera_global_saved: [0., 0., 0.],
-            in_game_saved: vec![],
+            in_game_saved: [false; 5],
+            in_game_saved_len: 0,
+            in_game_saved_next: 0,
         }
     }
 
@@ -61,13 +65,12 @@ impl CameraInfo {
             let in_game = same0 || same1 || same2;
             self.camera_follow_saved = camera_follow;
             self.camera_global_saved = camera_global;
-            self.in_game_saved.push(in_game);
 
-            let visible = self.in_game_saved.iter().any(|i| *i);
+            self.in_game_saved[self.in_game_saved_next] = in_game;
+            self.in_game_saved_next = (self.in_game_saved_next + 1) % self.in_game_saved.len();
+            self.in_game_saved_len = (self.in_game_saved_len + 1).min(self.in_game_saved.len());
 
-            while self.in_game_saved.len() > 5 {
-                self.in_game_saved.remove(0);
-            }
+            let visible = self.in_game_saved.iter().take(self.in_game_saved_len).any(|i| *i);
 
             (visible, rot_y)
         } else {
@@ -76,7 +79,9 @@ impl CameraInfo {
             self.camera_position = None;
             self.camera_follow_saved = [0., 0., 0.];
             self.camera_global_saved = [0., 0., 0.];
-            self.in_game_saved.clear();
+            self.in_game_saved = [false; 5];
+            self.in_game_saved_len = 0;
+            self.in_game_saved_next = 0;
 
             (false, 0.)
         }
