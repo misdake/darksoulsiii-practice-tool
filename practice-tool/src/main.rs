@@ -2,7 +2,6 @@ use hudhook::inject::Process;
 use hudhook::tracing::trace;
 use tracing_subscriber::filter::LevelFilter;
 use windows::core::PCSTR;
-use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
     MessageBoxA, MB_ICONERROR, MB_OK,
 };
@@ -46,7 +45,7 @@ fn main() {
         let error_msg = format!("{}\0", e);
         unsafe {
             MessageBoxA(
-                HWND(0),
+                None,
                 PCSTR(error_msg.as_str().as_ptr()),
                 PCSTR(c"Error".as_ptr() as _),
                 MB_OK | MB_ICONERROR,
