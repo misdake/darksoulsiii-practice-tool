@@ -1,16 +1,16 @@
 [package]
-name = "darksoulsiii-practice-tool"
+name = "ds3-map"
 version.workspace = true
 authors.workspace = true
 edition = "2021"
 
 [[bin]]
-name = "jdsd_dsiii_practice_tool"
+name = "ds3_map"
 path = "src/main.rs"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
-name = "libjdsd_dsiii_practice_tool"
+name = "libds3_map"
 
 [dependencies]
 tracing-subscriber = "0.3.17"

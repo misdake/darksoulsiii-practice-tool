@@ -17,19 +17,19 @@ yourself.
 
 ## I found a bug. What do I do?
 
-- Set the `log_level = "DEBUG"` option in `jdsd_dsiii_practice_tool.toml`.
+- Set the `log_level = "DEBUG"` option in `ds3_map.toml`.
 - Reproduce the steps that cause your bug.
 - Go
-  [here](https://github.com/veeenu/darksoulsiii-practice-tool/issues/new)
+  [here](https://github.com/veeenu/ds3-map/issues/new)
   and submit a new issue, explaining the problem and attaching the
-  `jdsd_dsiii_practice_tool.log` file.
+  `ds3_map.log` file.
 
 I'll do my best to get back to you and fix the bug.
 
 ## How can I change the key bindings?
 
 You can customize the default ones or add your own by editing
-`jdsd_dsiii_practice_tool.toml` with your favorite text editor.
+`ds3_map.toml` with your favorite text editor.
 
 The bundled file contains all possible settings with predefined hotkeys and is mostly
 self-explanatory.

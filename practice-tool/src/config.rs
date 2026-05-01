@@ -8,7 +8,7 @@ use crate::map::{
 };
 use crate::util;
 
-const CONFIG_FILE_NAME: &str = "jdsd_dsiii_map_tool.toml";
+const CONFIG_FILE_NAME: &str = "ds3_map.toml";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

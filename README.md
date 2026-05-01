@@ -1,8 +1,8 @@
 # Dark Souls III Practice Tool
 
-[![build](https://github.com/veeenu/darksoulsiii-practice-tool/actions/workflows/build.yml/badge.svg)](https://github.com/veeenu/darksoulsiii-practice-tool/actions)
-[![GitHub all releases](https://img.shields.io/github/downloads/veeenu/darksoulsiii-practice-tool/total)](https://github.com/veeenu/darksoulsiii-practice-tool/releases/latest)
-[![GitHub](https://img.shields.io/github/license/veeenu/darksoulsiii-practice-tool)](https://github.com/veeenu/darksoulsiii-practice-tool/blob/main/LICENSE) 
+[![build](https://github.com/veeenu/ds3-map/actions/workflows/build.yml/badge.svg)](https://github.com/veeenu/ds3-map/actions)
+[![GitHub all releases](https://img.shields.io/github/downloads/veeenu/ds3-map/total)](https://github.com/veeenu/ds3-map/releases/latest)
+[![GitHub](https://img.shields.io/github/license/veeenu/ds3-map)](https://github.com/veeenu/ds3-map/blob/main/LICENSE) 
 [![Discord](https://img.shields.io/discord/267623298647457802)](https://discord.gg/jhF3jTTCUs)
 [![Twitch](https://img.shields.io/twitch/status/johndisandonato?style=social)](https://twitch.tv/johndisandonato)
 [![Patreon](https://img.shields.io/badge/Support_me-Patreon-orange)](https://www.patreon.com/johndisandonato)
@@ -16,7 +16,7 @@ The tool is free, and will always be free for everyone. If you enjoy it, please 
 
 ## Getting started
 
-Download the **latest stable release** [here](https://github.com/veeenu/darksoulsiii-practice-tool/releases/latest).
+Download the **latest stable release** [here](https://github.com/veeenu/ds3-map/releases/latest).
 
 Prerequisites:
 
@@ -30,16 +30,16 @@ Prerequisites:
 
 - Extract all files from the zip archive. Anywhere will do.
 - Start Dark Souls III.
-- Double-click `jdsd_dsiii_practice_tool.exe`.
+- Double-click `ds3_map.exe`.
 
 The tool will automatically appear over the game. Press `0` to open and close its interface.
 
 ### Installed
 
 - Extract all files from the zip archive.
-- Rename `jdsd_dsiii_practice_tool.dll` to `dinput8.dll`. Make sure your [file extensions are visible](https://www.howtogeek.com/205086/beginner-how-to-make-windows-show-file-extensions/)
+- Rename `ds3_map.dll` to `dinput8.dll`. Make sure your [file extensions are visible](https://www.howtogeek.com/205086/beginner-how-to-make-windows-show-file-extensions/)
   to ensure you are naming the file correctly.
-- Copy `dinput8.dll` and `jdsd_dsiii_practice_tool.toml` to you Dark Souls III `Game` folder.
+- Copy `dinput8.dll` and `ds3_map.toml` to you Dark Souls III `Game` folder.
   The files must be in the same folder as `DarkSoulsIII.exe`.
 - Start Dark Souls III normally.
 
@@ -57,7 +57,7 @@ The tool fully supports Linux and should run on Steam Deck seamlessly.
 If you want to run the tool in a standalone fashion, I recommend [protontricks](https://github.com/Matoking/protontricks):
 
 ```sh
-protontricks-launch --appid 374320 jdsd_dsiii_practice_tool.exe
+protontricks-launch --appid 374320 ds3_map.exe
 ```
 
 ### Installed
