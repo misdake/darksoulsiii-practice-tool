@@ -46,21 +46,16 @@ help ............ print this help
 }
 
 fn run() -> Result<()> {
-    let status = cargo_command("build")
-        .args(["--lib", "--package", "darksoulsiii-practice-tool"])
-        .status()
-        .context("cargo")?;
+    let status =
+        cargo_command("build").args(["--lib", "--package", "ds3-map"]).status().context("cargo")?;
 
     if !status.success() {
         bail!("cargo build failed");
     }
 
-    fs::copy(
-        project_root().join("jdsd_dsiii_practice_tool.toml"),
-        target_path("debug").join("jdsd_dsiii_practice_tool.toml"),
-    )?;
+    fs::copy(project_root().join("ds3_map.toml"), target_path("debug").join("ds3_map.toml"))?;
 
-    let dll_path = target_path("debug").join("libjdsd_dsiii_practice_tool.dll").canonicalize()?;
+    let dll_path = target_path("debug").join("libds3_map.dll").canonicalize()?;
 
     inject(iter::once(dll_path))?;
 
@@ -89,12 +84,12 @@ fn run_param_tinkerer() -> Result<()> {
 }
 
 fn dist() -> Result<()> {
-    Distribution::new("jdsd_dsiii_practice_tool.zip")
-        .with_artifact("libjdsd_dsiii_practice_tool.dll", "jdsd_dsiii_practice_tool.dll")
-        .with_artifact("jdsd_dsiii_practice_tool.exe", "jdsd_dsiii_practice_tool.exe")
+    Distribution::new("ds3_map.zip")
+        .with_artifact("libds3_map.dll", "ds3_map.dll")
+        .with_artifact("ds3_map.exe", "ds3_map.exe")
         // .with_artifact("dinput8nologo.dll", "dinput8.dll")
         .with_file("lib/data/RELEASE-README.txt", "README.txt")
-        .with_file("jdsd_dsiii_practice_tool.toml", "jdsd_dsiii_practice_tool.toml")
+        .with_file("ds3_map.toml", "ds3_map.toml")
         .build(&["--locked", "--release", "--workspace", "--exclude", "xtask"])
 }
 
@@ -110,7 +105,7 @@ fn dist_param_mod() -> Result<()> {
 
 fn install() -> Result<()> {
     let status = cargo_command("build")
-        .args(["--lib", "--release", "--package", "darksoulsiii-practice-tool"])
+        .args(["--lib", "--release", "--package", "ds3-map"])
         .status()
         .context("cargo")?;
 
@@ -119,11 +114,8 @@ fn install() -> Result<()> {
     }
 
     FileInstall::new()
-        .with_file(target_path("release").join("libjdsd_dsiii_practice_tool.dll"), "dinput8.dll")
-        .with_file(
-            project_root().join("jdsd_dsiii_practice_tool.toml"),
-            "jdsd_dsiii_practice_tool.toml",
-        )
+        .with_file(target_path("release").join("libds3_map.dll"), "dinput8.dll")
+        .with_file(project_root().join("ds3_map.toml"), "ds3_map.toml")
         .install("DSIII_PATH")?;
 
     Ok(())
@@ -131,11 +123,8 @@ fn install() -> Result<()> {
 
 fn uninstall() -> Result<()> {
     FileInstall::new()
-        .with_file(target_path("release").join("libjdsd_dsiii_practice_tool.dll"), "dinput8.dll")
-        .with_file(
-            project_root().join("jdsd_dsiii_practice_tool.toml"),
-            "jdsd_dsiii_practice_tool.toml",
-        )
+        .with_file(target_path("release").join("libds3_map.dll"), "dinput8.dll")
+        .with_file(project_root().join("ds3_map.toml"), "ds3_map.toml")
         .uninstall("DSIII_PATH")?;
 
     Ok(())
@@ -144,7 +133,7 @@ fn uninstall() -> Result<()> {
 fn inject<S: AsRef<OsStr>>(args: impl Iterator<Item = S>) -> Result<()> {
     cargo_command("build").args(["--release", "--bin", "inject"]).status().context("cargo")?;
 
-    steam_command(target_path("release").join("inject"), APPID, "DarkSoulsIII")?
+    steam_command(target_path("release").join("inject"), APPID)?
         .args(args)
         .status()
         .context("inject")?;

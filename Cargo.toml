@@ -1,7 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-  "practice-tool",
+  "ds3-map",
   "lib/libds3",
   "lib/macro-param",
   "lib/param-tinkerer",

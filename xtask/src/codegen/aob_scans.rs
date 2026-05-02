@@ -8,7 +8,7 @@ fn patches_paths() -> impl Iterator<Item = PathBuf> {
     let base_path = PathBuf::from(
         env::var("DSIII_PATCHES_PATH").unwrap_or_else(|_| panic!("{}", dedent(r"
             DSIII_PATCHES_PATH environment variable undefined.
-            Check the documentation: https://github.com/veeenu/darksoulsiii-practice-tool/README.md#building
+            Check the documentation: https://github.com/veeenu/ds3-map/README.md#building
         "))),
     );
     base_path
