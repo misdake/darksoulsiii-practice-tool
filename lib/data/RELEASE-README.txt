@@ -1,15 +1,15 @@
-Welcome to the Dark Souls III Practice Tool!
+﻿Welcome to the Dark Souls III Practice Tool!
 
 ----------------------------------------------------------------------------------------------------
 You can run the practice tool in two ways.
 
-By double-clicking `ds3_map.exe`:
-  - Double-click `ds3_map.exe` while the game is running.
+By double-clicking `ds3_map_viewer.exe`:
+  - Double-click `ds3_map_viewer.exe` while the game is running.
 
 By installing the DLL:
-  - Rename `ds3_map.dll` to `dinput8.dll`. Make sure your file extensions are 
+  - Rename `ds3_map_viewer.dll` to `dinput8.dll`. Make sure your file extensions are 
     visible to ensure you are naming the file correctly.
-  - Copy `dinput8.dll` and `ds3_map.toml` to you Dark Souls III Game folder. The
+  - Copy `dinput8.dll` and `ds3_map_viewer.toml` to you Dark Souls III Game folder. The
     files must be in the same folder as `DarkSoulsIII.exe`.
   - Start Dark Souls III normally.
   - While it is starting, press and hold right shift for a few seconds, until the tool appears.
@@ -28,3 +28,7 @@ If you enjoy the tool, please consider supporting me:
 https://patreon.com/johndisandonato
 
 -- johndisandonato
+
+
+
+

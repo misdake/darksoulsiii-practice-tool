@@ -1,16 +1,16 @@
 [package]
-name = "ds3-map"
+name = "ds3-map-viewer"
 version.workspace = true
 authors.workspace = true
 edition = "2021"
 
 [[bin]]
-name = "ds3_map"
+name = "ds3_map_viewer"
 path = "src/main.rs"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
-name = "libds3_map"
+name = "libds3_map_viewer"
 
 [dependencies]
 tracing-subscriber = "0.3.17"

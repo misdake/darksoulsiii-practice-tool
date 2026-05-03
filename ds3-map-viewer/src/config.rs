@@ -8,7 +8,7 @@ use crate::map::{
 };
 use crate::util;
 
-const CONFIG_FILE_NAME: &str = "ds3_map.toml";
+const CONFIG_FILE_NAME: &str = "ds3_map_viewer.toml";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

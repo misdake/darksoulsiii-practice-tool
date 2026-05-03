@@ -46,16 +46,21 @@ help ............ print this help
 }
 
 fn run() -> Result<()> {
-    let status =
-        cargo_command("build").args(["--lib", "--package", "ds3-map"]).status().context("cargo")?;
+    let status = cargo_command("build")
+        .args(["--lib", "--package", "ds3-map-viewer"])
+        .status()
+        .context("cargo")?;
 
     if !status.success() {
         bail!("cargo build failed");
     }
 
-    fs::copy(project_root().join("ds3_map.toml"), target_path("debug").join("ds3_map.toml"))?;
+    fs::copy(
+        project_root().join("ds3_map_viewer.toml"),
+        target_path("debug").join("ds3_map_viewer.toml"),
+    )?;
 
-    let dll_path = target_path("debug").join("libds3_map.dll").canonicalize()?;
+    let dll_path = target_path("debug").join("libds3_map_viewer.dll").canonicalize()?;
 
     inject(iter::once(dll_path))?;
 
@@ -84,12 +89,12 @@ fn run_param_tinkerer() -> Result<()> {
 }
 
 fn dist() -> Result<()> {
-    Distribution::new("ds3_map.zip")
-        .with_artifact("libds3_map.dll", "ds3_map.dll")
-        .with_artifact("ds3_map.exe", "ds3_map.exe")
+    Distribution::new("ds3_map_viewer.zip")
+        .with_artifact("libds3_map_viewer.dll", "ds3_map_viewer.dll")
+        .with_artifact("ds3_map_viewer.exe", "ds3_map_viewer.exe")
         // .with_artifact("dinput8nologo.dll", "dinput8.dll")
         .with_file("lib/data/RELEASE-README.txt", "README.txt")
-        .with_file("ds3_map.toml", "ds3_map.toml")
+        .with_file("ds3_map_viewer.toml", "ds3_map_viewer.toml")
         .build(&["--locked", "--release", "--workspace", "--exclude", "xtask"])
 }
 
@@ -105,7 +110,7 @@ fn dist_param_mod() -> Result<()> {
 
 fn install() -> Result<()> {
     let status = cargo_command("build")
-        .args(["--lib", "--release", "--package", "ds3-map"])
+        .args(["--lib", "--release", "--package", "ds3-map-viewer"])
         .status()
         .context("cargo")?;
 
@@ -114,8 +119,8 @@ fn install() -> Result<()> {
     }
 
     FileInstall::new()
-        .with_file(target_path("release").join("libds3_map.dll"), "dinput8.dll")
-        .with_file(project_root().join("ds3_map.toml"), "ds3_map.toml")
+        .with_file(target_path("release").join("libds3_map_viewer.dll"), "dinput8.dll")
+        .with_file(project_root().join("ds3_map_viewer.toml"), "ds3_map_viewer.toml")
         .install("DSIII_PATH")?;
 
     Ok(())
@@ -123,8 +128,8 @@ fn install() -> Result<()> {
 
 fn uninstall() -> Result<()> {
     FileInstall::new()
-        .with_file(target_path("release").join("libds3_map.dll"), "dinput8.dll")
-        .with_file(project_root().join("ds3_map.toml"), "ds3_map.toml")
+        .with_file(target_path("release").join("libds3_map_viewer.dll"), "dinput8.dll")
+        .with_file(project_root().join("ds3_map_viewer.toml"), "ds3_map_viewer.toml")
         .uninstall("DSIII_PATH")?;
 
     Ok(())

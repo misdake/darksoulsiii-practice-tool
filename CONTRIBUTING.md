@@ -23,7 +23,7 @@ This task will compile and run the practice tool from the repo.
 cargo xtask dist
 ```
 
-This task will create release artifacts in `target/dist/ds3_map.zip`.
+This task will create release artifacts in `target/dist/ds3_map_viewer.zip`.
 
 ## Code generation
 

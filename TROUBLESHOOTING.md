@@ -1,4 +1,4 @@
-# Troubleshooting / FAQ
+﻿# Troubleshooting / FAQ
 
 ## Is this safe to run?
 
@@ -17,19 +17,19 @@ yourself.
 
 ## I found a bug. What do I do?
 
-- Set the `log_level = "DEBUG"` option in `ds3_map.toml`.
+- Set the `log_level = "DEBUG"` option in `ds3_map_viewer.toml`.
 - Reproduce the steps that cause your bug.
 - Go
   [here](https://github.com/veeenu/ds3-map/issues/new)
   and submit a new issue, explaining the problem and attaching the
-  `ds3_map.log` file.
+  `ds3_map_viewer.log` file.
 
 I'll do my best to get back to you and fix the bug.
 
 ## How can I change the key bindings?
 
 You can customize the default ones or add your own by editing
-`ds3_map.toml` with your favorite text editor.
+`ds3_map_viewer.toml` with your favorite text editor.
 
 The bundled file contains all possible settings with predefined hotkeys and is mostly
 self-explanatory.
@@ -62,5 +62,4 @@ if you have questions about the Practice Tool.
 
 ## I want to watch your speedruns!
 
-Sure! See you over here 👉 [https://twitch.tv/johndisandonato](https://twitch.tv/johndisandonato)!
-
+Sure! See you over here 馃憠 [https://twitch.tv/johndisandonato](https://twitch.tv/johndisandonato)!

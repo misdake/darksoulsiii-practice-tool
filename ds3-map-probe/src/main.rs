@@ -13,11 +13,11 @@ fn err_to_string<T: std::fmt::Display>(e: T) -> String {
 fn perform_injection() -> Result<(), String> {
     let mut dll_path = std::env::current_exe().unwrap();
     dll_path.pop();
-    dll_path.push("ds3_map.dll");
+    dll_path.push("ds3_map_probe.dll");
 
     if !dll_path.exists() {
         dll_path.pop();
-        dll_path.push("libds3_map");
+        dll_path.push("libds3_map_probe");
         dll_path.set_extension("dll");
     }
 
@@ -53,3 +53,4 @@ fn main() {
         }
     }
 }
+

@@ -1,18 +1,36 @@
-# Dark Souls III Practice Tool
+# Dark Souls III Map
 
-[![build](https://github.com/veeenu/ds3-map/actions/workflows/build.yml/badge.svg)](https://github.com/veeenu/ds3-map/actions)
-[![GitHub all releases](https://img.shields.io/github/downloads/veeenu/ds3-map/total)](https://github.com/veeenu/ds3-map/releases/latest)
-[![GitHub](https://img.shields.io/github/license/veeenu/ds3-map)](https://github.com/veeenu/ds3-map/blob/main/LICENSE) 
-[![Discord](https://img.shields.io/discord/267623298647457802)](https://discord.gg/jhF3jTTCUs)
-[![Twitch](https://img.shields.io/twitch/status/johndisandonato?style=social)](https://twitch.tv/johndisandonato)
-[![Patreon](https://img.shields.io/badge/Support_me-Patreon-orange)](https://www.patreon.com/johndisandonato)
+This repository is evolving from a practice overlay into a DS3 minimap pipeline with two core components:
 
-A tool for practicing speedruns. Made with ❤️ by [johndisandonato](https://twitch.tv/johndisandonato).
+- `ds3-map-probe`: screenshot/depth capture helper used to collect RGB + depth + camera metadata.
+- `ds3-map-viewer`: in-game map display and interaction layer.
 
-The tool is free, and will always be free for everyone. If you enjoy it, please consider 
-[supporting me](https://www.patreon.com/johndisandonato)!
+The current direction is:
+
+1. Build a reliable capture pipeline in-game (`ds3-map-probe`).
+2. Validate point-cloud reconstruction from RGB + depth.
+3. Scale to tile/layer export for minimap assets.
+4. Render filtered, interactive minimap content in-game (`ds3-map-viewer`).
 
 ![Screenshot](lib/data/screenshot.jpg)
+
+## Workspace layout
+
+- `ds3-map-probe`: capture tooling, camera/game-state initialization, metadata recording.
+- `ds3-map-viewer`: game overlay, map rendering, and UI interaction.
+- `lib`: shared code and assets.
+- `xtask`: developer automation tasks.
+
+## Current roadmap
+
+The immediate workstream matches the DS3 minimap plan:
+
+1. **Capture assistant (`ds3-map-probe`)**
+   Coordinate with ReShade, initialize game/camera state, capture RGB+depth, and persist metadata.
+2. **Point-cloud validation**
+   Read EXR depth, implement unprojection, generate previewable point clouds, verify geometric correctness.
+3. **Point-cloud production**
+   Handle larger datasets, export tile images, and support layer metadata for downstream minimap rendering.
 
 ## Getting started
 
@@ -24,45 +42,44 @@ Prerequisites:
 - Antiviruses are disabled. This includes Windows Defender. If you don't want to do that, make sure to whitelist the contents of the practice tool in your antivirus.
 - You have a legitimate copy of the game. Pirated copies will never be supported.
 
-## Running the tool
+## Running the viewer
 
 ### Standalone
 
 - Extract all files from the zip archive. Anywhere will do.
 - Start Dark Souls III.
-- Double-click `ds3_map.exe`.
+- Double-click `ds3_map_viewer.exe`.
 
-The tool will automatically appear over the game. Press `0` to open and close its interface.
+`ds3-map-viewer` will automatically appear over the game. Press `0` to open and close its interface.
 
 ### Installed
 
 - Extract all files from the zip archive.
-- Rename `ds3_map.dll` to `dinput8.dll`. Make sure your [file extensions are visible](https://www.howtogeek.com/205086/beginner-how-to-make-windows-show-file-extensions/)
+- Rename `ds3_map_viewer.dll` to `dinput8.dll`. Make sure your [file extensions are visible](https://www.howtogeek.com/205086/beginner-how-to-make-windows-show-file-extensions/)
   to ensure you are naming the file correctly.
-- Copy `dinput8.dll` and `ds3_map.toml` to you Dark Souls III `Game` folder.
+- Copy `dinput8.dll` and `ds3_map_viewer.toml` to your Dark Souls III `Game` folder.
   The files must be in the same folder as `DarkSoulsIII.exe`.
 - Start Dark Souls III normally.
 
-The tool is now installed. To load it, start the game, press the right shift button and 
-keep it pressed for a few seconds until the tool appears on screen.
+The viewer is now installed. To load it, start the game, press the right shift button and keep it pressed for a few seconds until the tool appears on screen.
 
 If you don't do that, the tool won't load and the game will start normally.
 
-## Running the tool on Linux
+## Running on Linux
 
-The tool fully supports Linux and should run on Steam Deck seamlessly.
+The viewer supports Linux and should run on Steam Deck.
 
 ### Standalone
 
 If you want to run the tool in a standalone fashion, I recommend [protontricks](https://github.com/Matoking/protontricks):
 
 ```sh
-protontricks-launch --appid 374320 ds3_map.exe
+protontricks-launch --appid 374320 ds3_map_viewer.exe
 ```
 
 ### Installed
 
-Follow the same instructions as above. Additionally, you have to set the launch options in Steam as follows:
+Follow the same instructions as above. Additionally, set the launch options in Steam as follows:
 
 ```sh
 WINEDLLOVERRIDES="dinput8=n,b" %command%
@@ -86,4 +103,3 @@ If you are looking to submit a patch, check the [contributing guide](CONTRIBUTIN
 - r3sus for the help with anti-cheat ideas, for all the interesting study material / code and
   all the general tips.
 - The font used in the UI is [Comic Mono](https://github.com/dtinth/comic-mono-font).
-
