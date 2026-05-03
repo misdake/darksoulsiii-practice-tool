@@ -1,75 +1,69 @@
 use libds3::memedit::PointerChain;
-use libds3::pointers::PointerChains;
+use libds3::pointers::{CameraRenderState, PointerChains};
 
 pub struct CameraInfo {
-    position: PointerChain<[f32; 3]>,
-    camera_angle_follow: PointerChain<[f32; 2]>,
-    camera_position_follow: PointerChain<[f32; 3]>,
-    camera_position_global: PointerChain<[f32; 3]>,
-    player_position: Option<[f32; 3]>,
-    camera_position_global_value: Option<[f32; 3]>,
-    camera_position_follow_value: Option<[f32; 3]>,
-    camera_angle_follow_value: Option<[f32; 2]>,
-    in_game_saved: [bool; 5],
-    in_game_saved_len: usize,
-    in_game_saved_next: usize,
+    player_position: PointerChain<[f32; 3]>,
+    camera_position: PointerChain<[f32; 3]>,
+    free_camera_state: PointerChain<u32>,
+    camera_render_state: PointerChain<CameraRenderState>,
+    free_camera_enabled: Option<bool>,
+    camera_render_state_value: Option<CameraRenderState>,
 }
 
 impl CameraInfo {
     pub fn new(pointers: &PointerChains) -> Self {
         CameraInfo {
-            position: pointers.position.1.clone(),
-            camera_angle_follow: pointers.camera.angle_follow.clone(),
-            camera_position_follow: pointers.camera.position_follow.clone(),
-            camera_position_global: pointers.camera.position_global.clone(),
-            player_position: None,
-            camera_position_global_value: None,
-            camera_position_follow_value: None,
-            camera_angle_follow_value: None,
-            in_game_saved: [false; 5],
-            in_game_saved_len: 0,
-            in_game_saved_next: 0,
+            player_position: pointers.position.1.clone(),
+            camera_position: pointers.camera.position_global.clone(),
+            free_camera_state: pointers.camera.free_camera_state.clone(),
+            camera_render_state: pointers.camera.render_state.clone(),
+            free_camera_enabled: None,
+            camera_render_state_value: None,
         }
     }
 
     pub fn player_position(&self) -> Option<[f32; 3]> {
-        self.player_position
+        self.player_position.read()
     }
 
-    pub fn camera_position_global(&self) -> Option<[f32; 3]> {
-        self.camera_position_global_value
+    pub fn camera_position(&self) -> Option<[f32; 3]> {
+        self.camera_position.read()
     }
 
-    pub fn camera_position_follow(&self) -> Option<[f32; 3]> {
-        self.camera_position_follow_value
+    pub fn free_camera_enabled(&self) -> Option<bool> {
+        self.free_camera_enabled
     }
 
-    pub fn camera_angle_follow(&self) -> Option<[f32; 2]> {
-        self.camera_angle_follow_value
+    pub fn set_free_camera_enabled(&self, enabled: bool) {
+        self.free_camera_state.write(if enabled { 1_u32 } else { 0_u32 });
     }
 
-    pub fn in_game_estimated(&self) -> bool {
-        self.in_game_saved.iter().take(self.in_game_saved_len).any(|i| *i)
+    pub fn camera_render_state(&self) -> Option<CameraRenderState> {
+        self.camera_render_state_value
+    }
+
+    pub fn set_fovy_rad(&self, fovy_rad: f32) {
+        if let Some(mut state) = self.camera_render_state.read() {
+            state.fov = fovy_rad;
+            self.camera_render_state.write(state);
+        }
+    }
+
+    pub fn set_quat(&self, xyzt: [f32; 4]) {
+        if let Some(mut state) = self.camera_render_state.read() {
+            // This orientation points the camera forward to Y- and up to Z-.
+            state.quat_x = xyzt[0];
+            state.quat_yzt = [xyzt[1], xyzt[2], xyzt[3]];
+            self.camera_render_state.write(state);
+        }
+    }
+
+    pub fn ui_pointers_available(&self) -> bool {
+        self.free_camera_enabled.is_some() && self.camera_render_state_value.is_some()
     }
 
     pub fn update(&mut self) {
-        let player_position = self.position.read();
-        let camera_follow = self.camera_position_follow.read();
-        let camera_global = self.camera_position_global.read();
-        let camera_angle = self.camera_angle_follow.read();
-
-        self.player_position = player_position;
-        self.camera_position_follow_value = camera_follow;
-        self.camera_position_global_value = camera_global;
-        self.camera_angle_follow_value = camera_angle;
-
-        let in_game = player_position.is_some()
-            && camera_follow.is_some()
-            && camera_global.is_some()
-            && camera_angle.is_some();
-
-        self.in_game_saved[self.in_game_saved_next] = in_game;
-        self.in_game_saved_next = (self.in_game_saved_next + 1) % self.in_game_saved.len();
-        self.in_game_saved_len = (self.in_game_saved_len + 1).min(self.in_game_saved.len());
+        self.free_camera_enabled = self.free_camera_state.read().map(|v| v == 1);
+        self.camera_render_state_value = self.camera_render_state.read();
     }
 }

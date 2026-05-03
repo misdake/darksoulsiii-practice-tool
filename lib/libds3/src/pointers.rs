@@ -94,21 +94,23 @@ pub struct CameraPointers {
     pub angle_follow: PointerChain<[f32; 2]>,
     pub position_follow: PointerChain<[f32; 3]>,
     pub position_global: PointerChain<[f32; 3]>,
-    pub free_camera_state: PointerChain<u8>,
+    pub free_camera_state: PointerChain<u32>,
     pub render_state: PointerChain<CameraRenderState>,
 }
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct CameraRenderState {
-    _pad0: [u8; 0x28],
-    pub quat_w: f32,       // +0x28
-    _pad1: [u8; 0x04],
-    pub quat_xyz: [f32; 3], // +0x30..+0x38
-    _pad2: [u8; 0x14],
-    pub fov: f32,          // +0x50
-    _pad3: [u8; 0x08],
-    pub farplane: f32,     // +0x5C
+    _pad0: [u8; 0x28], // [0, 28)
+    pub quat_x: f32, // [28, 2c)
+    _pad1: [u8; 0x04], // [2c, 30)
+    pub quat_yzt: [f32; 3], // [30, 3c)
+    _pad2: [u8; 0x04], // [3c, 40)
+    pub position: [f32; 3], // [40, 4c)
+    _pad3: [u8; 0x04], // [4c, 50)
+    pub fov: f32, // // [50, 54)
+    _pad4: [u8; 0x08], // [54, 5c)
+    pub farplane: f32, // [5c, 60)
 }
 
 impl From<BaseAddresses> for PointerChains {
@@ -392,7 +394,7 @@ impl From<BaseAddresses> for PointerChains {
                 position_follow: pointer_chain!(base_d, 0x28, 0x60, 0x40),
                 position_global: pointer_chain!(camera_position_global),
                 free_camera_state: pointer_chain!(base_d, 0x18, 0xE0), // 0 - off, 1 - on
-                render_state: pointer_chain!(base_d, 0x18, 0xE8),
+                render_state: pointer_chain!(base_d, 0x18, 0xE8, 0x0),
             },
         }
     }
