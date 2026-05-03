@@ -97,15 +97,15 @@ impl ImguiRenderLoop for Probe {
                         self.camera_info.set_fovy_rad(fovy_rad);
                     }
 
-                    let qx = render_state.quat_x;
-                    let [qy, qz, qt] = render_state.quat_yzt;
+                    let qw = render_state.quat_w;
+                    let [qx, qy, qz] = render_state.quat_xyz;
                     ui.text(format!(
-                        "Camera Quat [x,y,z,t]: {:.6}, {:.6}, {:.6}, {:.6}",
-                        qx, qy, qz, qt
+                        "Camera Quat [w,x,y,z]: {:.3}, {:.3}, {:.3}, {:.3}",
+                        qw, qx, qy, qz
                     ));
 
                     if ui.button("Set Vertical Down (Y-)") {
-                        self.camera_info.set_quat([-1.0, 0.0, -1.0, 0.0]);
+                        self.camera_info.set_quat([-1.0, 0.0, -1.0, 0.0]); // -> [-0.707, 0.0, -0.707, 0.0]
                     }
                 } else {
                     ui.text("Camera render state: N/A");
