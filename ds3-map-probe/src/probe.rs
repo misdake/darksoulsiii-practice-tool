@@ -8,20 +8,20 @@ use crate::camera_info::CameraInfo;
 
 pub(crate) static BLOCK_XINPUT: AtomicBool = AtomicBool::new(false);
 
-pub(crate) struct PracticeTool {
+pub(crate) struct Probe {
     camera_info: CameraInfo,
 }
 
-impl PracticeTool {
+impl Probe {
     pub(crate) fn new() -> Self {
         let pointers = PointerChains::new();
         let camera_info = CameraInfo::new(&pointers);
 
-        PracticeTool { camera_info }
+        Probe { camera_info }
     }
 }
 
-impl ImguiRenderLoop for PracticeTool {
+impl ImguiRenderLoop for Probe {
     fn before_render(&mut self, _ctx: &mut Context, _r: &mut dyn RenderContext) {
         self.camera_info.update();
     }

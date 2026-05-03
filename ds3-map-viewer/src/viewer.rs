@@ -9,7 +9,7 @@ use crate::map::MapViewer;
 
 pub(crate) static BLOCK_XINPUT: AtomicBool = AtomicBool::new(false);
 
-pub(crate) struct PracticeTool {
+pub(crate) struct Viewer {
     config_store: ConfigStore,
     pointers: PointerChains,
     map_viewer: MapViewer,
@@ -17,14 +17,14 @@ pub(crate) struct PracticeTool {
     panel_occupied_height: f32,
 }
 
-impl PracticeTool {
+impl Viewer {
     pub(crate) fn new() -> Self {
         let config_store = ConfigStore::load();
         let pointers = PointerChains::new();
         let mut map_viewer = MapViewer::new(&pointers);
         Self::apply_map_config(config_store.config().map.clone(), &mut map_viewer);
 
-        PracticeTool {
+        Viewer {
             config_store,
             pointers,
             map_viewer,
@@ -60,7 +60,7 @@ impl PracticeTool {
     }
 }
 
-impl ImguiRenderLoop for PracticeTool {
+impl ImguiRenderLoop for Viewer {
     fn before_render(&mut self, ctx: &mut Context, r: &mut dyn RenderContext) {
         self.map_viewer.before_render(ctx, r);
     }

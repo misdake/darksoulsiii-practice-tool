@@ -1,5 +1,5 @@
 mod camera_info;
-mod practice_tool;
+mod probe;
 mod util;
 
 use std::ffi::c_void;
@@ -13,7 +13,7 @@ use hudhook::tracing::{error, trace};
 use hudhook::{eject, Hudhook};
 use libds3::pointers::PointerChains;
 use once_cell::sync::Lazy;
-use practice_tool::PracticeTool;
+use probe::Probe;
 use windows::core::{s, w, GUID, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, MAX_PATH};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
@@ -94,7 +94,7 @@ unsafe extern "system" fn xinput_get_state_impl(
 ) -> u32 {
     let r = (XINPUTGETSTATE)(dw_user_index, xinput_state);
 
-    if practice_tool::BLOCK_XINPUT.load(Ordering::SeqCst) {
+    if probe::BLOCK_XINPUT.load(Ordering::SeqCst) {
         *xinput_state = Default::default();
         return r;
     }
@@ -111,7 +111,7 @@ fn apply_no_logo() {
 }
 
 fn start_practice_tool(hmodule: HINSTANCE) {
-    let practice_tool = PracticeTool::new();
+    let practice_tool = Probe::new();
 
     if let Err(e) = Hudhook::builder()
         .with::<ImguiDx11Hooks>(practice_tool)

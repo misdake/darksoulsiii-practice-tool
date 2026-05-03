@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 mod config;
-mod practice_tool;
+mod viewer;
 mod util;
 mod map;
 
@@ -30,7 +30,7 @@ use hudhook::tracing::{error, trace};
 use hudhook::{eject, Hudhook};
 use libds3::pointers::PointerChains;
 use once_cell::sync::Lazy;
-use practice_tool::PracticeTool;
+use viewer::Viewer;
 use windows::core::{s, w, GUID, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{ERROR_SUCCESS, HINSTANCE, MAX_PATH};
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
@@ -113,7 +113,7 @@ unsafe extern "system" fn xinput_get_state_impl(
 ) -> u32 {
     let r = (XINPUTGETSTATE)(dw_user_index, xinput_state);
 
-    if practice_tool::BLOCK_XINPUT.load(Ordering::SeqCst) {
+    if viewer::BLOCK_XINPUT.load(Ordering::SeqCst) {
         *xinput_state = Default::default();
         return r;
     }
@@ -144,7 +144,7 @@ unsafe extern "system" fn xinput_get_state_impl(
 }
 
 fn apply_no_logo() {
-    // This is evaluated twice: here and in [`PracticeTool::new()`]. No big deal,
+    // This is evaluated twice: here and in [`Viewer::new()`]. No big deal,
     // but might want to refactor that eventually.
     let pointer_chains = PointerChains::new();
     pointer_chains.no_logo.write([
@@ -154,7 +154,7 @@ fn apply_no_logo() {
 }
 
 fn start_practice_tool(hmodule: HINSTANCE) {
-    let practice_tool = PracticeTool::new();
+    let practice_tool = Viewer::new();
 
     if let Err(e) = Hudhook::builder()
         .with::<ImguiDx11Hooks>(practice_tool)
