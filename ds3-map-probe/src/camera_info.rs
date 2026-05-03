@@ -19,9 +19,9 @@ impl CameraInfo {
     pub fn new(pointers: &PointerChains) -> Self {
         CameraInfo {
             position: pointers.position.1.clone(),
-            camera_angle_follow: pointers.camera_angle_follow.clone(),
-            camera_position_follow: pointers.camera_position_follow.clone(),
-            camera_position_global: pointers.camera_position_global.clone(),
+            camera_angle_follow: pointers.camera.angle_follow.clone(),
+            camera_position_follow: pointers.camera.position_follow.clone(),
+            camera_position_global: pointers.camera.position_global.clone(),
             player_position: None,
             camera_position_global_value: None,
             camera_position_follow_value: None,
