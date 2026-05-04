@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use hudhook::{eject, ImguiRenderLoop, RenderContext};
@@ -5,12 +6,18 @@ use imgui::{Condition, Context, Key, StyleVar, WindowFlags};
 use libds3::pointers::PointerChains;
 
 use crate::camera_info::CameraInfo;
+use crate::capture_files::{self, CaptureContext};
+use crate::util;
 
 pub(crate) static BLOCK_XINPUT: AtomicBool = AtomicBool::new(false);
 
 pub(crate) struct Probe {
     pointers: PointerChains,
     camera_info: CameraInfo,
+    exe_path: Option<String>,
+    capture_root: PathBuf,
+    capture_subdir: String,
+    capture_status: String,
     show_ui: bool,
     show_inject_hint: bool,
 }
@@ -19,8 +26,24 @@ impl Probe {
     pub(crate) fn new() -> Self {
         let pointers = PointerChains::new();
         let camera_info = CameraInfo::new(&pointers);
+        let exe_path = util::get_exe_path().map(|p| p.to_string_lossy().into_owned());
+        let capture_root = exe_path
+            .as_deref()
+            .and_then(|p| PathBuf::from(p).parent().map(|dir| dir.join("capture")))
+            .or_else(|| std::env::current_dir().ok().map(|dir| dir.join("capture")))
+            .unwrap_or_else(|| PathBuf::from(".").join("capture"));
+        let _ = std::fs::create_dir_all(&capture_root);
 
-        Probe { pointers, camera_info, show_ui: false, show_inject_hint: true }
+        Probe {
+            pointers,
+            camera_info,
+            exe_path,
+            capture_root,
+            capture_subdir: "default".to_string(),
+            capture_status: String::new(),
+            show_ui: false,
+            show_inject_hint: true,
+        }
     }
 
     fn set_ui_visibility(&mut self, show: bool) {
@@ -29,14 +52,42 @@ impl Probe {
     }
 
     fn reset_free_camera(&self) {
-        self.camera_info
-            .set_camera_position_from_player_offset([0.0, 10.0, 0.0]);
+        self.camera_info.set_camera_position_from_player_offset([0.0, 10.0, 0.0]);
         self.camera_info.set_quat([
             -std::f32::consts::FRAC_1_SQRT_2,
             0.0,
             -std::f32::consts::FRAC_1_SQRT_2,
             0.0,
         ]);
+    }
+
+    fn process_capture_files(&mut self) {
+        let Some(exe_path) = &self.exe_path else {
+            self.capture_status = "Capture failed: EXE path unavailable.".to_string();
+            return;
+        };
+
+        let game_dir = PathBuf::from(exe_path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let subdir = self.capture_subdir.trim();
+        if subdir.is_empty() {
+            self.capture_status = "Capture failed: subfolder name is empty.".to_string();
+            return;
+        }
+        let output_dir = self.capture_root.join(subdir);
+
+        let ctx = CaptureContext {
+            player_position: self.camera_info.player_position(),
+            camera_position: self.camera_info.camera_position(),
+            camera_render_state: self.camera_info.camera_render_state(),
+        };
+
+        match capture_files::process_latest_capture(&game_dir, &output_dir, &ctx) {
+            Ok(_) => self.capture_status.clear(),
+            Err(err) => self.capture_status = format!("Capture failed: {err}"),
+        }
     }
 }
 
@@ -68,6 +119,9 @@ impl ImguiRenderLoop for Probe {
 
         if ui.is_key_pressed(Key::F6) {
             self.camera_info.teleport_player_to_camera(-1.6);
+        }
+        if ui.is_key_pressed(Key::F11) {
+            self.process_capture_files();
         }
 
         if self.show_inject_hint {
@@ -102,6 +156,16 @@ impl ImguiRenderLoop for Probe {
                     eject();
                 }
 
+                ui.separator();
+                ui.text_wrapped(format!("Capture Root: {}", self.capture_root.display()));
+                ui.text("Capture Subfolder:");
+                ui.input_text("##capture_subdir", &mut self.capture_subdir).build();
+                if ui.button("Process Latest Capture Pair (F11)") {
+                    self.process_capture_files();
+                }
+                if !self.capture_status.is_empty() {
+                    ui.text_wrapped(&self.capture_status);
+                }
                 ui.separator();
 
                 if !self.camera_info.ui_pointers_available() {
@@ -156,10 +220,8 @@ impl ImguiRenderLoop for Probe {
                     let mut far = render_state.far;
                     let near_changed = ui.input_float("Near", &mut near).build();
                     let far_changed = ui.input_float("Far", &mut far).build();
-                    if near_changed || far_changed {
-                        if !self.camera_info.set_near_far(near, far) {
-                            ui.text("Invalid range: require 0.001 < near < far < 100000.");
-                        }
+                    if (near_changed || far_changed) && !self.camera_info.set_near_far(near, far) {
+                        ui.text("Invalid range: require 0.001 < near < far < 100000.");
                     }
 
                     let qw = render_state.quat_w;
@@ -168,7 +230,6 @@ impl ImguiRenderLoop for Probe {
                         "Camera Quat [w,x,y,z]: {:.3}, {:.3}, {:.3}, {:.3}",
                         qw, qx, qy, qz
                     ));
-
                 } else {
                     ui.text("Camera render state: N/A");
                 }
