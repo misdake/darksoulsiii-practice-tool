@@ -9,6 +9,7 @@ use crate::camera_info::CameraInfo;
 pub(crate) static BLOCK_XINPUT: AtomicBool = AtomicBool::new(false);
 
 pub(crate) struct Probe {
+    pointers: PointerChains,
     camera_info: CameraInfo,
     show_ui: bool,
     show_inject_hint: bool,
@@ -19,7 +20,23 @@ impl Probe {
         let pointers = PointerChains::new();
         let camera_info = CameraInfo::new(&pointers);
 
-        Probe { camera_info, show_ui: false, show_inject_hint: true }
+        Probe { pointers, camera_info, show_ui: false, show_inject_hint: true }
+    }
+
+    fn set_ui_visibility(&mut self, show: bool) {
+        self.pointers.cursor_show.set(show);
+        self.show_ui = show;
+    }
+
+    fn reset_free_camera(&self) {
+        self.camera_info
+            .set_camera_position_from_player_offset([0.0, 10.0, 0.0]);
+        self.camera_info.set_quat([
+            -std::f32::consts::FRAC_1_SQRT_2,
+            0.0,
+            -std::f32::consts::FRAC_1_SQRT_2,
+            0.0,
+        ]);
     }
 }
 
@@ -30,8 +47,27 @@ impl ImguiRenderLoop for Probe {
 
     fn render(&mut self, ui: &mut imgui::Ui) {
         if ui.is_key_pressed(Key::F9) {
-            self.show_ui = !self.show_ui;
+            self.set_ui_visibility(!self.show_ui);
             self.show_inject_hint = false;
+        }
+
+        if ui.is_key_pressed(Key::F8) {
+            if let Some(enabled) = self.camera_info.free_camera_enabled() {
+                if enabled {
+                    self.camera_info.set_free_camera_enabled(false);
+                } else {
+                    self.reset_free_camera();
+                    self.camera_info.set_free_camera_enabled(true);
+                }
+            }
+        }
+
+        if ui.is_key_pressed(Key::F7) {
+            self.reset_free_camera();
+        }
+
+        if ui.is_key_pressed(Key::F6) {
+            self.camera_info.teleport_player_to_camera(-1.6);
         }
 
         if self.show_inject_hint {
@@ -60,31 +96,50 @@ impl ImguiRenderLoop for Probe {
             .position([20.0, 20.0], Condition::FirstUseEver)
             .flags(WindowFlags::NO_COLLAPSE)
             .build(|| {
-                ui.text("PointerChains / Camera Data");
+                if ui.small_button("Eject") {
+                    self.set_ui_visibility(false);
+                    BLOCK_XINPUT.store(false, Ordering::SeqCst);
+                    eject();
+                }
+
                 ui.separator();
 
                 if !self.camera_info.ui_pointers_available() {
-                    if ui.small_button("Eject") {
-                        self.show_ui = false;
-                        BLOCK_XINPUT.store(false, Ordering::SeqCst);
-                        eject();
-                    }
                     ui.text("Required camera pointers unavailable.");
                     return;
                 }
 
-                let mut free_camera = self.camera_info.free_camera_enabled().unwrap_or(false);
-                if ui.checkbox("Free Camera", &mut free_camera) {
-                    self.camera_info.set_free_camera_enabled(free_camera);
+                let free_camera = self.camera_info.free_camera_enabled().unwrap_or(false);
+                if free_camera {
+                    ui.text("Free Camera: Enabled (toggle with F8)");
+                } else {
+                    ui.text("Free Camera: Disabled (toggle with F8)");
+                }
+
+                let mut ai_disable = self.pointers.ai_disable.get().unwrap_or(false);
+                if ui.checkbox("AI Disable", &mut ai_disable) {
+                    self.pointers.ai_disable.set(ai_disable);
+                }
+
+                let mut all_no_damage = self.pointers.all_no_damage.get().unwrap_or(false);
+                if ui.checkbox("All No Damage", &mut all_no_damage) {
+                    self.pointers.all_no_damage.set(all_no_damage);
+                }
+
+                let mut render_chr = self.pointers.rend_chr.get().unwrap_or(false);
+                if ui.checkbox("Render Character", &mut render_chr) {
+                    self.pointers.rend_chr.set(render_chr);
+                }
+
+                if ui.button("Reset Free Camera (F7)") {
+                    self.reset_free_camera();
+                }
+                ui.same_line();
+                if ui.button("Teleport Player To Camera (F6)") {
+                    self.camera_info.teleport_player_to_camera(-1.6);
                 }
 
                 if !free_camera {
-                    if ui.small_button("Eject") {
-                        self.show_ui = false;
-                        BLOCK_XINPUT.store(false, Ordering::SeqCst);
-                        eject();
-                    }
-                    ui.text("Free Camera disabled (0).");
                     return;
                 }
 
@@ -97,6 +152,16 @@ impl ImguiRenderLoop for Probe {
                         self.camera_info.set_fovy_rad(fovy_rad);
                     }
 
+                    let mut near = render_state.near;
+                    let mut far = render_state.far;
+                    let near_changed = ui.input_float("Near", &mut near).build();
+                    let far_changed = ui.input_float("Far", &mut far).build();
+                    if near_changed || far_changed {
+                        if !self.camera_info.set_near_far(near, far) {
+                            ui.text("Invalid range: require 0.001 < near < far < 100000.");
+                        }
+                    }
+
                     let qw = render_state.quat_w;
                     let [qx, qy, qz] = render_state.quat_xyz;
                     ui.text(format!(
@@ -104,9 +169,6 @@ impl ImguiRenderLoop for Probe {
                         qw, qx, qy, qz
                     ));
 
-                    if ui.button("Set Vertical Down (Y-)") {
-                        self.camera_info.set_quat([-1.0, 0.0, -1.0, 0.0]); // -> [-0.707, 0.0, -0.707, 0.0]
-                    }
                 } else {
                     ui.text("Camera render state: N/A");
                 }
@@ -123,12 +185,6 @@ impl ImguiRenderLoop for Probe {
                         ui.text(format!("Camera Position: {x:.3}, {y:.3}, {z:.3}"));
                     },
                     None => ui.text("Camera Position: N/A"),
-                }
-
-                if ui.small_button("Eject") {
-                    self.show_ui = false;
-                    BLOCK_XINPUT.store(false, Ordering::SeqCst);
-                    eject();
                 }
             });
 

@@ -38,6 +38,28 @@ impl CameraInfo {
         self.free_camera_state.write(if enabled { 1_u32 } else { 0_u32 });
     }
 
+    pub fn set_camera_position(&self, position: [f32; 3]) {
+        self.camera_position.write(position);
+
+        if let Some(mut state) = self.camera_render_state.read() {
+            state.position = position;
+            self.camera_render_state.write(state);
+        }
+    }
+
+    pub fn set_camera_position_from_player_offset(&self, offset: [f32; 3]) {
+        if let Some([px, py, pz]) = self.player_position.read() {
+            let target = [px + offset[0], py + offset[1], pz + offset[2]];
+            self.set_camera_position(target);
+        }
+    }
+
+    pub fn teleport_player_to_camera(&self, y_offset: f32) {
+        if let Some([cx, cy, cz]) = self.camera_position.read() {
+            self.player_position.write([cx, cy + y_offset, cz]);
+        }
+    }
+
     pub fn camera_render_state(&self) -> Option<CameraRenderState> {
         self.camera_render_state_value
     }
@@ -47,6 +69,21 @@ impl CameraInfo {
             state.fov = fovy_rad;
             self.camera_render_state.write(state);
         }
+    }
+
+    pub fn set_near_far(&self, near: f32, far: f32) -> bool {
+        if !(0.001 < near && near < far && far < 100000.0) {
+            return false;
+        }
+
+        if let Some(mut state) = self.camera_render_state.read() {
+            state.near = near;
+            state.far = far;
+            self.camera_render_state.write(state);
+            return true;
+        }
+
+        false
     }
 
     pub fn set_quat(&self, wxyz: [f32; 4]) {

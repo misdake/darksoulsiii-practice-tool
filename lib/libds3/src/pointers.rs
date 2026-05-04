@@ -109,8 +109,9 @@ pub struct CameraRenderState {
     pub position: [f32; 3], // [40, 4c)
     _pad3: [u8; 0x04],      // [4c, 50)
     pub fov: f32,           // // [50, 54)
-    _pad4: [u8; 0x08],      // [54, 5c)
-    pub farplane: f32,      // [5c, 60)
+    _pad4: [u8; 0x04],      // [54, 58)
+    pub near: f32,          // [58, 5c)
+    pub far: f32,           // [5c, 60)
 }
 
 impl From<BaseAddresses> for PointerChains {
