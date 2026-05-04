@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "ds3-map-viewer",
   "ds3-map-probe",
+  "ds3-map-processor",
   "lib/libds3",
   "lib/macro-param",
   "lib/param-tinkerer",

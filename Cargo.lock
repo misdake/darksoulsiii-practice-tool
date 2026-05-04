@@ -264,6 +264,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ds3-map-processor"
+version = "1.7.1"
+dependencies = [
+ "anyhow",
+ "exr",
+ "image",
+ "serde",
+ "toml 0.8.20",
+]
+
+[[package]]
 name = "ds3-map-viewer"
 version = "1.7.1"
 dependencies = [

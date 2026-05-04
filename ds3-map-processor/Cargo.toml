@@ -1,0 +1,12 @@
+[package]
+name = "ds3-map-processor"
+version.workspace = true
+authors.workspace = true
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+image = "0.24.9"
+serde = { workspace = true }
+toml = "0.8.20"
+exr = "1.73.0"
