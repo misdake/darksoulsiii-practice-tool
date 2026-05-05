@@ -269,7 +269,7 @@ fn camera_to_world(
     let up = normalize3(camera_up);
     let dir = normalize3(camera_dir);
     let right = normalize3(cross(up, dir));
-    let up_ortho = normalize3(cross(right, dir));
+    let up_ortho = normalize3(cross(dir, right));
 
     let [vx, vy, vz] = p_camera; // camera space: +x right, +y up, +z forward(dir)
     let [tx, ty, tz] = camera_position;

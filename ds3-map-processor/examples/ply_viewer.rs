@@ -1,12 +1,14 @@
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use kiss3d::camera::OrbitCamera3d;
 use kiss3d::event::{Action, Key, WindowEvent};
-use kiss3d::glamx::{Vec2, Vec3};
-use kiss3d::prelude::{Color, Font, SceneNode3d, Window, BLACK, GREEN, RED, WHITE};
+use kiss3d::egui::{self, Align2, Color32};
+use kiss3d::glamx::Vec3;
+use kiss3d::prelude::{Color, SceneNode3d, Window, WHITE};
 use ply_rs::parser::Parser;
 use ply_rs::ply::{Property, PropertyAccess};
 use rfd::FileDialog;
@@ -16,6 +18,7 @@ struct PointCloud {
     source: PathBuf,
     points: Vec<Vec3>,
     colors: Vec<Color>,
+    visible: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -62,13 +65,6 @@ impl PropertyAccess for VertexLite {
     }
 }
 
-struct OverlayContext<'a> {
-    clouds: &'a [PointCloud],
-    point_size: f32,
-    status: &'a str,
-    camera: &'a OrbitCamera3d,
-}
-
 fn main() {
     if let Err(e) = run() {
         eprintln!("Error: {e:#}");
@@ -91,79 +87,134 @@ fn run() -> Result<()> {
     let mut scene = SceneNode3d::empty();
 
     let mut clouds: Vec<PointCloud> = Vec::new();
-    let mut status = "Press O to import PLY files. Press F to fit all loaded points.".to_string();
     let mut point_size = 1.0_f32;
-    let font = Font::default();
+    let mut fps = 0.0_f32;
+    let mut fps_frames = 0_u32;
+    let mut fps_last = Instant::now();
 
     while kiss3d::pollster::block_on(window.render_3d(&mut scene, &mut perspective)) {
+        fps_frames += 1;
+        let now = Instant::now();
+        let dt = now.duration_since(fps_last).as_secs_f32();
+        if dt >= 0.25 {
+            fps = fps_frames as f32 / dt;
+            fps_frames = 0;
+            fps_last = now;
+        }
+
         for event in window.events().iter() {
             if let WindowEvent::Key(key, Action::Release, _) = event.value {
                 match key {
-                    Key::O => {
-                        if let Some(paths) =
-                            FileDialog::new().add_filter("PLY", &["ply"]).pick_files()
-                        {
-                            let mut ok = 0usize;
-                            let mut failed = 0usize;
-                            for p in paths {
-                                match load_ply_points(&p) {
-                                    Ok(c) => {
-                                        clouds.push(c);
-                                        ok += 1;
-                                    },
-                                    Err(_) => failed += 1,
-                                }
-                            }
-                            status = format!(
-                                "Imported {ok} file(s), failed {failed}. Total clouds: {}",
-                                clouds.len()
-                            );
-                        }
-                    },
-                    Key::X => {
-                        clouds.clear();
-                        status = "Scene cleared.".to_string();
-                    },
-                    Key::F => {
-                        if center_all_points(&clouds, &mut perspective) {
-                            status = "Centered view to all loaded points.".to_string();
-                        } else {
-                            status = "No points to center.".to_string();
-                        }
-                    },
                     Key::LBracket => point_size = (point_size - 0.25).max(1.0),
                     Key::RBracket => point_size = (point_size + 0.25).min(10.0),
-                    Key::Minus => perspective.set_fov(
-                        (perspective.fov() - 2_f32.to_radians())
-                            .clamp(5_f32.to_radians(), 120_f32.to_radians()),
-                    ),
-                    Key::Equals => perspective.set_fov(
-                        (perspective.fov() + 2_f32.to_radians())
-                            .clamp(5_f32.to_radians(), 120_f32.to_radians()),
-                    ),
                     _ => {},
                 }
             }
         }
 
-        apply_keyboard_camera_controls(&window, &mut perspective);
+        let ui_capturing_keyboard = window.is_egui_capturing_keyboard();
+        if !ui_capturing_keyboard {
+            apply_keyboard_camera_controls(&window, &mut perspective);
+        }
         for cloud in &clouds {
+            if !cloud.visible {
+                continue;
+            }
             for (idx, point) in cloud.points.iter().enumerate() {
                 let color = cloud.colors.get(idx).copied().unwrap_or(WHITE);
                 window.draw_point(*point, color, point_size);
             }
         }
 
-        let overlay = OverlayContext {
-            clouds: &clouds,
-            point_size,
-            status: &status,
-            camera: &perspective,
-        };
-        draw_overlay(&mut window, &font, &overlay);
+        let mut ui_request_open = false;
+        let mut ui_request_clear = false;
+        let mut ui_request_fit = false;
+        window.draw_ui(|ctx| {
+            egui::Window::new("PLY Viewer")
+                .anchor(Align2::LEFT_TOP, [10.0, 10.0])
+                .resizable(true)
+                .default_width(360.0)
+                .show(ctx, |ui| {
+                    ui.style_mut().interaction.selectable_labels = false;
+                    ui.horizontal(|ui| {
+                        if ui.button("Open PLY...").clicked() {
+                            ui_request_open = true;
+                        }
+                        if ui.button("Clear").clicked() {
+                            ui_request_clear = true;
+                        }
+                        if ui.button("Fit").clicked() {
+                            ui_request_fit = true;
+                        }
+                    });
+                    ui.separator();
+                    ui.add(egui::Slider::new(&mut point_size, 1.0..=10.0).text("Point Size"));
+                    ui.separator();
+                    ui.separator();
+                    ui.label("Loaded clouds:");
+                    let mut visible_clouds = 0usize;
+                    let mut visible_points = 0usize;
+                    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+                        for cloud in clouds.iter_mut().take(128) {
+                            if cloud.visible {
+                                visible_clouds += 1;
+                                visible_points += cloud.points.len();
+                            }
+                            let label = format!(
+                                "{} ({} pts)",
+                                short_cloud_name(&cloud.source),
+                                cloud.points.len()
+                            );
+                            ui.checkbox(&mut cloud.visible, label);
+                        }
+                        if clouds.is_empty() {
+                            ui.colored_label(Color32::DARK_GRAY, "(none)");
+                        }
+                    });
+                    ui.separator();
+                    ui.label(format!("FPS: {:.1}", fps));
+                    ui.label(format!("Visible Clouds: {}", visible_clouds));
+                    ui.label(format!("Visible Points: {}", visible_points));
+                    ui.separator();
+                    ui.colored_label(
+                        Color32::LIGHT_BLUE,
+                        "Hotkeys: [ ] point size, WASDQE move, Z/C zoom",
+                    );
+                });
+        });
+
+        if ui_request_open {
+            let (ok, _) = import_ply_files(&mut clouds);
+            if ok > 0 {
+                let _ = center_all_points(&clouds, &mut perspective);
+            }
+        }
+        if ui_request_clear {
+            clouds.clear();
+        }
+        if ui_request_fit {
+            let _ = center_all_points(&clouds, &mut perspective);
+        }
     }
 
     Ok(())
+}
+
+fn import_ply_files(clouds: &mut Vec<PointCloud>) -> (usize, usize) {
+    let mut ok = 0usize;
+    let mut failed = 0usize;
+    if let Some(paths) = FileDialog::new().add_filter("PLY", &["ply"]).pick_files() {
+        for p in paths {
+            match load_ply_points(&p) {
+                Ok(c) => {
+                    clouds.push(c);
+                    ok += 1;
+                },
+                Err(_) => failed += 1,
+            }
+        }
+    }
+    (ok, failed)
 }
 
 fn apply_keyboard_camera_controls(
@@ -201,48 +252,6 @@ fn apply_keyboard_camera_controls(
         d /= zoom_factor;
     }
     perspective.set_dist(d.max(0.001));
-}
-
-fn draw_overlay(window: &mut Window, font: &std::sync::Arc<Font>, ctx: &OverlayContext<'_>) {
-    let total_points: usize = ctx.clouds.iter().map(|c| c.points.len()).sum();
-    let params = format!("fov={:.1}deg", ctx.camera.fov().to_degrees());
-
-    let help = [
-        "O: open PLY files (multi-select)",
-        "X: clear scene",
-        "F: fit/center all loaded points",
-        "WASDQE: move target   Z/C: zoom",
-        "[ / ]: point size",
-        "- / =: fov",
-        "Mouse: orbit/drag/scroll (OrbitCamera3d controls)",
-    ];
-
-    window.draw_text(
-        &format!(
-            "Mode: Perspective | {params} | Clouds: {} | Points: {} | PointSize: {:.2}",
-            ctx.clouds.len(),
-            total_points,
-            ctx.point_size
-        ),
-        Vec2::new(10.0, 10.0),
-        22.0,
-        font,
-        WHITE,
-    );
-    window.draw_text(ctx.status, Vec2::new(10.0, 36.0), 20.0, font, GREEN);
-
-    let mut y = 64.0;
-    for line in help {
-        window.draw_text(line, Vec2::new(10.0, y), 18.0, font, RED);
-        y += 18.0;
-    }
-
-    let mut file_y = y + 8.0;
-    for cloud in ctx.clouds.iter().take(6) {
-        let label = format!("- {} ({} pts)", cloud.source.display(), cloud.points.len());
-        window.draw_text(&label, Vec2::new(10.0, file_y), 16.0, font, BLACK);
-        file_y += 16.0;
-    }
 }
 
 fn center_all_points(
@@ -293,7 +302,7 @@ fn load_ply_points(path: &Path) -> Result<PointCloud> {
     let mut points = Vec::with_capacity(vertices.len());
     let mut colors = Vec::with_capacity(vertices.len());
     for v in vertices {
-        let p = Vec3::new(v.x, v.y, v.z);
+        let p = ds3_to_kiss3d_point(Vec3::new(v.x, v.y, v.z));
         points.push(p);
         let color = if v.has_color {
             Color::new(v.r as f32 / 255.0, v.g as f32 / 255.0, v.b as f32 / 255.0, 1.0)
@@ -303,7 +312,23 @@ fn load_ply_points(path: &Path) -> Result<PointCloud> {
         colors.push(color);
     }
 
-    Ok(PointCloud { source: path.to_path_buf(), points, colors })
+    Ok(PointCloud { source: path.to_path_buf(), points, colors, visible: true })
+}
+
+fn ds3_to_kiss3d_point(p: Vec3) -> Vec3 {
+    // Convert left-handed (+Z forward) DS3 world points to right-handed view space for kiss3d.
+    Vec3::new(p.x, p.y, -p.z)
+}
+
+fn short_cloud_name(path: &Path) -> String {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+    if let Some((_, rest)) = stem.split_once(".exe ") {
+        return rest.to_string();
+    }
+    if let Some((_, rest)) = stem.split_once("exe ") {
+        return rest.to_string();
+    }
+    stem.to_string()
 }
 
 fn property_to_f32(p: &Property) -> Option<f32> {

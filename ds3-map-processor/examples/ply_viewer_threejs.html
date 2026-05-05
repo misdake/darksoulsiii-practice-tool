@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DS3 PLY Viewer (three.js)</title>
+  <style>
+    :root {
+      --bg: #0f1116;
+      --panel: #171a22;
+      --text: #e8ebf2;
+      --muted: #9aa3b2;
+      --line: #2b3140;
+      --accent: #74a7ff;
+    }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    #app {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+    #panel {
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      width: 360px;
+      max-height: calc(100% - 24px);
+      overflow: auto;
+      background: color-mix(in srgb, var(--panel) 92%, transparent);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      box-sizing: border-box;
+      backdrop-filter: blur(6px);
+      z-index: 2;
+    }
+    #panel h1 {
+      margin: 0 0 10px;
+      font-size: 15px;
+      font-weight: 700;
+    }
+    .row { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+    .btn {
+      border: 1px solid var(--line);
+      background: #1d2230;
+      color: var(--text);
+      border-radius: 6px;
+      padding: 6px 10px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .btn:hover { border-color: var(--accent); }
+    .stat { color: var(--muted); font-size: 12px; margin: 4px 0; }
+    .section-title {
+      margin: 12px 0 6px;
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    #cloudList { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; }
+    .cloud-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      margin: 6px 0;
+      word-break: break-all;
+    }
+    input[type="range"] { width: 100%; }
+    #fileInput { display: none; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="panel">
+      <h1>DS3 PLY Viewer (three.js)</h1>
+      <div class="row">
+        <button id="openBtn" class="btn">Open PLY...</button>
+        <button id="clearBtn" class="btn">Clear</button>
+        <button id="fitBtn" class="btn">Fit</button>
+      </div>
+      <div class="section-title">Point Size</div>
+      <input id="sizeSlider" type="range" min="0.02" max="8" step="0.02" value="0.2" />
+      <div id="sizeText" class="stat">Point size: 0.2</div>
+      <div class="section-title">Stats</div>
+      <div id="fpsStat" class="stat">FPS: -</div>
+      <div id="cloudStat" class="stat">Visible Clouds: 0</div>
+      <div id="pointStat" class="stat">Visible Points: 0</div>
+      <div class="section-title">Loaded Clouds</div>
+      <div id="cloudList"></div>
+      <div class="section-title">Help</div>
+      <div class="stat">Mouse Left: orbit</div>
+      <div class="stat">Mouse Right / Shift+Left: pan</div>
+      <div class="stat">Wheel: zoom</div>
+    </div>
+    <input id="fileInput" type="file" accept=".ply" multiple />
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.164.1/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.164.1/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from "https://unpkg.com/three@0.164.1/build/three.module.js";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { PLYLoader } from "three/addons/loaders/PLYLoader.js";
+
+    const app = document.getElementById("app");
+    const fileInput = document.getElementById("fileInput");
+    const openBtn = document.getElementById("openBtn");
+    const clearBtn = document.getElementById("clearBtn");
+    const fitBtn = document.getElementById("fitBtn");
+    const sizeSlider = document.getElementById("sizeSlider");
+    const sizeText = document.getElementById("sizeText");
+    const cloudList = document.getElementById("cloudList");
+    const fpsStat = document.getElementById("fpsStat");
+    const cloudStat = document.getElementById("cloudStat");
+    const pointStat = document.getElementById("pointStat");
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0f1116);
+
+    const camera = new THREE.PerspectiveCamera(45, app.clientWidth / app.clientHeight, 0.01, 1_000_000);
+    camera.position.set(0, 0, 10);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.setSize(app.clientWidth, app.clientHeight);
+    app.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.target.set(0, 0, 0);
+
+    const light = new THREE.AmbientLight(0xffffff, 0.8);
+    scene.add(light);
+
+    const loader = new PLYLoader();
+    const clouds = [];
+
+    function shortCloudName(filename) {
+      const stem = filename.replace(/\.ply$/i, "");
+      const m = stem.match(/\.exe\s+(.+)$/i) || stem.match(/exe\s+(.+)$/i);
+      return m ? m[1] : stem;
+    }
+
+    function ds3ToViewer(positions) {
+      for (let i = 2; i < positions.length; i += 3) {
+        positions[i] = -positions[i];
+      }
+    }
+
+    function rebuildListAndStats() {
+      cloudList.innerHTML = "";
+      let visibleClouds = 0;
+      let visiblePoints = 0;
+
+      for (const cloud of clouds) {
+        if (cloud.visible) {
+          visibleClouds += 1;
+          visiblePoints += cloud.pointCount;
+        }
+
+        const item = document.createElement("label");
+        item.className = "cloud-item";
+
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = cloud.visible;
+        cb.addEventListener("change", () => {
+          cloud.visible = cb.checked;
+          cloud.points.visible = cb.checked;
+          rebuildListAndStats();
+        });
+
+        const text = document.createElement("span");
+        text.textContent = `${cloud.label} (${cloud.pointCount} pts)`;
+
+        item.appendChild(cb);
+        item.appendChild(text);
+        cloudList.appendChild(item);
+      }
+
+      cloudStat.textContent = `Visible Clouds: ${visibleClouds}`;
+      pointStat.textContent = `Visible Points: ${visiblePoints}`;
+    }
+
+    function fitVisible() {
+      const box = new THREE.Box3();
+      let has = false;
+
+      for (const cloud of clouds) {
+        if (!cloud.visible) continue;
+        box.expandByObject(cloud.points);
+        has = true;
+      }
+      if (!has) return;
+
+      const center = new THREE.Vector3();
+      const size = new THREE.Vector3();
+      box.getCenter(center);
+      box.getSize(size);
+      const radius = Math.max(size.length() * 0.5, 1);
+
+      controls.target.copy(center);
+      camera.position.copy(center).add(new THREE.Vector3(0, 0, radius * 2.5));
+      camera.near = 0.01;
+      camera.far = Math.max(radius * 100, 10_000);
+      camera.updateProjectionMatrix();
+      controls.update();
+    }
+
+    function clearAll() {
+      for (const cloud of clouds) {
+        scene.remove(cloud.points);
+        cloud.geometry.dispose();
+        cloud.material.dispose();
+      }
+      clouds.length = 0;
+      rebuildListAndStats();
+    }
+
+    async function openFiles(fileList) {
+      if (!fileList || fileList.length === 0) return;
+      for (const file of fileList) {
+        const buffer = await file.arrayBuffer();
+        const geometry = loader.parse(buffer);
+
+        const pos = geometry.attributes.position;
+        ds3ToViewer(pos.array);
+        pos.needsUpdate = true;
+        geometry.computeBoundingBox();
+        geometry.computeBoundingSphere();
+
+        let material;
+        const hasColor = !!geometry.attributes.color;
+        if (hasColor) {
+          material = new THREE.PointsMaterial({ size: Number(sizeSlider.value), vertexColors: true });
+        } else {
+          material = new THREE.PointsMaterial({ size: Number(sizeSlider.value), color: 0xffffff });
+        }
+
+        const points = new THREE.Points(geometry, material);
+        points.frustumCulled = false;
+        scene.add(points);
+
+        clouds.push({
+          label: shortCloudName(file.name),
+          points,
+          geometry,
+          material,
+          pointCount: pos.count,
+          visible: true,
+        });
+      }
+      rebuildListAndStats();
+      fitVisible();
+    }
+
+    openBtn.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", async () => {
+      await openFiles(fileInput.files);
+      fileInput.value = "";
+    });
+    clearBtn.addEventListener("click", clearAll);
+    fitBtn.addEventListener("click", fitVisible);
+
+    sizeSlider.addEventListener("input", () => {
+      const size = Number(sizeSlider.value);
+      sizeText.textContent = `Point size: ${size.toFixed(2)}`;
+      for (const cloud of clouds) {
+        cloud.material.size = size;
+        cloud.material.needsUpdate = true;
+      }
+    });
+
+    window.addEventListener("resize", () => {
+      const w = app.clientWidth;
+      const h = app.clientHeight;
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    });
+
+    let last = performance.now();
+    let frames = 0;
+    function animate(now) {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+
+      frames += 1;
+      const dt = now - last;
+      if (dt >= 250) {
+        fpsStat.textContent = `FPS: ${(frames * 1000 / dt).toFixed(1)}`;
+        frames = 0;
+        last = now;
+      }
+    }
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
