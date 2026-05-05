@@ -111,7 +111,7 @@ fn apply_no_logo() {
     ]);
 }
 
-fn start_practice_tool(hmodule: HINSTANCE) {
+fn start_plugin(hmodule: HINSTANCE) {
     let practice_tool = Probe::new();
 
     if let Err(e) = Hudhook::builder()
@@ -184,10 +184,10 @@ pub unsafe extern "system" fn DllMain(hmodule: HINSTANCE, reason: u32, _: *mut c
                 .unwrap_or(false)
             {
                 if env_start_requested() || await_rshift() {
-                    start_practice_tool(hmodule)
+                    start_plugin(hmodule)
                 }
             } else {
-                start_practice_tool(hmodule)
+                start_plugin(hmodule)
             }
         });
     }
