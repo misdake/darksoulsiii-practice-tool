@@ -1,7 +1,7 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
-use std::collections::HashMap;
 
 use anyhow::{anyhow, Context, Result};
 use kiss3d::camera::{Camera3d, OrbitCamera3d};
@@ -46,20 +46,20 @@ impl PropertyAccess for VertexLite {
                     self.r = v;
                     self.has_color = true;
                 }
-            }
+            },
             "green" | "g" => {
                 if let Some(v) = property_to_u8(&property) {
                     self.g = v;
                     self.has_color = true;
                 }
-            }
+            },
             "blue" | "b" => {
                 if let Some(v) = property_to_u8(&property) {
                     self.b = v;
                     self.has_color = true;
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 }
@@ -79,6 +79,15 @@ struct OrthoOrbitCamera {
     proj: Mat4,
     proj_view: Mat4,
     inv_proj_view: Mat4,
+}
+
+struct OverlayContext<'a> {
+    projection: ProjectionMode,
+    clouds: &'a [PointCloud],
+    point_size: f32,
+    status: &'a str,
+    perspective: &'a OrbitCamera3d,
+    orthographic: &'a OrthoOrbitCamera,
 }
 
 impl OrthoOrbitCamera {
@@ -193,10 +202,10 @@ fn run() -> Result<()> {
         match projection {
             ProjectionMode::Perspective => {
                 kiss3d::pollster::block_on(window.render_3d(&mut scene, &mut perspective))
-            }
+            },
             ProjectionMode::Orthographic => {
                 kiss3d::pollster::block_on(window.render_3d(&mut scene, &mut orthographic))
-            }
+            },
         }
     } {
         for event in window.events().iter() {
@@ -282,35 +291,26 @@ fn run() -> Result<()> {
                             orthographic.set_ortho_scale(orthographic.ortho_scale / 1.1);
                         }
                     },
-                    Key::Comma => {
-                        if projection == ProjectionMode::Orthographic {
-                            orthographic.set_clip_planes(
-                                (orthographic.znear * 0.9).max(0.0001),
-                                orthographic.zfar,
-                            );
-                        }
+                    Key::Comma if projection == ProjectionMode::Orthographic => {
+                        orthographic.set_clip_planes(
+                            (orthographic.znear * 0.9).max(0.0001),
+                            orthographic.zfar,
+                        );
                     },
-                    Key::Period => {
-                        if projection == ProjectionMode::Orthographic {
-                            orthographic.set_clip_planes(
-                                (orthographic.znear * 1.1).max(0.0001),
-                                orthographic.zfar,
-                            );
-                        }
+                    Key::Period if projection == ProjectionMode::Orthographic => {
+                        orthographic.set_clip_planes(
+                            (orthographic.znear * 1.1).max(0.0001),
+                            orthographic.zfar,
+                        );
                     },
-                    Key::Semicolon => {
-                        if projection == ProjectionMode::Orthographic {
-                            orthographic.set_clip_planes(
-                                orthographic.znear,
-                                (orthographic.zfar * 0.9).max(orthographic.znear + 0.01),
-                            );
-                        }
+                    Key::Semicolon if projection == ProjectionMode::Orthographic => {
+                        orthographic.set_clip_planes(
+                            orthographic.znear,
+                            (orthographic.zfar * 0.9).max(orthographic.znear + 0.01),
+                        );
                     },
-                    Key::Apostrophe => {
-                        if projection == ProjectionMode::Orthographic {
-                            orthographic
-                                .set_clip_planes(orthographic.znear, orthographic.zfar * 1.1);
-                        }
+                    Key::Apostrophe if projection == ProjectionMode::Orthographic => {
+                        orthographic.set_clip_planes(orthographic.znear, orthographic.zfar * 1.1);
                     },
                     _ => {},
                 }
@@ -324,16 +324,15 @@ fn run() -> Result<()> {
             }
         }
 
-        draw_overlay(
-            &mut window,
-            &font,
+        let overlay = OverlayContext {
             projection,
-            &clouds,
+            clouds: &clouds,
             point_size,
-            &status,
-            &perspective,
-            &orthographic,
-        );
+            status: &status,
+            perspective: &perspective,
+            orthographic: &orthographic,
+        };
+        draw_overlay(&mut window, &font, &overlay);
     }
 
     Ok(())
@@ -349,22 +348,13 @@ fn create_debug_cloud(scene: &mut SceneNode3d, point_size: f32) -> PointCloud {
     }
     points.push(Vec3::new(0.0, 0.0, 0.0));
 
-    let render_mesh = RenderMesh::new(
-        points.clone(),
-        None,
-        None,
-        None,
-    );
+    let render_mesh = RenderMesh::new(points.clone(), None, None, None);
     let mut node = scene.add_render_mesh(render_mesh, Vec3::ONE);
     node.set_surface_rendering_activation(false);
     node.set_points_size(point_size.max(2.0), false);
     node.set_points_color(Some(WHITE));
 
-    PointCloud {
-        source: PathBuf::from("[debug-origin-cloud]"),
-        points,
-        nodes: vec![node],
-    }
+    PointCloud { source: PathBuf::from("[debug-origin-cloud]"), points, nodes: vec![node] }
 }
 
 fn apply_keyboard_camera_controls(
@@ -442,27 +432,18 @@ fn apply_keyboard_camera_controls(
     }
 }
 
-fn draw_overlay(
-    window: &mut Window,
-    font: &std::sync::Arc<Font>,
-    projection: ProjectionMode,
-    clouds: &[PointCloud],
-    point_size: f32,
-    status: &str,
-    perspective: &OrbitCamera3d,
-    orthographic: &OrthoOrbitCamera,
-) {
-    let total_points: usize = clouds.iter().map(|c| c.points.len()).sum();
-    let mode_text = match projection {
+fn draw_overlay(window: &mut Window, font: &std::sync::Arc<Font>, ctx: &OverlayContext<'_>) {
+    let total_points: usize = ctx.clouds.iter().map(|c| c.points.len()).sum();
+    let mode_text = match ctx.projection {
         ProjectionMode::Perspective => "Perspective",
         ProjectionMode::Orthographic => "Orthographic",
     };
 
-    let params = match projection {
-        ProjectionMode::Perspective => format!("fov={:.1}deg", perspective.fov().to_degrees()),
+    let params = match ctx.projection {
+        ProjectionMode::Perspective => format!("fov={:.1}deg", ctx.perspective.fov().to_degrees()),
         ProjectionMode::Orthographic => format!(
             "scale={:.3}, near={:.3}, far={:.1}",
-            orthographic.ortho_scale, orthographic.znear, orthographic.zfar
+            ctx.orthographic.ortho_scale, ctx.orthographic.znear, ctx.orthographic.zfar
         ),
     };
 
@@ -482,16 +463,16 @@ fn draw_overlay(
     window.draw_text(
         &format!(
             "Mode: {mode_text} | {params} | Clouds: {} | Points: {} | PointSize: {:.2}",
-            clouds.len(),
+            ctx.clouds.len(),
             total_points,
-            point_size
+            ctx.point_size
         ),
         Vec2::new(10.0, 10.0),
         22.0,
         font,
         WHITE,
     );
-    window.draw_text(status, Vec2::new(10.0, 36.0), 20.0, font, GREEN);
+    window.draw_text(ctx.status, Vec2::new(10.0, 36.0), 20.0, font, GREEN);
 
     let mut y = 64.0;
     for line in help {
@@ -500,7 +481,7 @@ fn draw_overlay(
     }
 
     let mut file_y = y + 8.0;
-    for cloud in clouds.iter().take(6) {
+    for cloud in ctx.clouds.iter().take(6) {
         let label = format!("- {} ({} pts)", cloud.source.display(), cloud.points.len());
         window.draw_text(&label, Vec2::new(10.0, file_y), 16.0, font, BLACK);
         file_y += 16.0;
@@ -583,11 +564,7 @@ fn load_ply_points(path: &Path, scene: &mut SceneNode3d, point_size: f32) -> Res
         nodes.push(node);
     }
 
-    Ok(PointCloud {
-        source: path.to_path_buf(),
-        points,
-        nodes,
-    })
+    Ok(PointCloud { source: path.to_path_buf(), points, nodes })
 }
 
 fn property_to_f32(p: &Property) -> Option<f32> {

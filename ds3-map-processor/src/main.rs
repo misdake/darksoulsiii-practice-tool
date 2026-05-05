@@ -281,11 +281,7 @@ fn camera_to_world(
 }
 
 fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    [
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    ]
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
 
 fn normalize3(v: [f32; 3]) -> [f32; 3] {
@@ -296,7 +292,6 @@ fn normalize3(v: [f32; 3]) -> [f32; 3] {
         [v[0] / len, v[1] / len, v[2] / len]
     }
 }
-
 
 fn detect_depth_convention(capture: &CaptureData) -> DepthConvention {
     let mut values: Vec<f32> = capture.depth.iter().copied().filter(|v| v.is_finite()).collect();

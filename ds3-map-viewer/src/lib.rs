@@ -15,9 +15,9 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 mod config;
-mod viewer;
-mod util;
 mod map;
+mod util;
+mod viewer;
 
 use std::ffi::c_void;
 use std::sync::atomic::Ordering;

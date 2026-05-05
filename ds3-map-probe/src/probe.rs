@@ -222,11 +222,15 @@ impl ImguiRenderLoop for Probe {
 
                     ui.text(format!(
                         "Camera Up [x,y,z]: {:.3}, {:.3}, {:.3}",
-                        render_state.camera_up[0], render_state.camera_up[1], render_state.camera_up[2]
+                        render_state.camera_up[0],
+                        render_state.camera_up[1],
+                        render_state.camera_up[2]
                     ));
                     ui.text(format!(
                         "Camera Dir [x,y,z]: {:.3}, {:.3}, {:.3}",
-                        render_state.camera_dir[0], render_state.camera_dir[1], render_state.camera_dir[2]
+                        render_state.camera_dir[0],
+                        render_state.camera_dir[1],
+                        render_state.camera_dir[2]
                     ));
                 } else {
                     ui.text("Camera render state: N/A");

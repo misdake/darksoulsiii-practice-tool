@@ -2,9 +2,7 @@ use hudhook::inject::Process;
 use hudhook::tracing::trace;
 use tracing_subscriber::filter::LevelFilter;
 use windows::core::PCSTR;
-use windows::Win32::UI::WindowsAndMessaging::{
-    MessageBoxA, MB_ICONERROR, MB_OK,
-};
+use windows::Win32::UI::WindowsAndMessaging::{MessageBoxA, MB_ICONERROR, MB_OK};
 
 fn err_to_string<T: std::fmt::Display>(e: T) -> String {
     format!("Error: {}", e)

@@ -3,23 +3,15 @@ use std::path::PathBuf;
 use hudhook::tracing::error;
 use serde::{Deserialize, Serialize};
 
-use crate::map::{
-    DIRECTION_OFFSET_MAX, DIRECTION_OFFSET_MIN, SIZE_SCALE_MAX, SIZE_SCALE_MIN,
-};
+use crate::map::{DIRECTION_OFFSET_MAX, DIRECTION_OFFSET_MIN, SIZE_SCALE_MAX, SIZE_SCALE_MIN};
 use crate::util;
 
 const CONFIG_FILE_NAME: &str = "ds3_map_viewer.toml";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct AppConfig {
     pub map: MapConfig,
-}
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        AppConfig { map: MapConfig::default() }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

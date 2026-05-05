@@ -42,7 +42,12 @@ impl CameraInfo {
 
     /// returns (visible, dir)
     pub fn update(&mut self) -> (bool, f32) {
-        if let (Some(player_position), Some(camera_follow), Some(camera_global), Some([_rot_x, rot_y])) = (
+        if let (
+            Some(player_position),
+            Some(camera_follow),
+            Some(camera_global),
+            Some([_rot_x, rot_y]),
+        ) = (
             self.position.read(),
             self.camera_position_follow.read(),
             self.camera_position_global.read(),
