@@ -101,17 +101,17 @@ pub struct CameraPointers {
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct CameraRenderState {
-    _pad0: [u8; 0x28],      // [0, 28)
-    pub quat_w: f32,        // [28, 2c)
-    _pad1: [u8; 0x04],      // [2c, 30)
-    pub quat_xyz: [f32; 3], // [30, 3c)
-    _pad2: [u8; 0x04],      // [3c, 40)
-    pub position: [f32; 3], // [40, 4c)
-    _pad3: [u8; 0x04],      // [4c, 50)
-    pub fov: f32,           // // [50, 54)
-    _pad4: [u8; 0x04],      // [54, 58)
-    pub near: f32,          // [58, 5c)
-    pub far: f32,           // [5c, 60)
+    _pad0: [u8; 0x20],        // [0, 20)
+    pub camera_up: [f32; 3],  // [20, 2c)
+    _pad1: [u8; 0x04],        // [2c, 30)
+    pub camera_dir: [f32; 3], // [30, 3c)
+    _pad2: [u8; 0x04],        // [3c, 40)
+    pub position: [f32; 3],   // [40, 4c)
+    _pad3: [u8; 0x04],        // [4c, 50)
+    pub fov: f32,             // [50, 54)
+    _pad4: [u8; 0x04],        // [54, 58)
+    pub near: f32,            // [58, 5c)
+    pub far: f32,             // [5c, 60)
 }
 
 impl From<BaseAddresses> for PointerChains {

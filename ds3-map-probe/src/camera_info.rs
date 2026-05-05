@@ -86,11 +86,10 @@ impl CameraInfo {
         false
     }
 
-    pub fn set_quat(&self, wxyz: [f32; 4]) {
+    pub fn set_camera_up_dir(&self, up: [f32; 3], dir: [f32; 3]) {
         if let Some(mut state) = self.camera_render_state.read() {
-            // This orientation points the camera forward to Y- and up to Z-.
-            state.quat_w = wxyz[0];
-            state.quat_xyz = [wxyz[1], wxyz[2], wxyz[3]];
+            state.camera_up = up;
+            state.camera_dir = dir;
             self.camera_render_state.write(state);
         }
     }

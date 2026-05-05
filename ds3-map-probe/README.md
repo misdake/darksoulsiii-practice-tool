@@ -67,7 +67,8 @@ Current metadata fields written by probe:
 - `depth_file`
 - `player_position`
 - `camera_position`
-- `camera_quat_wxyz`
+- `camera_up`
+- `camera_dir`
 - `camera_fov`
 - `camera_near`
 - `camera_far`

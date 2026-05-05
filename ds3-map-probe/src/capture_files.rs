@@ -138,8 +138,10 @@ fn build_metadata_toml(
         out.push_str(&format!("camera_position = [{x}, {y}, {z}]\n"));
     }
     if let Some(state) = ctx.camera_render_state {
-        let [qx, qy, qz] = state.quat_xyz;
-        out.push_str(&format!("camera_quat_wxyz = [{}, {qx}, {qy}, {qz}]\n", state.quat_w));
+        let [ux, uy, uz] = state.camera_up;
+        let [dx, dy, dz] = state.camera_dir;
+        out.push_str(&format!("camera_up = [{ux}, {uy}, {uz}]\n"));
+        out.push_str(&format!("camera_dir = [{dx}, {dy}, {dz}]\n"));
         out.push_str(&format!("camera_fov = {}\n", state.fov));
         out.push_str(&format!("camera_near = {}\n", state.near));
         out.push_str(&format!("camera_far = {}\n", state.far));

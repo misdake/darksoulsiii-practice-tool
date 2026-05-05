@@ -53,12 +53,8 @@ impl Probe {
 
     fn reset_free_camera(&self) {
         self.camera_info.set_camera_position_from_player_offset([0.0, 10.0, 0.0]);
-        self.camera_info.set_quat([
-            -std::f32::consts::FRAC_1_SQRT_2,
-            0.0,
-            -std::f32::consts::FRAC_1_SQRT_2,
-            0.0,
-        ]);
+        // Top-down view: look toward Y-, with up set to Z- for stable roll.
+        self.camera_info.set_camera_up_dir([0.0, 0.0, -1.0], [0.0, -1.0, 0.0]);
     }
 
     fn process_capture_files(&mut self) {
@@ -224,11 +220,13 @@ impl ImguiRenderLoop for Probe {
                         ui.text("Invalid range: require 0.001 < near < far < 100000.");
                     }
 
-                    let qw = render_state.quat_w;
-                    let [qx, qy, qz] = render_state.quat_xyz;
                     ui.text(format!(
-                        "Camera Quat [w,x,y,z]: {:.3}, {:.3}, {:.3}, {:.3}",
-                        qw, qx, qy, qz
+                        "Camera Up [x,y,z]: {:.3}, {:.3}, {:.3}",
+                        render_state.camera_up[0], render_state.camera_up[1], render_state.camera_up[2]
+                    ));
+                    ui.text(format!(
+                        "Camera Dir [x,y,z]: {:.3}, {:.3}, {:.3}",
+                        render_state.camera_dir[0], render_state.camera_dir[1], render_state.camera_dir[2]
                     ));
                 } else {
                     ui.text("Camera render state: N/A");
