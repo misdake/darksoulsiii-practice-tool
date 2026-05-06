@@ -44,8 +44,8 @@ fn main() -> Result<()> {
         let capture = load_capture_from_toml(&toml_path)?;
         print_depth_diagnostics(&capture);
 
-        let out_path = toml_path.with_extension("ply");
-        export_point_cloud_ply(&capture, &out_path, 2)?;
+        let out_path = toml_path.with_extension("ds3pcd");
+        export_point_cloud_binary(&capture, &out_path, 2)?;
         println!("Wrote point cloud: {}", out_path.display());
     }
 
@@ -186,14 +186,15 @@ fn read_depth_exr_first_channel(path: &Path) -> Result<(Vec<f32>, usize, usize)>
     Ok((depth, w, h))
 }
 
-fn export_point_cloud_ply(capture: &CaptureData, out_path: &Path, stride: usize) -> Result<()> {
+fn export_point_cloud_binary(capture: &CaptureData, out_path: &Path, stride: usize) -> Result<()> {
     let w = capture.width;
     let h = capture.height;
     let aspect = w as f32 / h as f32;
     let tan_half_fovy = (capture.fov_y_rad * 0.5).tan();
     let tan_half_fovx = tan_half_fovy * aspect;
 
-    let mut points: Vec<(f32, f32, f32, u8, u8, u8)> = Vec::new();
+    let mut positions: Vec<f32> = Vec::new();
+    let mut colors: Vec<f32> = Vec::new();
     for y in (0..h).step_by(stride.max(1)) {
         for x in (0..w).step_by(stride.max(1)) {
             let idx = y * w + x;
@@ -221,26 +222,40 @@ fn export_point_cloud_ply(capture: &CaptureData, out_path: &Path, stride: usize)
             );
 
             let rgb = capture.rgb.get_pixel(x as u32, y as u32).0;
-            points.push((wx, wy, wz, rgb[0], rgb[1], rgb[2]));
+            positions.extend_from_slice(&[wx, wy, wz]);
+            colors.extend_from_slice(&[
+                srgb_u8_to_linear_f32(rgb[0]),
+                srgb_u8_to_linear_f32(rgb[1]),
+                srgb_u8_to_linear_f32(rgb[2]),
+            ]);
         }
     }
 
-    let mut ply = String::new();
-    ply.push_str("ply\n");
-    ply.push_str("format ascii 1.0\n");
-    ply.push_str(&format!("element vertex {}\n", points.len()));
-    ply.push_str("property float x\n");
-    ply.push_str("property float y\n");
-    ply.push_str("property float z\n");
-    ply.push_str("property uchar red\n");
-    ply.push_str("property uchar green\n");
-    ply.push_str("property uchar blue\n");
-    ply.push_str("end_header\n");
-    for (x, y, z, r, g, b) in points {
-        ply.push_str(&format!("{x} {y} {z} {r} {g} {b}\n"));
+    let point_count = (positions.len() / 3) as u32;
+    let header_size = 32u32;
+    let positions_offset = header_size;
+    let colors_offset = positions_offset + point_count * 3 * std::mem::size_of::<f32>() as u32;
+
+    // v1 (u8 RGB) is retired; v2 stores linear RGB as f32 triplets.
+    let colors_bytes = point_count * 3 * std::mem::size_of::<f32>() as u32;
+    let mut out = Vec::with_capacity((colors_offset + colors_bytes) as usize);
+    out.extend_from_slice(b"DS3PCD1\0");
+    // DS3PCD format version: 2 = positions f32x3 + colors f32x3 (linear).
+    out.extend_from_slice(&2u32.to_le_bytes());
+    out.extend_from_slice(&point_count.to_le_bytes());
+    out.extend_from_slice(&positions_offset.to_le_bytes());
+    out.extend_from_slice(&colors_offset.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes());
+
+    for v in positions {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    for c in colors {
+        out.extend_from_slice(&c.to_le_bytes());
     }
 
-    fs::write(out_path, ply).with_context(|| format!("write {}", out_path.display()))?;
+    fs::write(out_path, out).with_context(|| format!("write {}", out_path.display()))?;
     if let Some([px, py, pz]) = capture.player_position {
         println!("Player position (metadata): [{px:.3}, {py:.3}, {pz:.3}]");
     }
@@ -282,4 +297,9 @@ fn normalize3(v: [f32; 3]) -> [f32; 3] {
 
 fn linearize_depth(depth01: f32, near: f32, far: f32) -> f32 {
     (near * far) / (far - depth01 * (far - near))
+}
+
+fn srgb_u8_to_linear_f32(v: u8) -> f32 {
+    let c = v as f32 / 255.0;
+    if c <= 0.04045 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
 }

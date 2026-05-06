@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DS3 PLY Viewer (three.js)</title>
+  <title>DS3 Point Cloud Viewer (three.js)</title>
   <style>
     :root {
       --bg: #0f1116;
@@ -146,9 +146,9 @@
 <body>
   <div id="app">
     <div id="panel">
-      <h1>DS3 PLY Viewer (three.js)</h1>
+      <h1>DS3 Point Cloud Viewer (three.js)</h1>
       <div class="row">
-        <button id="openBtn" class="btn">Open PLY...</button>
+        <button id="openBtn" class="btn">Open DS3PCD...</button>
         <button id="clearBtn" class="btn">Clear</button>
         <button id="fitBtn" class="btn">Fit</button>
       </div>
@@ -183,7 +183,7 @@
       <div class="stat">Mouse Right / Shift+Left: pan</div>
       <div class="stat">Wheel: zoom</div>
     </div>
-    <input id="fileInput" type="file" accept=".ply" multiple />
+    <input id="fileInput" type="file" accept=".ds3pcd" multiple />
   </div>
 
   <script type="importmap">
@@ -198,7 +198,6 @@
   <script type="module">
     import * as THREE from "https://unpkg.com/three@0.164.1/build/three.module.js";
     import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-    import { PLYLoader } from "three/addons/loaders/PLYLoader.js";
 
     const app = document.getElementById("app");
     const fileInput = document.getElementById("fileInput");
@@ -233,14 +232,13 @@
     const light = new THREE.AmbientLight(0xffffff, 0.8);
     scene.add(light);
 
-    const loader = new PLYLoader();
     const clouds = [];
     const pickedClouds = new Set();
     const raycaster = new THREE.Raycaster();
     const pointerNdc = new THREE.Vector2();
 
     function shortCloudName(filename) {
-      const stem = filename.replace(/\.ply$/i, "");
+      const stem = filename.replace(/\.ds3pcd$/i, "");
       const m = stem.match(/\.exe\s+(.+)$/i) || stem.match(/exe\s+(.+)$/i);
       return m ? m[1] : stem;
     }
@@ -346,25 +344,59 @@
       rebuildListAndStats();
     }
 
+    function parseDs3Pcd(buffer) {
+      const view = new DataView(buffer);
+      const magic = new TextDecoder().decode(new Uint8Array(buffer, 0, 8));
+      if (magic !== "DS3PCD1\u0000") {
+        throw new Error("Invalid magic, expected DS3PCD1");
+      }
+
+      const version = view.getUint32(8, true);
+      // v1 (u8 colors) is intentionally dropped; only v2 (linear f32 colors) is accepted.
+      if (version !== 2) {
+        throw new Error(`Unsupported version: ${version} (expected 2)`);
+      }
+
+      const pointCount = view.getUint32(12, true);
+      const positionsOffset = view.getUint32(16, true);
+      const colorsOffset = view.getUint32(20, true);
+
+      const positionsLen = pointCount * 3;
+      const colorsLen = pointCount * 3;
+      const positionsBytes = positionsLen * 4;
+      const colorsBytes = colorsLen * 4;
+      if (positionsOffset + positionsBytes > buffer.byteLength) {
+        throw new Error("Positions range out of bounds");
+      }
+      if (colorsOffset + colorsBytes > buffer.byteLength) {
+        throw new Error("Colors range out of bounds");
+      }
+
+      const positions = new Float32Array(buffer, positionsOffset, positionsLen);
+      // v2 color payload is tightly packed f32 RGB triplets in linear space.
+      const colors = new Float32Array(buffer, colorsOffset, colorsLen);
+      return { pointCount, positions, colors };
+    }
+
     async function openFiles(fileList) {
       if (!fileList || fileList.length === 0) return;
       for (const file of fileList) {
         const buffer = await file.arrayBuffer();
-        const geometry = loader.parse(buffer);
-
-        const pos = geometry.attributes.position;
-        ds3ToViewer(pos.array);
-        pos.needsUpdate = true;
+        const cloudData = parseDs3Pcd(buffer);
+        ds3ToViewer(cloudData.positions);
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.BufferAttribute(cloudData.positions, 3));
+        geometry.setAttribute(
+          "color",
+          new THREE.BufferAttribute(cloudData.colors, 3),
+        );
         geometry.computeBoundingBox();
         geometry.computeBoundingSphere();
 
-        let material;
-        const hasColor = !!geometry.attributes.color;
-        if (hasColor) {
-          material = new THREE.PointsMaterial({ size: Number(sizeSlider.value), vertexColors: true });
-        } else {
-          material = new THREE.PointsMaterial({ size: Number(sizeSlider.value), color: 0xffffff });
-        }
+        const material = new THREE.PointsMaterial({
+          size: Number(sizeSlider.value),
+          vertexColors: true,
+        });
 
         const points = new THREE.Points(geometry, material);
         points.frustumCulled = false;
@@ -375,7 +407,7 @@
           points,
           geometry,
           material,
-          pointCount: pos.count,
+          pointCount: cloudData.pointCount,
           visible: true,
           listTextEl: null,
         });
