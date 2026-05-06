@@ -66,6 +66,42 @@
       text-transform: uppercase;
       letter-spacing: 0.06em;
     }
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 12px 0 6px;
+    }
+    .section-head .section-title {
+      margin: 0;
+    }
+    .mini-btns {
+      display: flex;
+      gap: 6px;
+    }
+    .mini-btn {
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #1d2230;
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+    }
+    .mini-btn:hover { border-color: var(--accent); }
+    .mini-btn svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
     #cloudList { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; }
     .cloud-item {
       display: flex;
@@ -74,6 +110,34 @@
       font-size: 12px;
       margin: 6px 0;
       word-break: break-all;
+    }
+    .cloud-toggle {
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #1d2230;
+      color: var(--text);
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+      flex: 0 0 auto;
+    }
+    .cloud-toggle:hover { border-color: var(--accent); }
+    .cloud-toggle.off { color: var(--muted); }
+    .cloud-toggle svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .cloud-name-picked {
+      color: var(--accent);
+      font-weight: 700;
     }
     input[type="range"] { width: 100%; }
     #fileInput { display: none; }
@@ -95,7 +159,24 @@
       <div id="fpsStat" class="stat">FPS: -</div>
       <div id="cloudStat" class="stat">Visible Clouds: 0</div>
       <div id="pointStat" class="stat">Visible Points: 0</div>
-      <div class="section-title">Loaded Clouds</div>
+      <div class="section-head">
+        <div class="section-title">Loaded Clouds</div>
+        <div class="mini-btns">
+          <button id="selectAllBtn" class="mini-btn" title="Select all">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"></path>
+              <circle cx="12" cy="12" r="2.8"></circle>
+            </svg>
+          </button>
+          <button id="selectNoneBtn" class="mini-btn" title="Select none">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"></path>
+              <circle cx="12" cy="12" r="2.8"></circle>
+              <path d="M4 20L20 4"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
       <div id="cloudList"></div>
       <div class="section-title">Help</div>
       <div class="stat">Mouse Left: orbit</div>
@@ -127,6 +208,8 @@
     const sizeSlider = document.getElementById("sizeSlider");
     const sizeText = document.getElementById("sizeText");
     const cloudList = document.getElementById("cloudList");
+    const selectAllBtn = document.getElementById("selectAllBtn");
+    const selectNoneBtn = document.getElementById("selectNoneBtn");
     const fpsStat = document.getElementById("fpsStat");
     const cloudStat = document.getElementById("cloudStat");
     const pointStat = document.getElementById("pointStat");
@@ -152,6 +235,9 @@
 
     const loader = new PLYLoader();
     const clouds = [];
+    const pickedClouds = new Set();
+    const raycaster = new THREE.Raycaster();
+    const pointerNdc = new THREE.Vector2();
 
     function shortCloudName(filename) {
       const stem = filename.replace(/\.ply$/i, "");
@@ -179,25 +265,41 @@
         const item = document.createElement("label");
         item.className = "cloud-item";
 
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.checked = cloud.visible;
-        cb.addEventListener("change", () => {
-          cloud.visible = cb.checked;
-          cloud.points.visible = cb.checked;
+        const toggle = document.createElement("button");
+        toggle.className = `cloud-toggle${cloud.visible ? "" : " off"}`;
+        toggle.innerHTML = cloud.visible
+          ? `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"></path><circle cx="12" cy="12" r="2.8"></circle></svg>`
+          : `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"></path><circle cx="12" cy="12" r="2.8"></circle><path d="M4 20L20 4"></path></svg>`;
+        toggle.title = cloud.visible ? "Hide cloud" : "Show cloud";
+        toggle.addEventListener("click", () => {
+          cloud.visible = !cloud.visible;
+          cloud.points.visible = cloud.visible;
           rebuildListAndStats();
         });
 
         const text = document.createElement("span");
         text.textContent = `${cloud.label} (${cloud.pointCount} pts)`;
+        cloud.listTextEl = text;
 
-        item.appendChild(cb);
+        item.appendChild(toggle);
         item.appendChild(text);
         cloudList.appendChild(item);
       }
 
       cloudStat.textContent = `Visible Clouds: ${visibleClouds}`;
       pointStat.textContent = `Visible Points: ${visiblePoints}`;
+      updatePickedHighlight();
+    }
+
+    function updatePickedHighlight() {
+      for (const cloud of clouds) {
+        if (!cloud.listTextEl) continue;
+        if (pickedClouds.has(cloud)) {
+          cloud.listTextEl.classList.add("cloud-name-picked");
+        } else {
+          cloud.listTextEl.classList.remove("cloud-name-picked");
+        }
+      }
     }
 
     function fitVisible() {
@@ -232,6 +334,15 @@
         cloud.material.dispose();
       }
       clouds.length = 0;
+      pickedClouds.clear();
+      rebuildListAndStats();
+    }
+
+    function setAllVisible(visible) {
+      for (const cloud of clouds) {
+        cloud.visible = visible;
+        cloud.points.visible = visible;
+      }
       rebuildListAndStats();
     }
 
@@ -266,10 +377,29 @@
           material,
           pointCount: pos.count,
           visible: true,
+          listTextEl: null,
         });
       }
       rebuildListAndStats();
       fitVisible();
+    }
+
+    function pickCloudsAtClientPos(clientX, clientY) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointerNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+      pointerNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(pointerNdc, camera);
+      raycaster.params.Points.threshold = Number(sizeSlider.value) * 0.5;
+      const visiblePointsObjects = clouds.filter(c => c.visible).map(c => c.points);
+      const hits = raycaster.intersectObjects(visiblePointsObjects, false);
+
+      pickedClouds.clear();
+      for (const hit of hits) {
+        const cloud = clouds.find(c => c.points === hit.object);
+        if (cloud) pickedClouds.add(cloud);
+      }
+      updatePickedHighlight();
     }
 
     openBtn.addEventListener("click", () => fileInput.click());
@@ -288,6 +418,12 @@
         cloud.material.needsUpdate = true;
       }
     });
+
+    renderer.domElement.addEventListener("click", (e) => {
+      pickCloudsAtClientPos(e.clientX, e.clientY);
+    });
+    selectAllBtn.addEventListener("click", () => setAllVisible(true));
+    selectNoneBtn.addEventListener("click", () => setAllVisible(false));
 
     window.addEventListener("resize", () => {
       const w = app.clientWidth;
