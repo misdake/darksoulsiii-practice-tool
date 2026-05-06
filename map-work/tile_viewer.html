@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DS3 Tile Preview</title>
+  <style>
+    :root { --bg:#111318; --panel:#1b1f28; --line:#2f3747; --text:#e8edf7; --muted:#9aa7bf; --acc:#7fb0ff; }
+    html,body { margin:0; width:100%; height:100%; overflow:hidden; background:var(--bg); color:var(--text); font-family:Consolas, Menlo, monospace; }
+    #app { width:100%; height:100%; position:relative; }
+    #panel {
+      position:absolute; left:10px; top:10px; z-index:2; background:rgba(27,31,40,.92);
+      border:1px solid var(--line); border-radius:10px; padding:10px; width:420px;
+    }
+    .row { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+    .row input, .row select, .row button {
+      background:#151922; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 8px;
+    }
+    .row input { flex:1; min-width:0; }
+    .stat { font-size:12px; color:var(--muted); }
+    canvas { display:block; width:100%; height:100%; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="panel">
+      <div class="row">
+        <input id="tilesRoot" value="./tiles" />
+        <button id="loadBtn">Load</button>
+      </div>
+      <div class="row">
+        <label>Scale mode</label>
+        <select id="modeSel">
+          <option value="auto">Auto</option>
+          <option value="manual">Manual</option>
+        </select>
+        <label>Level</label>
+        <select id="levelSel"></select>
+      </div>
+      <div class="row" id="scaleButtons"></div>
+      <div class="stat" id="stat1">-</div>
+      <div class="stat" id="stat2">Drag: pan, Wheel: zoom.</div>
+    </div>
+    <canvas id="view"></canvas>
+  </div>
+
+<script>
+const canvas = document.getElementById('view');
+const ctx = canvas.getContext('2d');
+const tilesRootInput = document.getElementById('tilesRoot');
+const loadBtn = document.getElementById('loadBtn');
+const modeSel = document.getElementById('modeSel');
+const levelSel = document.getElementById('levelSel');
+const scaleButtons = document.getElementById('scaleButtons');
+const stat1 = document.getElementById('stat1');
+
+let tileIndex = null;
+let levelList = [];
+let levelMaps = new Map();
+let imageCache = new Map();
+
+let centerX = 0;
+let centerZ = 0;
+let worldSpanX = 4096;
+
+let dragging = false;
+let dragLastX = 0;
+let dragLastY = 0;
+
+function resize() {
+  canvas.width = Math.max(1, canvas.clientWidth * devicePixelRatio);
+  canvas.height = Math.max(1, canvas.clientHeight * devicePixelRatio);
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function decodeCoord(name) {
+  const sign = name[0];
+  const mag = Number(name.slice(1));
+  if (!Number.isFinite(mag)) return null;
+  if (sign === 'n') return -mag;
+  if (sign === 'p') return mag;
+  return null;
+}
+function encodeCoord(v) { return (v < 0 ? 'n' + Math.abs(v) : 'p' + v); }
+
+function alignCenterToPixelGridForLevel(level) {
+  const wuPerPx = tileIndex.scales_world_units_per_pixel[level];
+  centerX = Math.round(centerX / wuPerPx) * wuPerPx;
+  centerZ = Math.round(centerZ / wuPerPx) * wuPerPx;
+}
+
+async function loadIndex() {
+  const root = tilesRootInput.value.replace(/\/$/, '');
+  const res = await fetch(`${root}/index.json`);
+  if (!res.ok) throw new Error(`index load failed: ${res.status}`);
+  tileIndex = await res.json();
+
+  levelList = Object.keys(tileIndex.levels).map(Number).sort((a,b)=>a-b);
+  levelSel.innerHTML = '';
+  scaleButtons.innerHTML = '';
+  for (const lv of levelList) {
+    const op = document.createElement('option');
+    op.value = String(lv);
+    op.textContent = `z=${lv} (${tileIndex.scales_world_units_per_pixel[lv]} wu/px)`;
+    levelSel.appendChild(op);
+
+    const btn = document.createElement('button');
+    btn.textContent = `1:${tileIndex.scales_world_units_per_pixel[lv]}`;
+    btn.title = `Set point-to-point zoom for z=${lv}`;
+    btn.addEventListener('click', () => {
+      modeSel.value = 'manual';
+      levelSel.value = String(lv);
+      worldSpanX = tileIndex.scales_world_units_per_pixel[lv] * Math.max(1, canvas.clientWidth);
+      alignCenterToPixelGridForLevel(lv);
+    });
+    scaleButtons.appendChild(btn);
+  }
+
+  levelMaps.clear();
+  for (const [z, lv] of Object.entries(tileIndex.levels)) {
+    const xMap = new Map();
+    for (const [xName, yArr] of Object.entries(lv.x)) {
+      xMap.set(xName, new Set(yArr));
+    }
+    levelMaps.set(z, xMap);
+  }
+
+  // initialize center from first available tile.
+  const z0 = String(levelList[0]);
+  const lv0 = tileIndex.levels[z0];
+  const x0Name = Object.keys(lv0.x)[0];
+  const y0Name = lv0.x[x0Name][0];
+  const x0 = decodeCoord(x0Name);
+  const y0 = decodeCoord(y0Name);
+  const tw = lv0.tile_world_size;
+  centerX = (x0 + 0.5) * tw;
+  centerZ = (y0 + 0.5) * tw;
+  worldSpanX = tw * 4;
+
+  levelSel.value = String(levelList[Math.floor(levelList.length / 2)]);
+}
+
+function pickLevelAuto() {
+  const screenW = Math.max(1, canvas.clientWidth);
+  const target = worldSpanX / screenW;
+  let best = levelList[0];
+  let bestErr = Infinity;
+  for (const lv of levelList) {
+    const s = tileIndex.scales_world_units_per_pixel[lv];
+    const err = Math.abs(Math.log2(target / s));
+    if (err < bestErr) { bestErr = err; best = lv; }
+  }
+  return best;
+}
+
+function currentLevel() {
+  if (!tileIndex) return null;
+  if (modeSel.value === 'manual') return Number(levelSel.value);
+  return pickLevelAuto();
+}
+
+function worldToScreen(wx, wz) {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  const spanY = worldSpanX * (h / Math.max(1, w));
+  const x = ((wx - (centerX - worldSpanX / 2)) / worldSpanX) * w;
+  const y = ((wz - (centerZ - spanY / 2)) / spanY) * h;
+  return [x, y];
+}
+
+function ensureImage(url) {
+  if (imageCache.has(url)) return imageCache.get(url);
+  const item = { img: new Image(), ok: false, done: false };
+  item.img.onload = () => { item.ok = true; item.done = true; };
+  item.img.onerror = () => { item.ok = false; item.done = true; };
+  item.img.src = url;
+  imageCache.set(url, item);
+  return item;
+}
+
+function render() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#0d1016';
+  ctx.fillRect(0, 0, w, h);
+
+  if (!tileIndex) {
+    requestAnimationFrame(render);
+    return;
+  }
+
+  const z = currentLevel();
+  const zName = String(z);
+  const level = tileIndex.levels[zName];
+  const xMap = levelMaps.get(zName);
+  if (!level || !xMap) {
+    requestAnimationFrame(render);
+    return;
+  }
+
+  const tw = level.tile_world_size;
+  const spanY = worldSpanX * (h / Math.max(1, w));
+  const minX = centerX - worldSpanX / 2;
+  const maxX = centerX + worldSpanX / 2;
+  const minZ = centerZ - spanY / 2;
+  const maxZ = centerZ + spanY / 2;
+
+  const tx0 = Math.floor(minX / tw);
+  const tx1 = Math.floor(maxX / tw);
+  const ty0 = Math.floor(minZ / tw);
+  const ty1 = Math.floor(maxZ / tw);
+
+  let drawn = 0;
+  const root = tilesRootInput.value.replace(/\/$/, '');
+
+  for (let tx = tx0; tx <= tx1; tx++) {
+    const xName = encodeCoord(tx);
+    const ySet = xMap.get(xName);
+    if (!ySet) continue;
+
+    for (let ty = ty0; ty <= ty1; ty++) {
+      const yName = encodeCoord(ty);
+      if (!ySet.has(yName)) continue;
+
+      const url = `${root}/${zName}/${xName}/${yName}.png`;
+      const state = ensureImage(url);
+
+      const x0 = tx * tw, x1 = x0 + tw;
+      const y0 = ty * tw, y1 = y0 + tw;
+      const [sx0, sy0] = worldToScreen(x0, y0);
+      const [sx1, sy1] = worldToScreen(x1, y1);
+      const ix0 = Math.round(sx0);
+      const iy0 = Math.round(sy0);
+      const ix1 = Math.round(sx1);
+      const iy1 = Math.round(sy1);
+      const dw = ix1 - ix0, dh = iy1 - iy0;
+
+      if (state.done && state.ok) {
+        ctx.drawImage(state.img, ix0, iy0, dw, dh);
+        drawn++;
+      } else {
+        ctx.strokeStyle = '#243042';
+        ctx.strokeRect(ix0 + 0.5, iy0 + 0.5, Math.max(0, dw - 1), Math.max(0, dh - 1));
+      }
+    }
+  }
+
+  ctx.strokeStyle = '#3a475f';
+  ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+
+  stat1.textContent = `z=${z} mode=${modeSel.value} span=${worldSpanX.toFixed(1)}wu tiles=${drawn}`;
+  requestAnimationFrame(render);
+}
+
+canvas.addEventListener('mousedown', (e) => {
+  dragging = true;
+  dragLastX = e.clientX;
+  dragLastY = e.clientY;
+});
+window.addEventListener('mouseup', () => dragging = false);
+window.addEventListener('mousemove', (e) => {
+  if (!dragging) return;
+  const dx = e.clientX - dragLastX;
+  const dy = e.clientY - dragLastY;
+  dragLastX = e.clientX;
+  dragLastY = e.clientY;
+
+  const w = Math.max(1, canvas.clientWidth);
+  const h = Math.max(1, canvas.clientHeight);
+  const spanY = worldSpanX * (h / w);
+  centerX -= dx / w * worldSpanX;
+  centerZ -= dy / h * spanY;
+});
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const zoom = Math.exp(e.deltaY * 0.0015);
+  worldSpanX = Math.max(64, Math.min(2_000_000, worldSpanX * zoom));
+}, { passive: false });
+
+loadBtn.addEventListener('click', async () => {
+  imageCache.clear();
+  await loadIndex();
+});
+
+(async () => {
+  try {
+    await loadIndex();
+  } catch (e) {
+    stat1.textContent = String(e);
+  }
+  render();
+})();
+</script>
+</body>
+</html>
+

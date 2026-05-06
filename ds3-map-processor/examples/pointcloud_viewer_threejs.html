@@ -243,12 +243,6 @@
       return m ? m[1] : stem;
     }
 
-    function ds3ToViewer(positions) {
-      for (let i = 2; i < positions.length; i += 3) {
-        positions[i] = -positions[i];
-      }
-    }
-
     function rebuildListAndStats() {
       cloudList.innerHTML = "";
       let visibleClouds = 0;
@@ -383,7 +377,6 @@
       for (const file of fileList) {
         const buffer = await file.arrayBuffer();
         const cloudData = parseDs3Pcd(buffer);
-        ds3ToViewer(cloudData.positions);
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.BufferAttribute(cloudData.positions, 3));
         geometry.setAttribute(

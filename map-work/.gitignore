@@ -1,0 +1,5 @@
+# generated map workspace
+/bins/
+/tiles/
+/alerts.csv
+*.tmp
