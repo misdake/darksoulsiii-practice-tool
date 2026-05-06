@@ -34,12 +34,6 @@ struct CaptureData {
     camera_dir: [f32; 3],
 }
 
-#[derive(Debug, Clone, Copy)]
-enum DepthConvention {
-    Normal,
-    Reversed,
-}
-
 fn main() -> Result<()> {
     let repo_root = find_repo_root()?;
     let capture_dir = repo_root.join("capture");
@@ -78,16 +72,12 @@ fn print_depth_diagnostics(capture: &CaptureData) {
     let p50 = p(0.50);
     let p99 = p(0.99);
 
-    let map_normal =
-        |d: f32| linearize_depth(d, capture.near, capture.far, DepthConvention::Normal);
-    let map_reversed =
-        |d: f32| linearize_depth(d, capture.near, capture.far, DepthConvention::Reversed);
+    let map_depth = |d: f32| linearize_depth(d, capture.near, capture.far);
 
     println!("Depth diagnostics:");
     println!("  raw min/max: {min:.6} .. {max:.6}");
     println!("  raw p01/p50/p99: {p01:.6} / {p50:.6} / {p99:.6}");
-    println!("  mapped normal z(p50/p99): {:.3} / {:.3}", map_normal(p50), map_normal(p99));
-    println!("  mapped reversed z(p50/p99): {:.3} / {:.3}", map_reversed(p50), map_reversed(p99));
+    println!("  mapped z(p50/p99): {:.3} / {:.3}", map_depth(p50), map_depth(p99));
 }
 
 fn find_repo_root() -> Result<PathBuf> {
@@ -203,9 +193,6 @@ fn export_point_cloud_ply(capture: &CaptureData, out_path: &Path, stride: usize)
     let tan_half_fovy = (capture.fov_y_rad * 0.5).tan();
     let tan_half_fovx = tan_half_fovy * aspect;
 
-    let convention = detect_depth_convention(capture);
-    println!("Using depth convention: {:?}", convention);
-
     let mut points: Vec<(f32, f32, f32, u8, u8, u8)> = Vec::new();
     for y in (0..h).step_by(stride.max(1)) {
         for x in (0..w).step_by(stride.max(1)) {
@@ -216,7 +203,7 @@ fn export_point_cloud_ply(capture: &CaptureData, out_path: &Path, stride: usize)
             }
 
             let depth01 = depth_raw.clamp(0.0, 1.0);
-            let z = linearize_depth(depth01, capture.near, capture.far, convention);
+            let z = linearize_depth(depth01, capture.near, capture.far);
             if !(z > capture.near && z < capture.far) {
                 continue;
             }
@@ -293,29 +280,6 @@ fn normalize3(v: [f32; 3]) -> [f32; 3] {
     }
 }
 
-fn detect_depth_convention(capture: &CaptureData) -> DepthConvention {
-    let mut values: Vec<f32> = capture.depth.iter().copied().filter(|v| v.is_finite()).collect();
-    if values.is_empty() {
-        return DepthConvention::Normal;
-    }
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let median = values[values.len() / 2];
-
-    if median >= 0.5 {
-        DepthConvention::Normal
-    } else {
-        DepthConvention::Reversed
-    }
-}
-
-fn linearize_depth(depth01: f32, near: f32, far: f32, convention: DepthConvention) -> f32 {
-    match convention {
-        // D3D depth in [0,1], near->0, far->1
-        DepthConvention::Normal => (near * far) / (far - depth01 * (far - near)),
-        // reversed-z depth in [0,1], near->1, far->0
-        DepthConvention::Reversed => {
-            let d = 1.0 - depth01;
-            (near * far) / (far - d * (far - near))
-        },
-    }
+fn linearize_depth(depth01: f32, near: f32, far: f32) -> f32 {
+    (near * far) / (far - depth01 * (far - near))
 }

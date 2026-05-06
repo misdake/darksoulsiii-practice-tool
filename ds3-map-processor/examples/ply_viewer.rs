@@ -5,8 +5,8 @@ use std::time::Instant;
 
 use anyhow::{anyhow, Context, Result};
 use kiss3d::camera::OrbitCamera3d;
-use kiss3d::event::{Action, Key, WindowEvent};
 use kiss3d::egui::{self, Align2, Color32};
+use kiss3d::event::{Action, Key, WindowEvent};
 use kiss3d::glamx::Vec3;
 use kiss3d::prelude::{Color, SceneNode3d, Window, WHITE};
 use ply_rs::parser::Parser;
@@ -217,10 +217,7 @@ fn import_ply_files(clouds: &mut Vec<PointCloud>) -> (usize, usize) {
     (ok, failed)
 }
 
-fn apply_keyboard_camera_controls(
-    window: &Window,
-    perspective: &mut OrbitCamera3d,
-) {
+fn apply_keyboard_camera_controls(window: &Window, perspective: &mut OrbitCamera3d) {
     let speed = 0.15_f32;
     let zoom_factor = 1.02_f32;
     let mut t = perspective.at();
@@ -254,10 +251,7 @@ fn apply_keyboard_camera_controls(
     perspective.set_dist(d.max(0.001));
 }
 
-fn center_all_points(
-    clouds: &[PointCloud],
-    perspective: &mut OrbitCamera3d,
-) -> bool {
+fn center_all_points(clouds: &[PointCloud], perspective: &mut OrbitCamera3d) -> bool {
     let mut has_any = false;
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
