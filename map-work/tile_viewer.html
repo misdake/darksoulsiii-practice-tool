@@ -77,14 +77,14 @@ window.addEventListener('resize', resize);
 resize();
 
 function decodeCoord(name) {
-  const sign = name[0];
-  const mag = Number(name.slice(1));
-  if (!Number.isFinite(mag)) return null;
-  if (sign === 'n') return -mag;
-  if (sign === 'p') return mag;
-  return null;
+  const zz = Number(name);
+  if (!Number.isInteger(zz) || zz < 0) return null;
+  return (zz >> 1) ^ (-(zz & 1));
 }
-function encodeCoord(v) { return (v < 0 ? 'n' + Math.abs(v) : 'p' + v); }
+function encodeCoord(v) {
+  const zz = ((v << 1) ^ (v >> 31)) >>> 0;
+  return String(zz);
+}
 
 function alignCenterToPixelGridForLevel(level) {
   const wuPerPx = tileIndex.scales_world_units_per_pixel[level];
