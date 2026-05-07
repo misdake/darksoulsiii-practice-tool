@@ -20,6 +20,7 @@ fn main() -> Result<()> {
         Some("codegen") => codegen::codegen()?,
         Some("inject") => inject(env::args().skip(1))?,
         Some("run") => run()?,
+        Some("run-probe") => run_probe()?,
         Some("run-param-tinkerer") => run_param_tinkerer()?,
         Some("install") => install()?,
         Some("uninstall") => uninstall()?,
@@ -35,6 +36,7 @@ fn print_help() {
 Tasks:
 
 run ............. compile and start the practice tool
+run-probe ....... compile and start the probe tool
 dist ............ build distribution artifacts
 codegen ......... generate Rust code: parameters, base addresses, ...
 inject <args> ... standalone dll inject
@@ -61,6 +63,23 @@ fn run() -> Result<()> {
     )?;
 
     let dll_path = target_path("debug").join("libds3_map_viewer.dll").canonicalize()?;
+
+    inject(iter::once(dll_path))?;
+
+    Ok(())
+}
+
+fn run_probe() -> Result<()> {
+    let status = cargo_command("build")
+        .args(["--lib", "--package", "ds3-map-probe"])
+        .status()
+        .context("cargo")?;
+
+    if !status.success() {
+        bail!("cargo build failed");
+    }
+
+    let dll_path = target_path("debug").join("libds3_map_probe.dll").canonicalize()?;
 
     inject(iter::once(dll_path))?;
 

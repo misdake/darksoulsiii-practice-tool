@@ -84,12 +84,34 @@ pub struct PointerChains {
     pub travel_ptr: usize,
     pub attune_ptr: usize,
     pub xa: u32,
-    pub camera_angle_follow: PointerChain<[f32; 2]>,
-    pub camera_position_follow: PointerChain<[f32; 3]>,
-    pub camera_position_global: PointerChain<[f32; 3]>,
+    pub camera: CameraPointers,
 
     #[allow(unused)]
     pub world_chr_man: usize,
+}
+
+pub struct CameraPointers {
+    pub angle_follow: PointerChain<[f32; 2]>,
+    pub position_follow: PointerChain<[f32; 3]>,
+    pub position_global: PointerChain<[f32; 3]>,
+    pub free_camera_state: PointerChain<u32>,
+    pub render_state: PointerChain<CameraRenderState>,
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct CameraRenderState {
+    _pad0: [u8; 0x20],        // [0, 20)
+    pub camera_up: [f32; 3],  // [20, 2c)
+    _pad1: [u8; 0x04],        // [2c, 30)
+    pub camera_dir: [f32; 3], // [30, 3c)
+    _pad2: [u8; 0x04],        // [3c, 40)
+    pub position: [f32; 3],   // [40, 4c)
+    _pad3: [u8; 0x04],        // [4c, 50)
+    pub fov: f32,             // [50, 54)
+    _pad4: [u8; 0x04],        // [54, 58)
+    pub near: f32,            // [58, 5c)
+    pub far: f32,             // [5c, 60)
 }
 
 impl From<BaseAddresses> for PointerChains {
@@ -368,9 +390,13 @@ impl From<BaseAddresses> for PointerChains {
             current_target: pointer_chain!(current_target),
             no_logo: pointer_chain!(no_logo as _),
             xa: xa as u32,
-            camera_angle_follow: pointer_chain!(base_d, 0x28, 0x60, 0x140),
-            camera_position_follow: pointer_chain!(base_d, 0x28, 0x60, 0x40),
-            camera_position_global: pointer_chain!(camera_position_global),
+            camera: CameraPointers {
+                angle_follow: pointer_chain!(base_d, 0x28, 0x60, 0x140),
+                position_follow: pointer_chain!(base_d, 0x28, 0x60, 0x40),
+                position_global: pointer_chain!(camera_position_global),
+                free_camera_state: pointer_chain!(base_d, 0x18, 0xE0), // 0 - off, 1 - on
+                render_state: pointer_chain!(base_d, 0x18, 0xE8, 0x0),
+            },
         }
     }
 }

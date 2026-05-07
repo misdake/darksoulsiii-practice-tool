@@ -1,0 +1,115 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use anyhow::{Context, Result};
+
+pub fn ensure_workdir_layout(work_dir: &Path) -> Result<()> {
+    fs::create_dir_all(work_dir).with_context(|| format!("mkdir {}", work_dir.display()))?;
+    let gitignore_path = work_dir.join(".gitignore");
+    if !gitignore_path.exists() {
+        let content = "# generated map workspace\n/bins/\n/tiles/\n/alerts.csv\n*.tmp\n";
+        fs::write(&gitignore_path, content)
+            .with_context(|| format!("write {}", gitignore_path.display()))?;
+    }
+    Ok(())
+}
+
+pub fn clear_directory(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(path).with_context(|| format!("read_dir {}", path.display()))? {
+        let entry = entry?;
+        let p = entry.path();
+        if p.is_dir() {
+            fs::remove_dir_all(&p).with_context(|| format!("remove_dir_all {}", p.display()))?;
+        } else {
+            fs::remove_file(&p).with_context(|| format!("remove_file {}", p.display()))?;
+        }
+    }
+    Ok(())
+}
+
+pub fn find_repo_root() -> Result<PathBuf> {
+    let mut dir = std::env::current_dir().context("get current_dir")?;
+    loop {
+        let cargo_toml = dir.join("Cargo.toml");
+        let capture_dir = dir.join("capture");
+        if cargo_toml.is_file() && capture_dir.is_dir() {
+            return Ok(dir);
+        }
+
+        if !dir.pop() {
+            break;
+        }
+    }
+
+    anyhow::bail!("Cannot locate repo root (need both Cargo.toml and capture/).")
+}
+
+pub fn find_all_toml_in_capture(capture_dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut all: Vec<PathBuf> = Vec::new();
+
+    fn walk(dir: &Path, all: &mut Vec<PathBuf>) -> Result<()> {
+        for entry in fs::read_dir(dir).with_context(|| format!("read_dir {}", dir.display()))? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, all)?;
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+                continue;
+            }
+            all.push(path);
+        }
+        Ok(())
+    }
+
+    walk(capture_dir, &mut all)?;
+    if all.is_empty() {
+        anyhow::bail!("No .toml files found under capture/.");
+    }
+    all.sort_by(|a, b| {
+        let am = fs::metadata(a).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
+        let bm = fs::metadata(b).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
+        am.cmp(&bm)
+    });
+    Ok(all)
+}
+
+pub fn file_stem_utf8(path: &Path) -> Result<String> {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .with_context(|| format!("invalid file stem: {}", path.display()))?;
+    Ok(stem.to_string())
+}
+
+pub fn file_name_utf8(path: &Path) -> Result<String> {
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .with_context(|| format!("invalid file name: {}", path.display()))?;
+    Ok(name.to_string())
+}
+
+pub fn sanitize_filename(input: &str) -> String {
+    input
+        .chars()
+        .map(
+            |c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' },
+        )
+        .collect()
+}
+
+pub fn encode_coord(v: i32) -> String {
+    let zz = ((v << 1) ^ (v >> 31)) as u32;
+    zz.to_string()
+}
+
+pub fn decode_coord(s: &str) -> Result<i32> {
+    let zz: u32 = s.parse().with_context(|| format!("invalid coord '{}'", s))?;
+    Ok(((zz >> 1) as i32) ^ (-((zz & 1) as i32)))
+}

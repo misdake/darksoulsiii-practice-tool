@@ -29,3 +29,13 @@ pub fn get_dll_path() -> Option<PathBuf> {
 
     Some(OsString::from_wide(&sz_filename[..len]).into())
 }
+
+pub fn get_exe_path() -> Option<PathBuf> {
+    let mut sz_filename = [0u16; MAX_PATH as usize];
+    let len = unsafe { GetModuleFileNameW(None, &mut sz_filename) } as usize;
+    if len == 0 {
+        return None;
+    }
+
+    Some(OsString::from_wide(&sz_filename[..len]).into())
+}

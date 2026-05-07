@@ -24,13 +24,7 @@ impl Viewer {
         let mut map_viewer = MapViewer::new(&pointers);
         Self::apply_map_config(config_store.config().map.clone(), &mut map_viewer);
 
-        Viewer {
-            config_store,
-            pointers,
-            map_viewer,
-            show_panel: false,
-            panel_occupied_height: 0.0,
-        }
+        Viewer { config_store, pointers, map_viewer, show_panel: false, panel_occupied_height: 0.0 }
     }
 
     fn apply_map_config(map_config: MapConfig, map_viewer: &mut MapViewer) {
