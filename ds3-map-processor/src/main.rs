@@ -10,9 +10,7 @@ use std::fs;
 use crate::fs_utils::{
     clear_directory, ensure_workdir_layout, find_all_toml_in_capture, find_repo_root,
 };
-use crate::stage1_pointcloud::{
-    export_point_cloud_binary_v2, load_capture_from_toml, POINT_STRIDE,
-};
+use crate::stage1_pointcloud::{export_point_cloud_binary_v2, load_capture_from_toml};
 use crate::stage2_bin_split::split_pointclouds_into_bins;
 use crate::stage3_tile_pyramid::render_bins_to_tile_pyramid;
 
@@ -23,16 +21,12 @@ fn main() -> Result<()> {
     ensure_workdir_layout(&work_dir)?;
 
     let selected = find_all_toml_in_capture(&capture_dir)?;
-    println!(
-        "Stage 1/3 capture->pointcloud: {} capture(s), stride={}.",
-        selected.len(),
-        POINT_STRIDE
-    );
+    println!("Stage 1/3 capture->pointcloud: {} capture(s).", selected.len());
 
     for toml_path in &selected {
         let capture = load_capture_from_toml(toml_path)?;
         let out_path = toml_path.with_extension("ds3pcd");
-        export_point_cloud_binary_v2(&capture, &out_path, POINT_STRIDE)?;
+        export_point_cloud_binary_v2(&capture, &out_path)?;
         println!("  wrote point cloud: {}", out_path.display());
     }
 

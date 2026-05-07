@@ -2,8 +2,6 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub const POINT_STRIDE: usize = 2;
-
 pub const TILE_SIZE_PX: u32 = 256;
 pub const FINEST_TILE_WORLD_SIZE: f32 = 64.0;
 pub const BIN_TILE_DIM: i32 = 16;

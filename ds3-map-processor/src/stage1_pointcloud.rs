@@ -6,8 +6,6 @@ use ds3_depthbuffer::{camera_to_world, linearize_depth, read_depth_exr_first_cha
 
 use crate::common::{CaptureData, CaptureToml};
 
-pub use crate::common::POINT_STRIDE;
-
 pub fn load_capture_from_toml(toml_path: &Path) -> Result<CaptureData> {
     let content =
         fs::read_to_string(toml_path).with_context(|| format!("read {}", toml_path.display()))?;
@@ -48,11 +46,7 @@ pub fn load_capture_from_toml(toml_path: &Path) -> Result<CaptureData> {
     })
 }
 
-pub fn export_point_cloud_binary_v2(
-    capture: &CaptureData,
-    out_path: &Path,
-    stride: usize,
-) -> Result<()> {
+pub fn export_point_cloud_binary_v2(capture: &CaptureData, out_path: &Path) -> Result<()> {
     let w = capture.width;
     let h = capture.height;
     let aspect = w as f32 / h as f32;
@@ -61,8 +55,8 @@ pub fn export_point_cloud_binary_v2(
 
     let mut positions: Vec<f32> = Vec::new();
     let mut colors: Vec<f32> = Vec::new();
-    for y in (0..h).step_by(stride.max(1)) {
-        for x in (0..w).step_by(stride.max(1)) {
+    for y in 0..h {
+        for x in 0..w {
             let idx = y * w + x;
             let depth_raw = capture.depth[idx];
             if !depth_raw.is_finite() {
