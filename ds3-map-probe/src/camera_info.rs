@@ -54,10 +54,8 @@ impl CameraInfo {
         }
     }
 
-    pub fn teleport_player_to_camera(&self, y_offset: f32) {
-        if let Some([cx, cy, cz]) = self.camera_position.read() {
-            self.player_position.write([cx, cy + y_offset, cz]);
-        }
+    pub fn set_player_position(&self, position: [f32; 3]) {
+        self.player_position.write(position);
     }
 
     pub fn camera_render_state(&self) -> Option<CameraRenderState> {

@@ -1,0 +1,9 @@
+[package]
+name = "ds3-depthbuffer"
+version.workspace = true
+authors.workspace = true
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0"
+exr = "1.73.0"

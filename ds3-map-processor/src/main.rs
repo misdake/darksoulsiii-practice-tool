@@ -10,7 +10,9 @@ use std::fs;
 use crate::fs_utils::{
     clear_directory, ensure_workdir_layout, find_all_toml_in_capture, find_repo_root,
 };
-use crate::stage1_pointcloud::{export_point_cloud_binary_v2, load_capture_from_toml, POINT_STRIDE};
+use crate::stage1_pointcloud::{
+    export_point_cloud_binary_v2, load_capture_from_toml, POINT_STRIDE,
+};
 use crate::stage2_bin_split::split_pointclouds_into_bins;
 use crate::stage3_tile_pyramid::render_bins_to_tile_pyramid;
 

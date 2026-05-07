@@ -1,6 +1,12 @@
+use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::UNIX_EPOCH;
 
+use ds3_depthbuffer::{
+    dot3, normalize3, read_depth_exr_first_channel, unproject_center_to_world, CameraProjection,
+    ImageSize,
+};
 use hudhook::{eject, ImguiRenderLoop, RenderContext};
 use imgui::{Condition, Context, Key, StyleVar, WindowFlags};
 use libds3::pointers::PointerChains;
@@ -90,6 +96,11 @@ impl Probe {
         }
     }
 
+    fn toggle_player_visibility_flag(&mut self) {
+        let current = self.pointers.rend_chr.get().unwrap_or(false);
+        self.pointers.rend_chr.set(!current);
+    }
+
     fn nudge_near_far(&self, near_delta: f32, far_delta: f32) {
         if let Some(state) = self.camera_info.camera_render_state() {
             let near = state.near + near_delta;
@@ -131,6 +142,62 @@ impl Probe {
             );
         }
     }
+
+    fn teleport_player_from_latest_depth_center(&mut self) {
+        let Some(exe_path) = &self.exe_path else {
+            self.capture_status = "F12 failed: EXE path unavailable.".to_string();
+            return;
+        };
+        let game_dir = PathBuf::from(exe_path)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        let Some((rgb_path, depth_path)) = find_latest_capture_pair(&game_dir) else {
+            self.capture_status =
+                "F12 failed: no rgb/depth pair found in game directory.".to_string();
+            return;
+        };
+
+        let Some(state) = self.camera_info.camera_render_state() else {
+            self.capture_status = "F12 failed: camera render state unavailable.".to_string();
+            return;
+        };
+
+        let depth_map = match read_depth_exr_first_channel(&depth_path).map_err(|e| e.to_string()) {
+            Ok(v) => v,
+            Err(e) => {
+                self.capture_status = format!("F12 failed: read exr: {e}");
+                return;
+            },
+        };
+        let Some(depth01) = sample_center_depth(&depth_map.0, depth_map.1, depth_map.2) else {
+            self.capture_status = "F12 failed: no finite center depth found.".to_string();
+            return;
+        };
+
+        let world = unproject_center_to_world(
+            depth01,
+            ImageSize { width: depth_map.1, height: depth_map.2 },
+            &CameraProjection {
+                fov_y_rad: state.fov,
+                near: state.near,
+                far: state.far,
+                camera_up: state.camera_up,
+                camera_dir: state.camera_dir,
+                camera_position: state.position,
+            },
+        );
+        let target = [world[0], world[1] + 2.0, world[2]];
+        self.camera_info.set_player_position(target);
+
+        let _ = fs::remove_file(&rgb_path);
+        let _ = fs::remove_file(&depth_path);
+        self.capture_status = format!(
+            "F12: moved player to [{:.3}, {:.3}, {:.3}] and deleted latest pair.",
+            target[0], target[1], target[2]
+        );
+    }
 }
 
 impl ImguiRenderLoop for Probe {
@@ -160,10 +227,13 @@ impl ImguiRenderLoop for Probe {
         }
 
         if ui.is_key_pressed(Key::F6) {
-            self.camera_info.teleport_player_to_camera(-1.6);
+            self.toggle_player_visibility_flag();
         }
         if ui.is_key_pressed(Key::F11) {
             self.process_capture_files();
+        }
+        if ui.is_key_pressed(Key::F12) {
+            self.teleport_player_from_latest_depth_center();
         }
         if ui.is_key_pressed(Key::F5) {
             self.set_near_far_around_player_depth();
@@ -256,8 +326,11 @@ impl ImguiRenderLoop for Probe {
                     self.reset_free_camera();
                 }
                 ui.same_line();
-                if ui.button("Teleport Player To Camera (F6)") {
-                    self.camera_info.teleport_player_to_camera(-1.6);
+                if ui.button("Toggle Player Visibility (F6)") {
+                    self.toggle_player_visibility_flag();
+                }
+                if ui.button("Teleport Player To Latest Depth Center + Delete Pair (F12)") {
+                    self.teleport_player_from_latest_depth_center();
                 }
 
                 if !free_camera {
@@ -322,15 +395,79 @@ impl ImguiRenderLoop for Probe {
     }
 }
 
-fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
-    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+fn find_latest_capture_pair(game_dir: &std::path::Path) -> Option<(PathBuf, PathBuf)> {
+    let mut best: Option<(i64, PathBuf, PathBuf)> = None;
+    let mut groups: std::collections::HashMap<String, (Option<PathBuf>, Option<PathBuf>, i64)> =
+        std::collections::HashMap::new();
+
+    for entry in fs::read_dir(game_dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = match path.file_name().and_then(|s| s.to_str()) {
+            Some(v) => v,
+            None => continue,
+        };
+        let (prefix, is_rgb, is_depth) = if let Some(prefix) = name.strip_suffix(" BackBuffer.bmp")
+        {
+            (prefix.to_string(), true, false)
+        } else if let Some(prefix) = name.strip_suffix(" DepthBuffer.exr") {
+            (prefix.to_string(), false, true)
+        } else {
+            continue;
+        };
+        let mtime = fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let slot = groups.entry(prefix).or_insert((None, None, mtime));
+        if is_rgb {
+            slot.0 = Some(path);
+        } else if is_depth {
+            slot.1 = Some(path);
+        }
+        slot.2 = slot.2.max(mtime);
+    }
+
+    for (_, (rgb, depth, ts)) in groups {
+        let (Some(rgb), Some(depth)) = (rgb, depth) else {
+            continue;
+        };
+        match &best {
+            Some((best_ts, _, _)) if *best_ts >= ts => {},
+            _ => best = Some((ts, rgb, depth)),
+        }
+    }
+    best.map(|(_, rgb, depth)| (rgb, depth))
 }
 
-fn normalize3(v: [f32; 3]) -> [f32; 3] {
-    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-    if len <= 1.0e-8 {
-        [0.0, 0.0, 0.0]
-    } else {
-        [v[0] / len, v[1] / len, v[2] / len]
+fn sample_center_depth(depth: &[f32], w: usize, h: usize) -> Option<f32> {
+    if w == 0 || h == 0 {
+        return None;
     }
+    let cx = (w / 2) as i32;
+    let cy = (h / 2) as i32;
+    let mut vals = Vec::new();
+    for oy in -2..=2 {
+        for ox in -2..=2 {
+            let x = cx + ox;
+            let y = cy + oy;
+            if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+                continue;
+            }
+            let v = depth[y as usize * w + x as usize];
+            if v.is_finite() {
+                vals.push(v);
+            }
+        }
+    }
+    if vals.is_empty() {
+        return None;
+    }
+    vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Some(vals[vals.len() / 2].clamp(0.0, 1.0))
 }

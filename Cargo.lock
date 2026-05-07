@@ -252,9 +252,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
 
 [[package]]
+name = "ds3-depthbuffer"
+version = "1.7.1"
+dependencies = [
+ "anyhow",
+ "exr",
+]
+
+[[package]]
 name = "ds3-map-probe"
 version = "1.7.1"
 dependencies = [
+ "ds3-depthbuffer",
  "hudhook",
  "imgui",
  "libds3",
@@ -268,7 +277,7 @@ name = "ds3-map-processor"
 version = "1.7.1"
 dependencies = [
  "anyhow",
- "exr",
+ "ds3-depthbuffer",
  "image",
  "serde",
  "serde_json",

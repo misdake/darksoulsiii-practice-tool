@@ -4,6 +4,7 @@ members = [
     "ds3-map-viewer",
     "ds3-map-probe",
     "ds3-map-processor",
+    "lib/ds3-depthbuffer",
     "lib/libds3",
     "lib/macro-param",
     "lib/param-tinkerer",
@@ -57,3 +58,4 @@ features = [
 # [patch.'https://github.com/veeenu/practice-tool-core']
 # practice-tool-core = { path = "../practice-tool-core" }
 # practice-tool-tasks = { path = "../practice-tool-core/tasks" }
+
