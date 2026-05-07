@@ -77,13 +77,12 @@ window.addEventListener('resize', resize);
 resize();
 
 function decodeCoord(name) {
-  const zz = Number(name);
-  if (!Number.isInteger(zz) || zz < 0) return null;
-  return (zz >> 1) ^ (-(zz & 1));
+  const v = Number(name);
+  if (!Number.isInteger(v)) return null;
+  return v;
 }
 function encodeCoord(v) {
-  const zz = ((v << 1) ^ (v >> 31)) >>> 0;
-  return String(zz);
+  return String(v);
 }
 
 function alignCenterToPixelGridForLevel(level) {
@@ -160,6 +159,14 @@ function currentLevel() {
   if (!tileIndex) return null;
   if (modeSel.value === 'manual') return Number(levelSel.value);
   return pickLevelAuto();
+}
+
+function minPointToPointSpanX() {
+  if (!tileIndex || !Array.isArray(tileIndex.scales_world_units_per_pixel) || tileIndex.scales_world_units_per_pixel.length === 0) {
+    return 64;
+  }
+  const finest = Math.min(...tileIndex.scales_world_units_per_pixel);
+  return finest * Math.max(1, canvas.clientWidth);
 }
 
 function worldToScreen(wx, wz) {
@@ -276,7 +283,8 @@ window.addEventListener('mousemove', (e) => {
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   const zoom = Math.exp(e.deltaY * 0.0015);
-  worldSpanX = Math.max(64, Math.min(2_000_000, worldSpanX * zoom));
+  const minSpan = minPointToPointSpanX();
+  worldSpanX = Math.max(minSpan, Math.min(2_000_000, worldSpanX * zoom));
 }, { passive: false });
 
 loadBtn.addEventListener('click', async () => {
