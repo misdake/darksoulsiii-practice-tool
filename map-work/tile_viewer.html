@@ -58,6 +58,7 @@ let tileIndex = null;
 let levelList = [];
 let levelMaps = new Map();
 let imageCache = new Map();
+let walkableLoops = [];
 
 let centerX = 0;
 let centerZ = 0;
@@ -140,6 +141,17 @@ async function loadIndex() {
   worldSpanX = tw * 4;
 
   levelSel.value = String(levelList[Math.floor(levelList.length / 2)]);
+
+  walkableLoops = [];
+  try {
+    const wr = await fetch(`${root}/walkable_loops_merged.json`);
+    if (wr.ok) {
+      const wj = await wr.json();
+      if (Array.isArray(wj.loops)) {
+        walkableLoops = wj.loops;
+      }
+    }
+  } catch (_) {}
 }
 
 function pickLevelAuto() {
@@ -187,6 +199,30 @@ function ensureImage(url) {
   return item;
 }
 
+function drawWalkableOverlay() {
+  if (!Array.isArray(walkableLoops) || walkableLoops.length === 0) return;
+  ctx.save();
+  ctx.strokeStyle = '#00d2a8';
+  ctx.lineWidth = 1.5;
+  for (const loop of walkableLoops) {
+    if (!Array.isArray(loop) || loop.length < 2) continue;
+    ctx.beginPath();
+    let started = false;
+    for (const p of loop) {
+      if (!Array.isArray(p) || p.length < 3) continue;
+      const [sx, sy] = worldToScreen(p[0], p[2]);
+      if (!started) {
+        ctx.moveTo(sx, sy);
+        started = true;
+      } else {
+        ctx.lineTo(sx, sy);
+      }
+    }
+    if (started) ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function render() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   ctx.clearRect(0, 0, w, h);
@@ -221,6 +257,7 @@ function render() {
 
   let drawn = 0;
   const root = tilesRootInput.value.replace(/\/$/, '');
+  const ext = tileIndex.image_ext || 'jpg';
 
   for (let tx = tx0; tx <= tx1; tx++) {
     const xName = encodeCoord(tx);
@@ -231,7 +268,7 @@ function render() {
       const yName = encodeCoord(ty);
       if (!ySet.has(yName)) continue;
 
-      const url = `${root}/${zName}/${xName}/${yName}.png`;
+      const url = `${root}/${zName}/${xName}/${yName}.${ext}`;
       const state = ensureImage(url);
 
       const x0 = tx * tw, x1 = x0 + tw;
@@ -256,6 +293,7 @@ function render() {
 
   ctx.strokeStyle = '#3a475f';
   ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+  drawWalkableOverlay();
 
   stat1.textContent = `z=${z} mode=${modeSel.value} span=${worldSpanX.toFixed(1)}wu tiles=${drawn}`;
   requestAnimationFrame(render);

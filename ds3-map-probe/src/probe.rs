@@ -10,12 +10,28 @@ use ds3_depthbuffer::{
 use hudhook::{eject, ImguiRenderLoop, RenderContext};
 use imgui::{Condition, Context, Key, StyleVar, WindowFlags};
 use libds3::pointers::PointerChains;
+use serde::Serialize;
 
 use crate::camera_info::CameraInfo;
 use crate::capture_files::{self, CaptureContext};
 use crate::util;
 
 pub(crate) static BLOCK_XINPUT: AtomicBool = AtomicBool::new(false);
+
+const LOOP_CLOSE_DISTANCE: f32 = 2.0;
+const LOOP_SAMPLE_EPS: f32 = 1.0e-3;
+
+#[derive(Serialize)]
+struct WalkableLoopsFile {
+    version: u32,
+    close_distance: f32,
+    loops: Vec<Vec<[f32; 3]>>,
+}
+
+#[derive(serde::Deserialize)]
+struct WalkableLoopsFileIn {
+    loops: Vec<Vec<[f32; 3]>>,
+}
 
 pub(crate) struct Probe {
     pointers: PointerChains,
@@ -28,6 +44,9 @@ pub(crate) struct Probe {
     show_inject_hint: bool,
     auto_near_far_offset: f32,
     auto_near_far_range: f32,
+    loop_recording: bool,
+    current_loop: Vec<[f32; 3]>,
+    closed_loops: Vec<Vec<[f32; 3]>>,
 }
 
 impl Probe {
@@ -53,6 +72,9 @@ impl Probe {
             show_inject_hint: true,
             auto_near_far_offset: 0.0,
             auto_near_far_range: 3.0,
+            loop_recording: false,
+            current_loop: Vec::new(),
+            closed_loops: Vec::new(),
         }
     }
 
@@ -94,6 +116,124 @@ impl Probe {
             Ok(_) => self.capture_status.clear(),
             Err(err) => self.capture_status = format!("Capture failed: {err}"),
         }
+    }
+
+    fn toggle_loop_recording(&mut self) {
+        self.loop_recording = !self.loop_recording;
+        if self.loop_recording {
+            self.current_loop.clear();
+            self.capture_status = "Loop recording started (F1).".to_string();
+        } else {
+            self.capture_status = "Loop recording stopped (F1).".to_string();
+        }
+    }
+
+    fn update_loop_recording(&mut self) {
+        if !self.loop_recording {
+            return;
+        }
+        let Some(p) = self.camera_info.player_position() else {
+            return;
+        };
+        if let Some(last) = self.current_loop.last().copied() {
+            let dx = p[0] - last[0];
+            let dy = p[1] - last[1];
+            let dz = p[2] - last[2];
+            if (dx * dx + dy * dy + dz * dz) <= LOOP_SAMPLE_EPS * LOOP_SAMPLE_EPS {
+                return;
+            }
+        }
+        self.current_loop.push(p);
+
+        if self.current_loop.len() >= 3 {
+            let first = self.current_loop[0];
+            let last = *self.current_loop.last().unwrap_or(&first);
+            let dx = last[0] - first[0];
+            let dz = last[2] - first[2];
+            let d = (dx * dx + dz * dz).sqrt();
+            if d <= LOOP_CLOSE_DISTANCE {
+                self.capture_status = format!(
+                    "Loop can close now (dist {:.2} <= {:.2}). Use 'Close Loop'.",
+                    d, LOOP_CLOSE_DISTANCE
+                );
+            }
+        }
+    }
+
+    fn try_close_current_loop(&mut self) {
+        if self.current_loop.len() < 3 {
+            self.capture_status = "Close failed: need at least 3 points.".to_string();
+            return;
+        }
+        let first = self.current_loop[0];
+        let last = *self.current_loop.last().unwrap_or(&first);
+        let dx = last[0] - first[0];
+        let dz = last[2] - first[2];
+        let d = (dx * dx + dz * dz).sqrt();
+        if d > LOOP_CLOSE_DISTANCE {
+            self.capture_status = format!(
+                "Close failed: start/end too far ({:.2} > {:.2}), keep recording.",
+                d, LOOP_CLOSE_DISTANCE
+            );
+            return;
+        }
+
+        let mut loop_pts = self.current_loop.clone();
+        if let Some(end) = loop_pts.last().copied() {
+            let ex = end[0] - first[0];
+            let ez = end[2] - first[2];
+            if (ex * ex + ez * ez).sqrt() > LOOP_SAMPLE_EPS {
+                loop_pts.push(first);
+            }
+        }
+        self.closed_loops.push(loop_pts);
+        self.current_loop.clear();
+        self.loop_recording = false;
+        self.capture_status =
+            format!("Loop closed. total closed loops={}", self.closed_loops.len());
+    }
+
+    fn discard_current_loop(&mut self) {
+        self.current_loop.clear();
+        self.loop_recording = false;
+        self.capture_status = "Current loop discarded.".to_string();
+    }
+
+    fn export_walkable_loops(&mut self) {
+        let subdir = self.capture_subdir.trim();
+        if subdir.is_empty() {
+            self.capture_status = "Export failed: subfolder name is empty.".to_string();
+            return;
+        }
+        let output_dir = self.capture_root.join(subdir);
+        if let Err(e) = fs::create_dir_all(&output_dir) {
+            self.capture_status = format!("Export failed: create dir: {e}");
+            return;
+        }
+
+        let path = output_dir.join("walkable_loops.json");
+        let mut merged = read_existing_loops(&path).unwrap_or_default();
+        merged.extend(self.closed_loops.iter().cloned());
+        dedup_loops(&mut merged);
+
+        let payload = WalkableLoopsFile { version: 1, close_distance: LOOP_CLOSE_DISTANCE, loops: merged };
+        match serde_json::to_vec_pretty(&payload).map_err(|e| e.to_string()).and_then(|v| {
+            fs::write(&path, v).map_err(|e| e.to_string())
+        }) {
+            Ok(_) => {
+                self.capture_status = format!(
+                    "Exported walkable loops (merged): {} ({} loop(s))",
+                    path.display(),
+                    payload.loops.len()
+                );
+            },
+            Err(e) => self.capture_status = format!("Export failed: {e}"),
+        }
+    }
+
+    fn clear_all_closed_loops(&mut self) {
+        self.closed_loops.clear();
+        self.capture_status = "All closed loops cleared.".to_string();
     }
 
     fn toggle_player_visibility_flag(&mut self) {
@@ -203,12 +343,17 @@ impl Probe {
 impl ImguiRenderLoop for Probe {
     fn before_render(&mut self, _ctx: &mut Context, _r: &mut dyn RenderContext) {
         self.camera_info.update();
+        self.update_loop_recording();
     }
 
     fn render(&mut self, ui: &mut imgui::Ui) {
         if ui.is_key_pressed(Key::F9) {
             self.set_ui_visibility(!self.show_ui);
             self.show_inject_hint = false;
+        }
+
+        if ui.is_key_pressed(Key::F1) {
+            self.toggle_loop_recording();
         }
 
         if ui.is_key_pressed(Key::F8) {
@@ -273,7 +418,7 @@ impl ImguiRenderLoop for Probe {
         ];
 
         ui.window("DS3 Map Data Collector")
-            .size([420.0, 220.0], Condition::FirstUseEver)
+            .size([520.0, 330.0], Condition::FirstUseEver)
             .position([20.0, 20.0], Condition::FirstUseEver)
             .flags(WindowFlags::NO_COLLAPSE)
             .build(|| {
@@ -293,6 +438,29 @@ impl ImguiRenderLoop for Probe {
                 if !self.capture_status.is_empty() {
                     ui.text_wrapped(&self.capture_status);
                 }
+                ui.separator();
+
+                ui.text(format!(
+                    "Walkable loop: {} (F1), current points={}, closed loops={}",
+                    if self.loop_recording { "Recording" } else { "Idle" },
+                    self.current_loop.len(),
+                    self.closed_loops.len()
+                ));
+                if ui.button("Close Current Loop") {
+                    self.try_close_current_loop();
+                }
+                ui.same_line();
+                if ui.button("Discard Current Loop") {
+                    self.discard_current_loop();
+                }
+                if ui.button("Export Walkable Loops") {
+                    self.export_walkable_loops();
+                }
+                ui.same_line();
+                if ui.button("Clear Closed Loops") {
+                    self.clear_all_closed_loops();
+                }
+
                 ui.separator();
 
                 if !self.camera_info.ui_pointers_available() {
@@ -358,21 +526,6 @@ impl ImguiRenderLoop for Probe {
                     ui.slider_config("Auto Offset", -2.0, 2.0)
                         .build(&mut self.auto_near_far_offset);
                     ui.slider_config("Auto Range", 0.0, 10.0).build(&mut self.auto_near_far_range);
-
-                    ui.text(format!(
-                        "Camera Up [x,y,z]: {:.3}, {:.3}, {:.3}",
-                        render_state.camera_up[0],
-                        render_state.camera_up[1],
-                        render_state.camera_up[2]
-                    ));
-                    ui.text(format!(
-                        "Camera Dir [x,y,z]: {:.3}, {:.3}, {:.3}",
-                        render_state.camera_dir[0],
-                        render_state.camera_dir[1],
-                        render_state.camera_dir[2]
-                    ));
-                } else {
-                    ui.text("Camera render state: N/A");
                 }
 
                 match self.camera_info.player_position() {
@@ -380,13 +533,6 @@ impl ImguiRenderLoop for Probe {
                         ui.text(format!("Player Position: {x:.3}, {y:.3}, {z:.3}"));
                     },
                     None => ui.text("Player Position: N/A"),
-                }
-
-                match self.camera_info.camera_position() {
-                    Some([x, y, z]) => {
-                        ui.text(format!("Camera Position: {x:.3}, {y:.3}, {z:.3}"));
-                    },
-                    None => ui.text("Camera Position: N/A"),
                 }
             });
 
@@ -470,4 +616,43 @@ fn sample_center_depth(depth: &[f32], w: usize, h: usize) -> Option<f32> {
     }
     vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     Some(vals[vals.len() / 2].clamp(0.0, 1.0))
+}
+
+fn read_existing_loops(path: &std::path::Path) -> Option<Vec<Vec<[f32; 3]>>> {
+    if !path.is_file() {
+        return None;
+    }
+    let bytes = fs::read(path).ok()?;
+    let parsed: WalkableLoopsFileIn = serde_json::from_slice(&bytes).ok()?;
+    Some(parsed.loops)
+}
+
+fn dedup_loops(loops: &mut Vec<Vec<[f32; 3]>>) {
+    let mut out: Vec<Vec<[f32; 3]>> = Vec::new();
+    for lp in loops.drain(..) {
+        if lp.len() < 3 {
+            continue;
+        }
+        let Some(first) = lp.first().copied() else {
+            continue;
+        };
+        let mut dup = false;
+        for ex in &out {
+            if ex.len() != lp.len() {
+                continue;
+            }
+            let ef = ex[0];
+            let dx = first[0] - ef[0];
+            let dy = first[1] - ef[1];
+            let dz = first[2] - ef[2];
+            if (dx * dx + dy * dy + dz * dz).sqrt() <= 0.05 {
+                dup = true;
+                break;
+            }
+        }
+        if !dup {
+            out.push(lp);
+        }
+    }
+    *loops = out;
 }

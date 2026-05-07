@@ -55,7 +55,13 @@ fn main() -> Result<()> {
     clear_directory(&tiles_root)?;
     let alerts_path = work_dir.join("alerts.csv");
     let index_path = tiles_root.join("index.json");
-    render_tiles_to_pyramid(&tile_points_root, &tiles_root, &alerts_path, &index_path)?;
+    render_tiles_to_pyramid(
+        &capture_dir,
+        &tile_points_root,
+        &tiles_root,
+        &alerts_path,
+        &index_path,
+    )?;
     println!("Stage 2/2 done in {:.3}s", stage2_start.elapsed().as_secs_f64());
 
     println!(
@@ -119,25 +125,25 @@ where
             let est = estimate(&task).max(1);
             let reserve = est.min(budget.max(1));
 
-                loop {
-                    if failed.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    let cur = inflight.load(Ordering::SeqCst);
-                    if (cur == 0 || cur.saturating_add(reserve) <= budget)
-                        && inflight
-                            .compare_exchange(
-                                cur,
-                                cur.saturating_add(reserve),
-                                Ordering::SeqCst,
-                                Ordering::SeqCst,
-                            )
-                            .is_ok()
-                    {
-                        break;
-                    }
-                    thread::sleep(std::time::Duration::from_millis(2));
+            loop {
+                if failed.load(Ordering::SeqCst) {
+                    return;
                 }
+                let cur = inflight.load(Ordering::SeqCst);
+                if (cur == 0 || cur.saturating_add(reserve) <= budget)
+                    && inflight
+                        .compare_exchange(
+                            cur,
+                            cur.saturating_add(reserve),
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok()
+                {
+                    break;
+                }
+                thread::sleep(std::time::Duration::from_millis(2));
+            }
 
             let result = job(task, inflight.load(Ordering::SeqCst));
             inflight.fetch_sub(reserve, Ordering::SeqCst);

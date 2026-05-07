@@ -5,25 +5,52 @@ use std::time::Instant;
 use std::{collections::HashSet, fs, thread};
 
 use anyhow::{Context, Result};
-use image::{Rgb, RgbImage};
+use image::codecs::jpeg::JpegEncoder;
+use image::{ColorType, Rgb, RgbImage};
+use serde::{Deserialize, Serialize};
 
 use crate::common::{
     CloudPoint, LevelIndex, TileIndex, TileRenderResult, HOLE_ALERT_RADIUS, HOLE_FILL_ITERS,
     MAX_POINT_BYTES_IN_FLIGHT, SCALE_WORLD_UNITS_PER_PIXEL, TILE_SIZE_PX,
 };
-use crate::fs_utils::encode_coord;
+use crate::fs_utils::{encode_coord, find_all_toml_in_capture};
 use crate::stage1_pointcloud::{list_tile_point_dirs, read_ds3tile};
 
+const MASK_EXPAND_WORLD: f32 = 2.0;
+const JPEG_QUALITY: u8 = 95;
+
+#[derive(Deserialize)]
+struct WalkableLoopsFile {
+    loops: Vec<Vec<[f32; 3]>>,
+}
+
+#[derive(Serialize)]
+struct WalkableLoopsMerged {
+    version: u32,
+    loops: Vec<Vec<[f32; 3]>>,
+    expand_world: f32,
+}
+
+#[derive(Clone)]
+struct WalkableMask {
+    loops_xz: Vec<Vec<[f32; 2]>>,
+}
+
 pub fn render_tiles_to_pyramid(
+    capture_dir: &Path,
     tile_points_root: &Path,
     tiles_root: &Path,
     alerts_path: &Path,
     index_path: &Path,
 ) -> Result<()> {
+    let mask = load_walkable_mask(capture_dir)?;
+    write_merged_walkable_file(tiles_root, &mask)?;
+
     let mut alerts = String::from("z,tile_x,tile_y,hole_pixels_after_fill,coverage\n");
     let z_max = SCALE_WORLD_UNITS_PER_PIXEL.len() - 1;
     let mut tile_index = TileIndex {
         tile_size_px: TILE_SIZE_PX,
+        image_ext: "jpg".to_string(),
         scales_world_units_per_pixel: SCALE_WORLD_UNITS_PER_PIXEL.to_vec(),
         levels: std::collections::BTreeMap::new(),
     };
@@ -40,20 +67,18 @@ pub fn render_tiles_to_pyramid(
     let finest_tiles_root = tiles_root.to_path_buf();
     let finest_hits_in_task = Arc::clone(&finest_hits);
     let alert_lines_in_task = Arc::clone(&alert_lines);
+    let mask_in_task = mask.clone();
     run_with_budget(
         tile_dirs,
         |(_, _, dir)| estimate_tile_dir_bytes(dir).unwrap_or(1),
         move |(tx, ty, dir), reserved_bytes| {
-            let output = render_one_finest_tile(&dir, &finest_tiles_root, z_max, tx, ty)?;
+            let output =
+                render_one_finest_tile(&dir, &finest_tiles_root, z_max, tx, ty, &mask_in_task)?;
 
-            // After a successful render attempt (including low-coverage skip), remove consumed point shards.
             delete_tile_point_files(&dir)?;
 
             if let Some(tile) = output {
-                finest_hits_in_task
-                    .lock()
-                    .expect("finest_hits poisoned")
-                    .push((tx, ty));
+                finest_hits_in_task.lock().expect("finest_hits poisoned").push((tx, ty));
                 if tile.hole_pixels_after_fill > 0 {
                     alert_lines_in_task.lock().expect("alert_lines poisoned").push(format!(
                         "{},{},{},{},{}",
@@ -145,12 +170,51 @@ pub fn render_tiles_to_pyramid(
     Ok(())
 }
 
+fn load_walkable_mask(capture_dir: &Path) -> Result<WalkableMask> {
+    let mut loops_xz: Vec<Vec<[f32; 2]>> = Vec::new();
+    let tomls = find_all_toml_in_capture(capture_dir)?;
+    let mut seen_dirs = std::collections::HashSet::new();
+    for toml in tomls {
+        let Some(dir) = toml.parent() else { continue };
+        if !seen_dirs.insert(dir.to_path_buf()) {
+            continue;
+        }
+        let p = dir.join("walkable_loops.json");
+        if !p.is_file() {
+            continue;
+        }
+        let bytes = fs::read(&p).with_context(|| format!("read {}", p.display()))?;
+        let parsed: WalkableLoopsFile =
+            serde_json::from_slice(&bytes).with_context(|| format!("parse {}", p.display()))?;
+        for lp in parsed.loops {
+            if lp.len() < 3 {
+                continue;
+            }
+            // Probe loop capture is raw world space; processor derived outputs are right-handed (z flipped).
+            // Align walkable mask to the same right-handed space here.
+            loops_xz.push(lp.into_iter().map(|v| [v[0], -v[2]]).collect());
+        }
+    }
+    Ok(WalkableMask { loops_xz })
+}
+
+fn write_merged_walkable_file(tiles_root: &Path, mask: &WalkableMask) -> Result<()> {
+    let loops =
+        mask.loops_xz.iter().map(|lp| lp.iter().map(|p| [p[0], 0.0, p[1]]).collect()).collect();
+    let out = WalkableLoopsMerged { version: 1, loops, expand_world: MASK_EXPAND_WORLD };
+    let bytes = serde_json::to_vec_pretty(&out).context("serialize merged walkable loops")?;
+    fs::write(tiles_root.join("walkable_loops_merged.json"), bytes)
+        .context("write merged walkable loops")?;
+    Ok(())
+}
+
 fn render_one_finest_tile(
     tile_dir: &Path,
     tiles_root: &Path,
     z_max: usize,
     tx: i32,
     ty: i32,
+    mask: &WalkableMask,
 ) -> Result<Option<TileRenderResult>> {
     let mut points = Vec::new();
     for entry in
@@ -168,7 +232,8 @@ fn render_one_finest_tile(
     }
 
     let units_per_px = SCALE_WORLD_UNITS_PER_PIXEL[z_max];
-    let tile = render_tile(points.as_slice(), tx, ty, units_per_px);
+    let mut tile = render_tile(points.as_slice(), tx, ty, units_per_px);
+    apply_walkable_mask(&mut tile.image, tx, ty, units_per_px, mask);
     if tile.coverage < 0.0001 {
         return Ok(None);
     }
@@ -178,10 +243,98 @@ fn render_one_finest_tile(
     let z_name = z_max.to_string();
     let z_dir = tiles_root.join(&z_name).join(&x_name);
     fs::create_dir_all(&z_dir).with_context(|| format!("mkdir {}", z_dir.display()))?;
-    let tile_path = z_dir.join(format!("{}.png", y_name));
-    tile.image.save(&tile_path).with_context(|| format!("save {}", tile_path.display()))?;
+    let tile_path = z_dir.join(format!("{}.jpg", y_name));
+    save_jpeg(&tile.image, &tile_path)?;
 
     Ok(Some(tile))
+}
+
+fn apply_walkable_mask(
+    img: &mut RgbImage,
+    tx: i32,
+    ty: i32,
+    units_per_px: f32,
+    mask: &WalkableMask,
+) {
+    if mask.loops_xz.is_empty() {
+        return;
+    }
+    let tile_world_size = TILE_SIZE_PX as f32 * units_per_px;
+    let min_x = tx as f32 * tile_world_size;
+    let min_z = ty as f32 * tile_world_size;
+
+    for py in 0..TILE_SIZE_PX {
+        for px in 0..TILE_SIZE_PX {
+            let wx = min_x + (px as f32 + 0.5) * units_per_px;
+            let wz = min_z + (py as f32 + 0.5) * units_per_px;
+            if !point_in_or_near_loops(wx, wz, &mask.loops_xz, MASK_EXPAND_WORLD) {
+                img.put_pixel(px, py, Rgb([0, 0, 0]));
+            }
+        }
+    }
+}
+
+fn point_in_or_near_loops(x: f32, z: f32, loops: &[Vec<[f32; 2]>], expand: f32) -> bool {
+    let e2 = expand * expand;
+    for lp in loops {
+        // Self-intersections are handled robustly enough for v1 by combining:
+        // 1) odd-even inside test, and
+        // 2) distance-to-edge expansion band.
+        if point_in_polygon(x, z, lp) {
+            return true;
+        }
+        for i in 0..lp.len() {
+            let a = lp[i];
+            let b = lp[(i + 1) % lp.len()];
+            if dist2_point_seg(x, z, a[0], a[1], b[0], b[1]) <= e2 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn point_in_polygon(x: f32, z: f32, poly: &[[f32; 2]]) -> bool {
+    let mut inside = false;
+    let mut j = poly.len() - 1;
+    for i in 0..poly.len() {
+        let xi = poly[i][0];
+        let zi = poly[i][1];
+        let xj = poly[j][0];
+        let zj = poly[j][1];
+        let intersect =
+            ((zi > z) != (zj > z)) && (x < (xj - xi) * (z - zi) / (zj - zi + 1.0e-12) + xi);
+        if intersect {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+fn dist2_point_seg(px: f32, pz: f32, ax: f32, az: f32, bx: f32, bz: f32) -> f32 {
+    let abx = bx - ax;
+    let abz = bz - az;
+    let apx = px - ax;
+    let apz = pz - az;
+    let d = abx * abx + abz * abz;
+    if d <= 1.0e-12 {
+        return apx * apx + apz * apz;
+    }
+    let t = ((apx * abx + apz * abz) / d).clamp(0.0, 1.0);
+    let qx = ax + t * abx;
+    let qz = az + t * abz;
+    let dx = px - qx;
+    let dz = pz - qz;
+    dx * dx + dz * dz
+}
+
+fn save_jpeg(img: &RgbImage, path: &Path) -> Result<()> {
+    let file = fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
+    let mut enc = JpegEncoder::new_with_quality(file, JPEG_QUALITY);
+    enc.encode(img.as_raw(), img.width(), img.height(), ColorType::Rgb8)
+        .with_context(|| format!("encode jpeg {}", path.display()))?;
+    Ok(())
 }
 
 fn delete_tile_point_files(tile_dir: &Path) -> Result<()> {
@@ -195,9 +348,8 @@ fn delete_tile_point_files(tile_dir: &Path) -> Result<()> {
     }
 
     let mut is_empty = true;
-    if let Some(entry) = fs::read_dir(tile_dir)
-        .with_context(|| format!("read_dir {}", tile_dir.display()))?
-        .next()
+    if let Some(entry) =
+        fs::read_dir(tile_dir).with_context(|| format!("read_dir {}", tile_dir.display()))?.next()
     {
         let _ = entry?;
         is_empty = false;
@@ -208,9 +360,8 @@ fn delete_tile_point_files(tile_dir: &Path) -> Result<()> {
 
     if let Some(parent) = tile_dir.parent() {
         let mut parent_empty = true;
-        if let Some(entry) = fs::read_dir(parent)
-            .with_context(|| format!("read_dir {}", parent.display()))?
-            .next()
+        if let Some(entry) =
+            fs::read_dir(parent).with_context(|| format!("read_dir {}", parent.display()))?.next()
         {
             let _ = entry?;
             parent_empty = false;
@@ -358,7 +509,7 @@ fn build_coarse_tile_from_children(
         let x_name = encode_coord(*cx);
         let y_name = encode_coord(*cy);
         let child_path =
-            tiles_root.join(child_z.to_string()).join(&x_name).join(format!("{}.png", y_name));
+            tiles_root.join(child_z.to_string()).join(&x_name).join(format!("{}.jpg", y_name));
         if !child_path.is_file() {
             continue;
         }
@@ -396,7 +547,8 @@ fn build_coarse_tile_from_children(
 
     let out_dir = tiles_root.join(z.to_string()).join(encode_coord(tx));
     fs::create_dir_all(&out_dir).with_context(|| format!("mkdir {}", out_dir.display()))?;
-    out.save(out_dir.join(format!("{}.png", encode_coord(ty))))?;
+    let path = out_dir.join(format!("{}.jpg", encode_coord(ty)));
+    save_jpeg(&out, &path)?;
     Ok(true)
 }
 

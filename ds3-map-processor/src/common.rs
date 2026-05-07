@@ -46,6 +46,7 @@ pub struct CloudPoint {
 #[derive(Default, Serialize)]
 pub struct TileIndex {
     pub tile_size_px: u32,
+    pub image_ext: String,
     pub scales_world_units_per_pixel: Vec<f32>,
     pub levels: BTreeMap<String, LevelIndex>,
 }
