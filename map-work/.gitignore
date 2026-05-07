@@ -1,5 +1,5 @@
 # generated map workspace
-/tile-points/
 /tiles/
+/tile_pixel_index.json
 /alerts.csv
 *.tmp

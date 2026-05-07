@@ -216,10 +216,12 @@ impl Probe {
         merged.extend(self.closed_loops.iter().cloned());
         dedup_loops(&mut merged);
 
-        let payload = WalkableLoopsFile { version: 1, close_distance: LOOP_CLOSE_DISTANCE, loops: merged };
-        match serde_json::to_vec_pretty(&payload).map_err(|e| e.to_string()).and_then(|v| {
-            fs::write(&path, v).map_err(|e| e.to_string())
-        }) {
+        let payload =
+            WalkableLoopsFile { version: 1, close_distance: LOOP_CLOSE_DISTANCE, loops: merged };
+        match serde_json::to_vec_pretty(&payload)
+            .map_err(|e| e.to_string())
+            .and_then(|v| fs::write(&path, v).map_err(|e| e.to_string()))
+        {
             Ok(_) => {
                 self.capture_status = format!(
                     "Exported walkable loops (merged): {} ({} loop(s))",

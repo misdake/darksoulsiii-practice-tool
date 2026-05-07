@@ -6,7 +6,10 @@ pub const TILE_SIZE_PX: u32 = 512;
 pub const SCALE_WORLD_UNITS_PER_PIXEL: [f32; 6] = [1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125];
 pub const HOLE_FILL_ITERS: usize = 3;
 pub const HOLE_ALERT_RADIUS: i32 = 2;
-pub const MAX_POINT_BYTES_IN_FLIGHT: usize = 8 * 1024 * 1024 * 1024; // 8GB
+pub const MAX_POINT_IN_FLIGHT_GB: usize = 16;
+pub const CAPTURE_CACHE_GB: usize = 6;
+pub const MAX_POINT_BYTES_IN_FLIGHT: usize = MAX_POINT_IN_FLIGHT_GB * 1024 * 1024 * 1024;
+pub const CAPTURE_CACHE_BYTES: usize = CAPTURE_CACHE_GB * 1024 * 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct CaptureToml {
@@ -36,7 +39,6 @@ pub struct CaptureData {
 #[derive(Clone, Copy)]
 pub struct CloudPoint {
     pub x: f32,
-    pub y: f32,
     pub z: f32,
     pub r: f32,
     pub g: f32,
@@ -61,4 +63,27 @@ pub struct TileRenderResult {
     pub image: image::RgbImage,
     pub coverage: f32,
     pub hole_pixels_after_fill: usize,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct PixelAabb {
+    pub x_min: u32,
+    pub x_max: u32,
+    pub y_min: u32,
+    pub y_max: u32,
+    pub pixel_count: u32,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TilePixelRef {
+    pub capture_toml: String,
+    pub aabb: PixelAabb,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct TilePixelIndex {
+    pub version: u32,
+    pub tile_world_size: f32,
+    pub finest_z: usize,
+    pub tiles: BTreeMap<String, Vec<TilePixelRef>>,
 }

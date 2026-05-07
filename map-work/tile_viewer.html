@@ -38,6 +38,9 @@
         <select id="levelSel"></select>
       </div>
       <div class="row" id="scaleButtons"></div>
+      <div class="row">
+        <label><input type="checkbox" id="showLoops" checked /> Show Loops</label>
+      </div>
       <div class="stat" id="stat1">-</div>
       <div class="stat" id="stat2">Drag: pan, Wheel: zoom.</div>
     </div>
@@ -52,6 +55,7 @@ const loadBtn = document.getElementById('loadBtn');
 const modeSel = document.getElementById('modeSel');
 const levelSel = document.getElementById('levelSel');
 const scaleButtons = document.getElementById('scaleButtons');
+const showLoops = document.getElementById('showLoops');
 const stat1 = document.getElementById('stat1');
 
 let tileIndex = null;
@@ -102,18 +106,21 @@ async function loadIndex() {
   levelSel.innerHTML = '';
   scaleButtons.innerHTML = '';
   for (const lv of levelList) {
+    const wuPerPx = tileIndex.scales_world_units_per_pixel[lv];
+    const scaleMul = wuPerPx > 0 ? Math.round(1 / wuPerPx) : 1;
     const op = document.createElement('option');
     op.value = String(lv);
-    op.textContent = `z=${lv} (${tileIndex.scales_world_units_per_pixel[lv]} wu/px)`;
+    op.textContent = `z=${lv} (x${scaleMul}, ${wuPerPx} wu/px)`;
     levelSel.appendChild(op);
 
     const btn = document.createElement('button');
-    btn.textContent = `1:${tileIndex.scales_world_units_per_pixel[lv]}`;
+    btn.textContent = `x${scaleMul}`;
     btn.title = `Set point-to-point zoom for z=${lv}`;
     btn.addEventListener('click', () => {
-      modeSel.value = 'manual';
+      const wasAuto = modeSel.value === 'auto';
+      if (!wasAuto) modeSel.value = 'manual';
       levelSel.value = String(lv);
-      worldSpanX = tileIndex.scales_world_units_per_pixel[lv] * Math.max(1, canvas.clientWidth);
+      worldSpanX = wuPerPx * Math.max(1, canvas.clientWidth);
       alignCenterToPixelGridForLevel(lv);
     });
     scaleButtons.appendChild(btn);
@@ -128,19 +135,39 @@ async function loadIndex() {
     levelMaps.set(z, xMap);
   }
 
-  // initialize center from first available tile.
-  const z0 = String(levelList[0]);
+  // initialize center from full finest-level bounds.
+  const z0 = String(levelList[levelList.length - 1]);
   const lv0 = tileIndex.levels[z0];
-  const x0Name = Object.keys(lv0.x)[0];
-  const y0Name = lv0.x[x0Name][0];
-  const x0 = decodeCoord(x0Name);
-  const y0 = decodeCoord(y0Name);
   const tw = lv0.tile_world_size;
-  centerX = (x0 + 0.5) * tw;
-  centerZ = (y0 + 0.5) * tw;
-  worldSpanX = tw * 4;
+  let minTx = Infinity, maxTx = -Infinity, minTy = Infinity, maxTy = -Infinity;
+  for (const [xName, yArr] of Object.entries(lv0.x)) {
+    const tx = decodeCoord(xName);
+    if (tx == null) continue;
+    minTx = Math.min(minTx, tx);
+    maxTx = Math.max(maxTx, tx);
+    for (const yName of yArr) {
+      const ty = decodeCoord(yName);
+      if (ty == null) continue;
+      minTy = Math.min(minTy, ty);
+      maxTy = Math.max(maxTy, ty);
+    }
+  }
+  if (Number.isFinite(minTx) && Number.isFinite(minTy)) {
+    const minX = minTx * tw;
+    const maxX = (maxTx + 1) * tw;
+    const minZ = minTy * tw;
+    const maxZ = (maxTy + 1) * tw;
+    centerX = (minX + maxX) * 0.5;
+    centerZ = (minZ + maxZ) * 0.5;
+    worldSpanX = Math.max(maxX - minX, tw * 2);
+  } else {
+    centerX = 0;
+    centerZ = 0;
+    worldSpanX = tw * 4;
+  }
 
   levelSel.value = String(levelList[Math.floor(levelList.length / 2)]);
+  modeSel.value = 'auto';
 
   walkableLoops = [];
   try {
@@ -200,6 +227,7 @@ function ensureImage(url) {
 }
 
 function drawWalkableOverlay() {
+  if (!showLoops.checked) return;
   if (!Array.isArray(walkableLoops) || walkableLoops.length === 0) return;
   ctx.save();
   ctx.strokeStyle = '#00d2a8';
@@ -235,6 +263,9 @@ function render() {
   }
 
   const z = currentLevel();
+  if (modeSel.value === 'auto' && levelSel.value !== String(z)) {
+    levelSel.value = String(z);
+  }
   const zName = String(z);
   const level = tileIndex.levels[zName];
   const xMap = levelMaps.get(zName);

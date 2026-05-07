@@ -1,20 +1,23 @@
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
-use std::{collections::HashSet, fs, thread};
+use std::{collections::HashMap, collections::HashSet, fs};
 
 use anyhow::{Context, Result};
 use image::codecs::jpeg::JpegEncoder;
+use image::imageops::FilterType;
 use image::{ColorType, Rgb, RgbImage};
 use serde::{Deserialize, Serialize};
 
 use crate::common::{
-    CloudPoint, LevelIndex, TileIndex, TileRenderResult, HOLE_ALERT_RADIUS, HOLE_FILL_ITERS,
-    MAX_POINT_BYTES_IN_FLIGHT, SCALE_WORLD_UNITS_PER_PIXEL, TILE_SIZE_PX,
+    CAPTURE_CACHE_BYTES, CaptureData, CloudPoint, HOLE_ALERT_RADIUS, HOLE_FILL_ITERS, LevelIndex, MAX_POINT_BYTES_IN_FLIGHT, SCALE_WORLD_UNITS_PER_PIXEL, TILE_SIZE_PX,
+    TileIndex, TileRenderResult,
 };
 use crate::fs_utils::{encode_coord, find_all_toml_in_capture};
-use crate::stage1_pointcloud::{list_tile_point_dirs, read_ds3tile};
+use crate::stage1_pointcloud::{
+    iter_points_in_aabb_for_tile, load_capture_from_toml, parse_tile_key, read_tile_pixel_index,
+};
+use crate::task_budget::run_with_budget;
 
 const MASK_EXPAND_WORLD: f32 = 2.0;
 const JPEG_QUALITY: u8 = 95;
@@ -36,15 +39,42 @@ struct WalkableMask {
     loops_xz: Vec<Vec<[f32; 2]>>,
 }
 
+pub struct Stage2BudgetStats {
+    pub point_inflight_peak_bytes: usize,
+    pub capture_cache_peak_bytes: usize,
+}
+
+#[derive(Clone)]
+struct CachedCapture {
+    data: Arc<CaptureData>,
+    bytes: usize,
+    last_used_tick: u64,
+}
+
+struct CaptureLru {
+    budget_bytes: usize,
+    used_bytes: usize,
+    peak_used_bytes: usize,
+    tick: u64,
+    map: HashMap<String, CachedCapture>,
+}
+
 pub fn render_tiles_to_pyramid(
     capture_dir: &Path,
-    tile_points_root: &Path,
+    tile_pixel_index_path: &Path,
     tiles_root: &Path,
     alerts_path: &Path,
     index_path: &Path,
-) -> Result<()> {
+) -> Result<Stage2BudgetStats> {
     let mask = load_walkable_mask(capture_dir)?;
     write_merged_walkable_file(tiles_root, &mask)?;
+    let capture_cache = Arc::new(Mutex::new(CaptureLru {
+        budget_bytes: CAPTURE_CACHE_BYTES,
+        used_bytes: 0,
+        peak_used_bytes: 0,
+        tick: 0,
+        map: HashMap::new(),
+    }));
 
     let mut alerts = String::from("z,tile_x,tile_y,hole_pixels_after_fill,coverage\n");
     let z_max = SCALE_WORLD_UNITS_PER_PIXEL.len() - 1;
@@ -55,11 +85,16 @@ pub fn render_tiles_to_pyramid(
         levels: std::collections::BTreeMap::new(),
     };
 
-    let tile_dirs = list_tile_point_dirs(tile_points_root)?;
-    let total_tiles = tile_dirs.len();
+    let tile_pixel_index = read_tile_pixel_index(tile_pixel_index_path)?;
+    let mut finest_tasks: Vec<(i32, i32, Vec<crate::common::TilePixelRef>)> = Vec::new();
+    for (k, refs) in tile_pixel_index.tiles {
+        let (tx, ty) = parse_tile_key(&k)?;
+        finest_tasks.push((tx, ty, refs));
+    }
+    finest_tasks.sort_by_key(|(tx, ty, _)| (*tx, *ty));
+    let total_tiles = finest_tasks.len();
     println!("Stage 2/2 finest render: {} tile(s).", total_tiles);
 
-    let start = Instant::now();
     let completed = Arc::new(AtomicUsize::new(0));
     let finest_hits: Arc<Mutex<Vec<(i32, i32)>>> = Arc::new(Mutex::new(Vec::new()));
     let alert_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -68,14 +103,22 @@ pub fn render_tiles_to_pyramid(
     let finest_hits_in_task = Arc::clone(&finest_hits);
     let alert_lines_in_task = Arc::clone(&alert_lines);
     let mask_in_task = mask.clone();
-    run_with_budget(
-        tile_dirs,
-        |(_, _, dir)| estimate_tile_dir_bytes(dir).unwrap_or(1),
-        move |(tx, ty, dir), reserved_bytes| {
-            let output =
-                render_one_finest_tile(&dir, &finest_tiles_root, z_max, tx, ty, &mask_in_task)?;
-
-            delete_tile_point_files(&dir)?;
+    let cache_in_task = Arc::clone(&capture_cache);
+    let finest_peak_inflight = run_with_budget(
+        finest_tasks,
+        |(_, _, refs)| estimate_tile_refs_bytes(refs),
+        MAX_POINT_BYTES_IN_FLIGHT,
+        std::thread::available_parallelism().map_or(1usize, |n| n.get().max(1)),
+        move |(tx, ty, refs), reserved_bytes| {
+            let output = render_one_finest_tile(
+                &refs,
+                &finest_tiles_root,
+                z_max,
+                tx,
+                ty,
+                &mask_in_task,
+                &cache_in_task,
+            )?;
 
             if let Some(tile) = output {
                 finest_hits_in_task.lock().expect("finest_hits poisoned").push((tx, ty));
@@ -88,21 +131,20 @@ pub fn render_tiles_to_pyramid(
             }
 
             let done = completed.fetch_add(1, Ordering::SeqCst) + 1;
-            let elapsed = start.elapsed().as_secs_f32();
             let pct =
                 if total_tiles == 0 { 100.0 } else { (done as f32 / total_tiles as f32) * 100.0 };
-            let avg_ms = if done == 0 { 0.0 } else { elapsed * 1000.0 / done as f32 };
             println!(
-                "  finest {}/{} ({:.1}%) avg={:.1}ms in_flight={}MB",
+                "  finest {}/{} ({:.1}%) in_flight={}MB",
                 done,
                 total_tiles,
                 pct,
-                avg_ms,
                 reserved_bytes / (1024 * 1024)
             );
             Ok(())
         },
     )?;
+
+    let mut stage2_point_peak = finest_peak_inflight;
 
     for (tx, ty) in finest_hits.lock().expect("finest_hits poisoned").iter().copied() {
         add_tile_to_index(&mut tile_index, z_max, tx, ty);
@@ -139,25 +181,28 @@ pub fn render_tiles_to_pyramid(
 
         let level_done = Arc::new(AtomicUsize::new(0));
         let built_coords: Arc<Mutex<Vec<(i32, i32)>>> = Arc::new(Mutex::new(Vec::new()));
-        let level_start = Instant::now();
-
         let level_tiles_root = tiles_root.to_path_buf();
-        run_with_budget(coarse_vec, |_| 1, {
-            let built_coords = Arc::clone(&built_coords);
-            let level_done = Arc::clone(&level_done);
-            move |(tx, ty), _| {
-                if build_coarse_tile_from_children(&level_tiles_root, child_z, z, tx, ty)? {
-                    built_coords.lock().expect("built_coords poisoned").push((tx, ty));
-                }
+        let level_peak = run_with_budget(
+            coarse_vec,
+            |_| 1,
+            MAX_POINT_BYTES_IN_FLIGHT,
+            std::thread::available_parallelism().map_or(1usize, |n| n.get().max(1)),
+            {
+                let built_coords = Arc::clone(&built_coords);
+                let level_done = Arc::clone(&level_done);
+                move |(tx, ty), _| {
+                    if build_coarse_tile_from_children(&level_tiles_root, child_z, z, tx, ty)? {
+                        built_coords.lock().expect("built_coords poisoned").push((tx, ty));
+                    }
 
-                let done = level_done.fetch_add(1, Ordering::SeqCst) + 1;
-                let elapsed = level_start.elapsed().as_secs_f32();
-                let pct = if total == 0 { 100.0 } else { (done as f32 / total as f32) * 100.0 };
-                let avg_ms = if done == 0 { 0.0 } else { elapsed * 1000.0 / done as f32 };
-                println!("    z={} {}/{} ({:.1}%) avg={:.1}ms", z, done, total, pct, avg_ms);
-                Ok(())
-            }
-        })?;
+                    let done = level_done.fetch_add(1, Ordering::SeqCst) + 1;
+                    let pct = if total == 0 { 100.0 } else { (done as f32 / total as f32) * 100.0 };
+                    println!("    z={} {}/{} ({:.1}%)", z, done, total, pct);
+                    Ok(())
+                }
+            },
+        )?;
+        stage2_point_peak = stage2_point_peak.max(level_peak);
 
         for (tx, ty) in built_coords.lock().expect("built_coords poisoned").iter().copied() {
             add_tile_to_index(&mut tile_index, z, tx, ty);
@@ -167,7 +212,11 @@ pub fn render_tiles_to_pyramid(
     fs::write(alerts_path, alerts).with_context(|| format!("write {}", alerts_path.display()))?;
     let json = serde_json::to_vec_pretty(&tile_index).context("serialize tile index")?;
     fs::write(index_path, json).with_context(|| format!("write {}", index_path.display()))?;
-    Ok(())
+    let capture_peak = capture_cache.lock().expect("capture_cache poisoned").peak_used_bytes;
+    Ok(Stage2BudgetStats {
+        point_inflight_peak_bytes: stage2_point_peak,
+        capture_cache_peak_bytes: capture_peak,
+    })
 }
 
 fn load_walkable_mask(capture_dir: &Path) -> Result<WalkableMask> {
@@ -209,22 +258,34 @@ fn write_merged_walkable_file(tiles_root: &Path, mask: &WalkableMask) -> Result<
 }
 
 fn render_one_finest_tile(
-    tile_dir: &Path,
+    refs: &[crate::common::TilePixelRef],
     tiles_root: &Path,
     z_max: usize,
     tx: i32,
     ty: i32,
     mask: &WalkableMask,
+    capture_cache: &Arc<Mutex<CaptureLru>>,
 ) -> Result<Option<TileRenderResult>> {
     let mut points = Vec::new();
-    for entry in
-        fs::read_dir(tile_dir).with_context(|| format!("read_dir {}", tile_dir.display()))?
-    {
-        let path = entry?.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("ds3tile") {
-            continue;
-        }
-        points.extend(read_ds3tile(&path)?);
+    let tile_world_size = TILE_SIZE_PX as f32 * SCALE_WORLD_UNITS_PER_PIXEL[z_max];
+    for r in refs {
+        let capture = get_or_load_capture(capture_cache, &r.capture_toml)?;
+        iter_points_in_aabb_for_tile(
+            &capture,
+            &r.aabb,
+            tx,
+            ty,
+            tile_world_size,
+            |wx, _wy, wz, rgb| {
+                points.push(CloudPoint {
+                    x: wx,
+                    z: wz,
+                    r: srgb_u8_to_linear_f32(rgb[0]),
+                    g: srgb_u8_to_linear_f32(rgb[1]),
+                    b: srgb_u8_to_linear_f32(rgb[2]),
+                });
+            },
+        );
     }
 
     if points.is_empty() {
@@ -234,7 +295,7 @@ fn render_one_finest_tile(
     let units_per_px = SCALE_WORLD_UNITS_PER_PIXEL[z_max];
     let mut tile = render_tile(points.as_slice(), tx, ty, units_per_px);
     apply_walkable_mask(&mut tile.image, tx, ty, units_per_px, mask);
-    if tile.coverage < 0.0001 {
+    if tile.coverage < 0.0001 || is_all_black(&tile.image) {
         return Ok(None);
     }
 
@@ -337,143 +398,13 @@ fn save_jpeg(img: &RgbImage, path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn delete_tile_point_files(tile_dir: &Path) -> Result<()> {
-    for entry in
-        fs::read_dir(tile_dir).with_context(|| format!("read_dir {}", tile_dir.display()))?
-    {
-        let path = entry?.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("ds3tile") {
-            fs::remove_file(&path).with_context(|| format!("remove_file {}", path.display()))?;
-        }
+fn estimate_tile_refs_bytes(refs: &[crate::common::TilePixelRef]) -> usize {
+    let mut px = 0usize;
+    for r in refs {
+        px = px.saturating_add(r.aabb.pixel_count as usize);
     }
-
-    let mut is_empty = true;
-    if let Some(entry) =
-        fs::read_dir(tile_dir).with_context(|| format!("read_dir {}", tile_dir.display()))?.next()
-    {
-        let _ = entry?;
-        is_empty = false;
-    }
-    if is_empty {
-        fs::remove_dir(tile_dir).with_context(|| format!("remove_dir {}", tile_dir.display()))?;
-    }
-
-    if let Some(parent) = tile_dir.parent() {
-        let mut parent_empty = true;
-        if let Some(entry) =
-            fs::read_dir(parent).with_context(|| format!("read_dir {}", parent.display()))?.next()
-        {
-            let _ = entry?;
-            parent_empty = false;
-        }
-        if parent_empty {
-            let _ = fs::remove_dir(parent);
-        }
-    }
-
-    Ok(())
-}
-
-fn estimate_tile_dir_bytes(tile_dir: &Path) -> Result<usize> {
-    let mut sum = 0usize;
-    for entry in
-        fs::read_dir(tile_dir).with_context(|| format!("read_dir {}", tile_dir.display()))?
-    {
-        let path = entry?.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("ds3tile") {
-            continue;
-        }
-        let len = fs::metadata(&path).with_context(|| format!("metadata {}", path.display()))?.len()
-            as usize;
-        sum = sum.saturating_add(len);
-    }
-    Ok(sum.max(1))
-}
-
-fn run_with_budget<T, FEst, FJob>(tasks: Vec<T>, estimate: FEst, job: FJob) -> Result<()>
-where
-    T: Send + Sync + Clone + 'static,
-    FEst: Fn(&T) -> usize + Send + Sync + 'static,
-    FJob: Fn(T, usize) -> Result<()> + Send + Sync + 'static,
-{
-    let max_workers = std::thread::available_parallelism().map_or(1usize, |n| n.get().max(1));
-    let budget = MAX_POINT_BYTES_IN_FLIGHT;
-
-    let tasks = Arc::new(tasks);
-    let estimate = Arc::new(estimate);
-    let job = Arc::new(job);
-
-    let next = Arc::new(AtomicUsize::new(0));
-    let inflight = Arc::new(AtomicUsize::new(0));
-    let failed = Arc::new(AtomicBool::new(false));
-    let first_err: Arc<Mutex<Option<anyhow::Error>>> = Arc::new(Mutex::new(None));
-
-    let mut handles = Vec::with_capacity(max_workers);
-    for _ in 0..max_workers {
-        let tasks = Arc::clone(&tasks);
-        let estimate = Arc::clone(&estimate);
-        let job = Arc::clone(&job);
-        let next = Arc::clone(&next);
-        let inflight = Arc::clone(&inflight);
-        let failed = Arc::clone(&failed);
-        let first_err = Arc::clone(&first_err);
-
-        handles.push(thread::spawn(move || loop {
-            if failed.load(Ordering::SeqCst) {
-                break;
-            }
-
-            let idx = next.fetch_add(1, Ordering::SeqCst);
-            if idx >= tasks.len() {
-                break;
-            }
-            let task = tasks[idx].clone();
-            let est = estimate(&task).max(1);
-            let reserve = est.min(budget.max(1));
-
-            loop {
-                if failed.load(Ordering::SeqCst) {
-                    return;
-                }
-                let cur = inflight.load(Ordering::SeqCst);
-                if (cur == 0 || cur.saturating_add(reserve) <= budget)
-                    && inflight
-                        .compare_exchange(
-                            cur,
-                            cur.saturating_add(reserve),
-                            Ordering::SeqCst,
-                            Ordering::SeqCst,
-                        )
-                        .is_ok()
-                {
-                    break;
-                }
-                thread::sleep(std::time::Duration::from_millis(2));
-            }
-
-            let result = job(task, inflight.load(Ordering::SeqCst));
-            inflight.fetch_sub(reserve, Ordering::SeqCst);
-
-            if let Err(err) = result {
-                failed.store(true, Ordering::SeqCst);
-                let mut slot = first_err.lock().expect("first_err poisoned");
-                if slot.is_none() {
-                    *slot = Some(err);
-                }
-                return;
-            }
-        }));
-    }
-
-    for handle in handles {
-        let _ = handle.join();
-    }
-
-    if let Some(err) = first_err.lock().expect("first_err poisoned").take() {
-        return Err(err);
-    }
-
-    Ok(())
+    // rough upper bound for decoded/color+depth working-set contribution
+    (px.saturating_mul(24)).max(1)
 }
 
 fn add_tile_to_index(index: &mut TileIndex, z: usize, tx: i32, ty: i32) {
@@ -531,19 +462,7 @@ fn build_coarse_tile_from_children(
         return Ok(false);
     }
 
-    let mut out = RgbImage::new(TILE_SIZE_PX, TILE_SIZE_PX);
-    for y in 0..TILE_SIZE_PX {
-        for x in 0..TILE_SIZE_PX {
-            let p00 = canvas.get_pixel(x * 2, y * 2).0;
-            let p10 = canvas.get_pixel(x * 2 + 1, y * 2).0;
-            let p01 = canvas.get_pixel(x * 2, y * 2 + 1).0;
-            let p11 = canvas.get_pixel(x * 2 + 1, y * 2 + 1).0;
-            let r = ((p00[0] as u16 + p10[0] as u16 + p01[0] as u16 + p11[0] as u16) / 4) as u8;
-            let g = ((p00[1] as u16 + p10[1] as u16 + p01[1] as u16 + p11[1] as u16) / 4) as u8;
-            let b = ((p00[2] as u16 + p10[2] as u16 + p01[2] as u16 + p11[2] as u16) / 4) as u8;
-            out.put_pixel(x, y, Rgb([r, g, b]));
-        }
-    }
+    let out = image::imageops::resize(&canvas, TILE_SIZE_PX, TILE_SIZE_PX, FilterType::CatmullRom);
 
     let out_dir = tiles_root.join(z.to_string()).join(encode_coord(tx));
     fs::create_dir_all(&out_dir).with_context(|| format!("mkdir {}", out_dir.display()))?;
@@ -692,6 +611,15 @@ fn linear_f32_to_srgb_u8(v: f32) -> u8 {
     (s.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
+fn srgb_u8_to_linear_f32(v: u8) -> f32 {
+    let s = v as f32 / 255.0;
+    if s <= 0.04045 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 fn has_neighbor_within(mask: &[bool], x: i32, y: i32, radius: i32) -> bool {
     for oy in -radius..=radius {
         for ox in -radius..=radius {
@@ -707,4 +635,65 @@ fn has_neighbor_within(mask: &[bool], x: i32, y: i32, radius: i32) -> bool {
         }
     }
     false
+}
+
+fn is_all_black(img: &RgbImage) -> bool {
+    img.pixels().all(|p| p.0 == [0, 0, 0])
+}
+
+fn capture_data_bytes(c: &CaptureData) -> usize {
+    c.rgb.as_raw().len().saturating_add(c.depth.len().saturating_mul(4))
+}
+
+fn get_or_load_capture(cache: &Arc<Mutex<CaptureLru>>, toml_path: &str) -> Result<Arc<CaptureData>> {
+    {
+        let mut guard = cache.lock().expect("capture_cache poisoned");
+        let tick = guard.tick.saturating_add(1);
+        guard.tick = tick;
+        if let Some(e) = guard.map.get_mut(toml_path) {
+            e.last_used_tick = tick;
+            return Ok(Arc::clone(&e.data));
+        }
+    }
+
+    let loaded = Arc::new(load_capture_from_toml(Path::new(toml_path))?);
+    let loaded_bytes = capture_data_bytes(&loaded);
+
+    let mut guard = cache.lock().expect("capture_cache poisoned");
+    let tick = guard.tick.saturating_add(1);
+    guard.tick = tick;
+    if let Some(e) = guard.map.get_mut(toml_path) {
+        e.last_used_tick = tick;
+        return Ok(Arc::clone(&e.data));
+    }
+
+    guard.used_bytes = guard.used_bytes.saturating_add(loaded_bytes);
+    guard.peak_used_bytes = guard.peak_used_bytes.max(guard.used_bytes);
+    guard.map.insert(
+        toml_path.to_string(),
+        CachedCapture {
+            data: Arc::clone(&loaded),
+            bytes: loaded_bytes,
+            last_used_tick: tick,
+        },
+    );
+
+    while guard.used_bytes > guard.budget_bytes {
+        let mut oldest_key: Option<String> = None;
+        let mut oldest_tick = u64::MAX;
+        for (k, v) in &guard.map {
+            if v.last_used_tick < oldest_tick {
+                oldest_tick = v.last_used_tick;
+                oldest_key = Some(k.clone());
+            }
+        }
+        let Some(k) = oldest_key else { break };
+        if let Some(removed) = guard.map.remove(&k) {
+            guard.used_bytes = guard.used_bytes.saturating_sub(removed.bytes);
+        } else {
+            break;
+        }
+    }
+
+    Ok(loaded)
 }

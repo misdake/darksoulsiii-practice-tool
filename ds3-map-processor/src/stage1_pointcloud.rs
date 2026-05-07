@@ -1,148 +1,28 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Context, Result};
 use ds3_depthbuffer::{camera_to_world, linearize_depth, read_depth_exr_first_channel};
 
 use crate::common::{
-    CaptureData, CaptureToml, CloudPoint, SCALE_WORLD_UNITS_PER_PIXEL, TILE_SIZE_PX,
+    CaptureData, CaptureToml, PixelAabb, TilePixelIndex, TilePixelRef, SCALE_WORLD_UNITS_PER_PIXEL,
+    TILE_SIZE_PX,
 };
-use crate::fs_utils::{encode_coord, file_stem_utf8, sanitize_filename};
 
-pub fn split_capture_to_tile_points(toml_path: &Path, tile_points_root: &Path) -> Result<usize> {
+pub fn preprocess_capture_tile_spans(toml_path: &Path) -> Result<HashMap<(i32, i32), PixelAabb>> {
     let capture = load_capture_from_toml(toml_path)?;
-    let capture_stem = file_stem_utf8(toml_path)?;
-    let capture_name = sanitize_filename(&capture_stem);
-
-    let points = capture_to_points(&capture);
     let z_max = SCALE_WORLD_UNITS_PER_PIXEL.len() - 1;
     let tile_world_size = TILE_SIZE_PX as f32 * SCALE_WORLD_UNITS_PER_PIXEL[z_max];
 
-    let mut by_tile: HashMap<(i32, i32), Vec<CloudPoint>> = HashMap::new();
-    for p in points {
-        let tx = (p.x / tile_world_size).floor() as i32;
-        let ty = (p.z / tile_world_size).floor() as i32;
-        by_tile.entry((tx, ty)).or_default().push(p);
-    }
-
-    let mut written = 0usize;
-    for ((tx, ty), pts) in by_tile {
-        let dir = tile_points_root.join(encode_coord(tx)).join(encode_coord(ty));
-        fs::create_dir_all(&dir).with_context(|| format!("mkdir {}", dir.display()))?;
-        let out = dir.join(format!("{}.ds3tile", capture_name));
-        write_ds3tile(&out, &pts)?;
-        written += pts.len();
-    }
-
-    Ok(written)
-}
-
-pub fn list_tile_point_dirs(tile_points_root: &Path) -> Result<Vec<(i32, i32, PathBuf)>> {
-    let mut out = Vec::new();
-    if !tile_points_root.exists() {
-        return Ok(out);
-    }
-
-    for x_entry in fs::read_dir(tile_points_root)
-        .with_context(|| format!("read_dir {}", tile_points_root.display()))?
-    {
-        let x_path = x_entry?.path();
-        if !x_path.is_dir() {
-            continue;
-        }
-        let x_name = x_path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .with_context(|| format!("invalid x dir {}", x_path.display()))?;
-        let tx: i32 = x_name.parse().with_context(|| format!("invalid tile x '{}'", x_name))?;
-
-        for y_entry in
-            fs::read_dir(&x_path).with_context(|| format!("read_dir {}", x_path.display()))?
-        {
-            let y_path = y_entry?.path();
-            if !y_path.is_dir() {
-                continue;
-            }
-            let y_name = y_path
-                .file_name()
-                .and_then(|s| s.to_str())
-                .with_context(|| format!("invalid y dir {}", y_path.display()))?;
-            let ty: i32 = y_name.parse().with_context(|| format!("invalid tile y '{}'", y_name))?;
-            out.push((tx, ty, y_path));
-        }
-    }
-
-    out.sort_by_key(|(tx, ty, _)| (*tx, *ty));
-    Ok(out)
-}
-
-pub fn read_ds3tile(path: &Path) -> Result<Vec<CloudPoint>> {
-    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
-
-    if bytes.len() < 24 {
-        anyhow::bail!("{} too small for ds3tile header", path.display());
-    }
-    if &bytes[0..8] != b"DS3TL01\0" {
-        anyhow::bail!("{} invalid ds3tile magic", path.display());
-    }
-    let version = le_u32(&bytes, 8)?;
-    if version != 1 {
-        anyhow::bail!("{} unsupported ds3tile version {}", path.display(), version);
-    }
-    let point_count = le_u32(&bytes, 12)? as usize;
-    let payload = &bytes[24..];
-    if payload.len() != point_count * 24 {
-        anyhow::bail!(
-            "{} payload mismatch, expected {} got {}",
-            path.display(),
-            point_count * 24,
-            payload.len()
-        );
-    }
-
-    let mut points = Vec::with_capacity(point_count);
-    for i in 0..point_count {
-        let o = i * 24;
-        points.push(CloudPoint {
-            x: le_f32(payload, o)?,
-            y: le_f32(payload, o + 4)?,
-            z: le_f32(payload, o + 8)?,
-            r: le_f32(payload, o + 12)?,
-            g: le_f32(payload, o + 16)?,
-            b: le_f32(payload, o + 20)?,
-        });
-    }
-    Ok(points)
-}
-
-fn write_ds3tile(path: &Path, points: &[CloudPoint]) -> Result<()> {
-    let mut out = Vec::with_capacity(24 + points.len() * 24);
-    out.extend_from_slice(b"DS3TL01\0");
-    out.extend_from_slice(&1u32.to_le_bytes());
-    out.extend_from_slice(&(points.len() as u32).to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-    out.extend_from_slice(&0u32.to_le_bytes());
-    for p in points {
-        out.extend_from_slice(&p.x.to_le_bytes());
-        out.extend_from_slice(&p.y.to_le_bytes());
-        out.extend_from_slice(&p.z.to_le_bytes());
-        out.extend_from_slice(&p.r.to_le_bytes());
-        out.extend_from_slice(&p.g.to_le_bytes());
-        out.extend_from_slice(&p.b.to_le_bytes());
-    }
-    fs::write(path, out).with_context(|| format!("write {}", path.display()))?;
-    Ok(())
-}
-
-fn capture_to_points(capture: &CaptureData) -> Vec<CloudPoint> {
     let w = capture.width;
     let h = capture.height;
     let aspect = w as f32 / h as f32;
     let tan_half_fovy = (capture.fov_y_rad * 0.5).tan();
     let tan_half_fovx = tan_half_fovy * aspect;
 
-    let mut points: Vec<CloudPoint> = Vec::new();
+    let mut by_tile: HashMap<(i32, i32), PixelAabb> = HashMap::new();
+
     for y in 0..h {
         for x in 0..w {
             let idx = y * w + x;
@@ -162,28 +42,74 @@ fn capture_to_points(capture: &CaptureData) -> Vec<CloudPoint> {
             let px = nx * tan_half_fovx * z;
             let py = ny * tan_half_fovy * z;
             let pz = z;
-            let [wx, wy, wz] = camera_to_world(
+            let [wx, _wy, wz_raw] = camera_to_world(
                 [px, py, pz],
                 capture.camera_up,
                 capture.camera_dir,
                 capture.camera_position,
             );
-            // Normalize all derived outputs to a right-handed world: flip Z once at export.
-            let wz = -wz;
+            // Match processor right-handed convention.
+            let wz = -wz_raw;
 
-            let rgb = capture.rgb.get_pixel(x as u32, y as u32).0;
-            points.push(CloudPoint {
-                x: wx,
-                y: wy,
-                z: wz,
-                r: srgb_u8_to_linear_f32(rgb[0]),
-                g: srgb_u8_to_linear_f32(rgb[1]),
-                b: srgb_u8_to_linear_f32(rgb[2]),
+            let tx = (wx / tile_world_size).floor() as i32;
+            let ty = (wz / tile_world_size).floor() as i32;
+            let e = by_tile.entry((tx, ty)).or_insert(PixelAabb {
+                x_min: x as u32,
+                x_max: x as u32,
+                y_min: y as u32,
+                y_max: y as u32,
+                pixel_count: 0,
             });
+            let xu = x as u32;
+            let yu = y as u32;
+            if xu < e.x_min {
+                e.x_min = xu;
+            }
+            if xu > e.x_max {
+                e.x_max = xu;
+            }
+            if yu < e.y_min {
+                e.y_min = yu;
+            }
+            if yu > e.y_max {
+                e.y_max = yu;
+            }
+            e.pixel_count = e.pixel_count.saturating_add(1);
         }
     }
 
-    points
+    Ok(by_tile)
+}
+
+pub fn write_tile_pixel_index(index: &TilePixelIndex, path: &Path) -> Result<()> {
+    let bytes = serde_json::to_vec_pretty(index).context("serialize tile pixel index")?;
+    fs::write(path, bytes).with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+pub fn read_tile_pixel_index(path: &Path) -> Result<TilePixelIndex> {
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let index: TilePixelIndex = serde_json::from_slice(&bytes).context("parse tile pixel index")?;
+    Ok(index)
+}
+
+pub fn tile_key(tx: i32, ty: i32) -> String {
+    format!("{},{}", tx, ty)
+}
+
+pub fn parse_tile_key(key: &str) -> Result<(i32, i32)> {
+    let mut it = key.split(',');
+    let tx = it
+        .next()
+        .context("missing tx")?
+        .parse::<i32>()
+        .with_context(|| format!("invalid tx in key '{}'", key))?;
+    let ty = it
+        .next()
+        .context("missing ty")?
+        .parse::<i32>()
+        .with_context(|| format!("invalid ty in key '{}'", key))?;
+    Ok((tx, ty))
 }
 
 pub fn load_capture_from_toml(toml_path: &Path) -> Result<CaptureData> {
@@ -226,29 +152,64 @@ pub fn load_capture_from_toml(toml_path: &Path) -> Result<CaptureData> {
     })
 }
 
-fn srgb_u8_to_linear_f32(v: u8) -> f32 {
-    let c = v as f32 / 255.0;
-    if c <= 0.04045 {
-        c / 12.92
-    } else {
-        ((c + 0.055) / 1.055).powf(2.4)
+pub fn iter_points_in_aabb_for_tile<F>(
+    capture: &CaptureData,
+    aabb: &PixelAabb,
+    tx: i32,
+    ty: i32,
+    tile_world_size: f32,
+    mut f: F,
+) where
+    F: FnMut(f32, f32, f32, [u8; 3]),
+{
+    let w = capture.width;
+    let h = capture.height;
+    let aspect = w as f32 / h as f32;
+    let tan_half_fovy = (capture.fov_y_rad * 0.5).tan();
+    let tan_half_fovx = tan_half_fovy * aspect;
+
+    let tile_min_x = tx as f32 * tile_world_size;
+    let tile_min_z = ty as f32 * tile_world_size;
+    let tile_max_x = tile_min_x + tile_world_size;
+    let tile_max_z = tile_min_z + tile_world_size;
+
+    for y in aabb.y_min as usize..=aabb.y_max as usize {
+        for x in aabb.x_min as usize..=aabb.x_max as usize {
+            let idx = y * w + x;
+            let depth_raw = capture.depth[idx];
+            if !depth_raw.is_finite() {
+                continue;
+            }
+
+            let depth01 = depth_raw.clamp(0.0, 1.0);
+            let z = linearize_depth(depth01, capture.near, capture.far);
+            if !(z > capture.near && z < capture.far) {
+                continue;
+            }
+
+            let nx = ((x as f32 + 0.5) / w as f32) * 2.0 - 1.0;
+            let ny = 1.0 - ((y as f32 + 0.5) / h as f32) * 2.0;
+            let px = nx * tan_half_fovx * z;
+            let py = ny * tan_half_fovy * z;
+            let pz = z;
+            let [wx, wy, wz_raw] = camera_to_world(
+                [px, py, pz],
+                capture.camera_up,
+                capture.camera_dir,
+                capture.camera_position,
+            );
+            let wz = -wz_raw;
+
+            if wx < tile_min_x || wx >= tile_max_x || wz < tile_min_z || wz >= tile_max_z {
+                continue;
+            }
+
+            let rgb = capture.rgb.get_pixel(x as u32, y as u32).0;
+            f(wx, wy, wz, rgb);
+        }
     }
 }
 
-fn le_u32(bytes: &[u8], offset: usize) -> Result<u32> {
-    let arr: [u8; 4] = bytes
-        .get(offset..offset + 4)
-        .context("u32 out of bounds")?
-        .try_into()
-        .context("u32 slice length")?;
-    Ok(u32::from_le_bytes(arr))
-}
-
-fn le_f32(bytes: &[u8], offset: usize) -> Result<f32> {
-    let arr: [u8; 4] = bytes
-        .get(offset..offset + 4)
-        .context("f32 out of bounds")?
-        .try_into()
-        .context("f32 slice length")?;
-    Ok(f32::from_le_bytes(arr))
+pub fn make_tile_pixel_ref(capture_toml: &Path, aabb: PixelAabb) -> TilePixelRef {
+    TilePixelRef { capture_toml: capture_toml.to_string_lossy().to_string(), aabb }
 }

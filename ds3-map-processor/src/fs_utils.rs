@@ -7,7 +7,8 @@ use anyhow::{Context, Result};
 pub fn ensure_workdir_layout(work_dir: &Path) -> Result<()> {
     fs::create_dir_all(work_dir).with_context(|| format!("mkdir {}", work_dir.display()))?;
     let gitignore_path = work_dir.join(".gitignore");
-    let content = "# generated map workspace\n/tile-points/\n/tiles/\n/alerts.csv\n*.tmp\n";
+    let content =
+        "# generated map workspace\n/tiles/\n/tile_pixel_index.json\n/alerts.csv\n*.tmp\n";
     let existing = fs::read_to_string(&gitignore_path).unwrap_or_default();
     if existing != content {
         fs::write(&gitignore_path, content)
@@ -78,23 +79,6 @@ pub fn find_all_toml_in_capture(capture_dir: &Path) -> Result<Vec<PathBuf>> {
         am.cmp(&bm)
     });
     Ok(all)
-}
-
-pub fn file_stem_utf8(path: &Path) -> Result<String> {
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .with_context(|| format!("invalid file stem: {}", path.display()))?;
-    Ok(stem.to_string())
-}
-
-pub fn sanitize_filename(input: &str) -> String {
-    input
-        .chars()
-        .map(
-            |c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' },
-        )
-        .collect()
 }
 
 pub fn encode_coord(v: i32) -> String {
