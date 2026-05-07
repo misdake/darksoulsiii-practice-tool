@@ -7,7 +7,7 @@ use exr::prelude::read_first_flat_layer_from_file;
 
 use crate::common::{CaptureData, CaptureToml};
 
-pub use crate::common::{INPUT_CAPTURE_LIMIT, POINT_STRIDE};
+pub use crate::common::POINT_STRIDE;
 
 pub fn load_capture_from_toml(toml_path: &Path) -> Result<CaptureData> {
     let content =

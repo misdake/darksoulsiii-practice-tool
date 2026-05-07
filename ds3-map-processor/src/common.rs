@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub const INPUT_CAPTURE_LIMIT: usize = 3;
 pub const POINT_STRIDE: usize = 2;
 
 pub const TILE_SIZE_PX: u32 = 256;

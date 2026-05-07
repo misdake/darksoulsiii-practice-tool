@@ -20,6 +20,8 @@ pub(crate) struct Probe {
     capture_status: String,
     show_ui: bool,
     show_inject_hint: bool,
+    auto_near_far_offset: f32,
+    auto_near_far_range: f32,
 }
 
 impl Probe {
@@ -43,6 +45,8 @@ impl Probe {
             capture_status: String::new(),
             show_ui: false,
             show_inject_hint: true,
+            auto_near_far_offset: 0.0,
+            auto_near_far_range: 3.0,
         }
     }
 
@@ -85,6 +89,48 @@ impl Probe {
             Err(err) => self.capture_status = format!("Capture failed: {err}"),
         }
     }
+
+    fn nudge_near_far(&self, near_delta: f32, far_delta: f32) {
+        if let Some(state) = self.camera_info.camera_render_state() {
+            let near = state.near + near_delta;
+            let far = state.far + far_delta;
+            let _ = self.camera_info.set_near_far(near, far);
+        }
+    }
+
+    fn set_near_far_around_player_depth(&mut self) {
+        let Some(player) = self.camera_info.player_position() else {
+            self.capture_status = "Auto near/far failed: player position unavailable.".to_string();
+            return;
+        };
+        let Some(camera) = self.camera_info.camera_position() else {
+            self.capture_status = "Auto near/far failed: camera position unavailable.".to_string();
+            return;
+        };
+        let Some(state) = self.camera_info.camera_render_state() else {
+            self.capture_status =
+                "Auto near/far failed: camera render state unavailable.".to_string();
+            return;
+        };
+
+        let dir = normalize3(state.camera_dir);
+        let to_player = [player[0] - camera[0], player[1] - camera[1], player[2] - camera[2]];
+        let player_depth = dot3(to_player, dir);
+
+        let offset = self.auto_near_far_offset.clamp(-2.0, 2.0);
+        let range = self.auto_near_far_range.clamp(0.0, 10.0);
+        let center = player_depth + offset;
+        let near = center - range;
+        let far = center + range;
+
+        if self.camera_info.set_near_far(near, far) {
+            self.capture_status.clear();
+        } else {
+            self.capture_status = format!(
+                "Auto near/far failed: near={near:.3}, far={far:.3} invalid (need 0.001 < near < far)."
+            );
+        }
+    }
 }
 
 impl ImguiRenderLoop for Probe {
@@ -118,6 +164,21 @@ impl ImguiRenderLoop for Probe {
         }
         if ui.is_key_pressed(Key::F11) {
             self.process_capture_files();
+        }
+        if ui.is_key_pressed(Key::F5) {
+            self.set_near_far_around_player_depth();
+        }
+        if ui.is_key_pressed(Key::Minus) {
+            self.nudge_near_far(-1.0, 0.0);
+        }
+        if ui.is_key_pressed(Key::Equal) {
+            self.nudge_near_far(1.0, 0.0);
+        }
+        if ui.is_key_pressed(Key::LeftBracket) {
+            self.nudge_near_far(0.0, -1.0);
+        }
+        if ui.is_key_pressed(Key::RightBracket) {
+            self.nudge_near_far(0.0, 1.0);
         }
 
         if self.show_inject_hint {
@@ -219,6 +280,11 @@ impl ImguiRenderLoop for Probe {
                     if (near_changed || far_changed) && !self.camera_info.set_near_far(near, far) {
                         ui.text("Invalid range: require 0.001 < near < far < 100000.");
                     }
+                    ui.text("Hotkeys: '-'/'=' nudge Near, '['/']' nudge Far");
+                    ui.text("F5: auto set Near/Far around player depth");
+                    ui.slider_config("Auto Offset", -2.0, 2.0)
+                        .build(&mut self.auto_near_far_offset);
+                    ui.slider_config("Auto Range", 0.0, 10.0).build(&mut self.auto_near_far_range);
 
                     ui.text(format!(
                         "Camera Up [x,y,z]: {:.3}, {:.3}, {:.3}",
@@ -253,5 +319,18 @@ impl ImguiRenderLoop for Probe {
 
         BLOCK_XINPUT
             .store(ui.io().want_capture_mouse || ui.io().want_capture_keyboard, Ordering::SeqCst);
+    }
+}
+
+fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+fn normalize3(v: [f32; 3]) -> [f32; 3] {
+    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+    if len <= 1.0e-8 {
+        [0.0, 0.0, 0.0]
+    } else {
+        [v[0] / len, v[1] / len, v[2] / len]
     }
 }

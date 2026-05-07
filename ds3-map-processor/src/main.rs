@@ -10,9 +10,7 @@ use std::fs;
 use crate::fs_utils::{
     clear_directory, ensure_workdir_layout, find_all_toml_in_capture, find_repo_root,
 };
-use crate::stage1_pointcloud::{
-    export_point_cloud_binary_v2, load_capture_from_toml, INPUT_CAPTURE_LIMIT, POINT_STRIDE,
-};
+use crate::stage1_pointcloud::{export_point_cloud_binary_v2, load_capture_from_toml, POINT_STRIDE};
 use crate::stage2_bin_split::split_pointclouds_into_bins;
 use crate::stage3_tile_pyramid::render_bins_to_tile_pyramid;
 
@@ -22,8 +20,7 @@ fn main() -> Result<()> {
     let work_dir = repo_root.join("map-work");
     ensure_workdir_layout(&work_dir)?;
 
-    let toml_paths = find_all_toml_in_capture(&capture_dir)?;
-    let selected: Vec<_> = toml_paths.into_iter().take(INPUT_CAPTURE_LIMIT).collect();
+    let selected = find_all_toml_in_capture(&capture_dir)?;
     println!(
         "Stage 1/3 capture->pointcloud: {} capture(s), stride={}.",
         selected.len(),
