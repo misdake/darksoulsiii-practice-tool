@@ -6,57 +6,52 @@ use std::{collections::HashMap, collections::HashSet, fs};
 use anyhow::{Context, Result};
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use image::{ColorType, Rgb, RgbImage};
-use serde::{Deserialize, Serialize};
-
+use image::{ColorType, RgbImage};
 use crate::common::{
-    CAPTURE_CACHE_BYTES, CaptureData, CloudPoint, HOLE_ALERT_RADIUS, HOLE_FILL_ITERS, LevelIndex, MAX_POINT_BYTES_IN_FLIGHT, SCALE_WORLD_UNITS_PER_PIXEL, TILE_SIZE_PX,
-    TileIndex, TileRenderResult,
+    CloudPoint, LevelIndex, TileIndex, TileRenderResult,
+    MAX_POINT_BYTES_IN_FLIGHT, SCALE_WORLD_UNITS_PER_PIXEL, TILE_SIZE_PX,
 };
-use crate::fs_utils::{encode_coord, find_all_toml_in_capture};
+use crate::fs_utils::encode_coord;
 use crate::stage1_pointcloud::{
-    iter_points_in_aabb_for_tile, load_capture_from_toml, parse_tile_key, read_tile_pixel_index,
+    iter_points_in_aabb_for_tile, parse_tile_key, read_tile_pixel_index,
 };
 use crate::task_budget::run_with_budget;
+#[path = "stage2/cache.rs"]
+mod cache;
+#[path = "stage2/walkable.rs"]
+mod walkable;
+#[path = "stage2/profile.rs"]
+mod profile;
+#[path = "stage2/render.rs"]
+mod render;
+use cache::{get_or_load_capture, new_capture_lru, CaptureLru};
+use profile::{
+    add_prof_ns, print_stage2_profile_summary, reset_stage2_profile_counters, PROF_ACCUM_NS,
+    PROF_GET_OR_LOAD_NS, PROF_ITER_POINTS_NS, PROF_JPEG_NS, PROF_MASK_NS, PROF_REF_COUNT,
+    PROF_RENDER_NS, PROF_TILE_COUNT,
+};
+use walkable::{
+    apply_walkable_mask, load_walkable_mask, rasterize_walkable_mask_tile,
+    write_merged_walkable_file, TileWalkableMask, WalkableMask,
+};
+use render::{
+    accumulate_points_for_tile, is_all_black, new_tile_render_accum, render_tile_from_accum,
+    srgb_u8_to_linear_f32,
+};
 
-const MASK_EXPAND_WORLD: f32 = 2.0;
 const JPEG_QUALITY: u8 = 95;
-
-#[derive(Deserialize)]
-struct WalkableLoopsFile {
-    loops: Vec<Vec<[f32; 3]>>,
-}
-
-#[derive(Serialize)]
-struct WalkableLoopsMerged {
-    version: u32,
-    loops: Vec<Vec<[f32; 3]>>,
-    expand_world: f32,
-}
-
-#[derive(Clone)]
-struct WalkableMask {
-    loops_xz: Vec<Vec<[f32; 2]>>,
-}
 
 pub struct Stage2BudgetStats {
     pub point_inflight_peak_bytes: usize,
     pub capture_cache_peak_bytes: usize,
 }
 
-#[derive(Clone)]
-struct CachedCapture {
-    data: Arc<CaptureData>,
-    bytes: usize,
-    last_used_tick: u64,
-}
-
-struct CaptureLru {
-    budget_bytes: usize,
-    used_bytes: usize,
-    peak_used_bytes: usize,
-    tick: u64,
-    map: HashMap<String, CachedCapture>,
+struct FinestRenderEnv<'a> {
+    tiles_root: &'a Path,
+    z_max: usize,
+    mask: &'a WalkableMask,
+    precomputed_mask: Option<&'a [bool]>,
+    capture_cache: &'a Arc<Mutex<CaptureLru>>,
 }
 
 pub fn render_tiles_to_pyramid(
@@ -66,15 +61,10 @@ pub fn render_tiles_to_pyramid(
     alerts_path: &Path,
     index_path: &Path,
 ) -> Result<Stage2BudgetStats> {
+    reset_stage2_profile_counters();
     let mask = load_walkable_mask(capture_dir)?;
     write_merged_walkable_file(tiles_root, &mask)?;
-    let capture_cache = Arc::new(Mutex::new(CaptureLru {
-        budget_bytes: CAPTURE_CACHE_BYTES,
-        used_bytes: 0,
-        peak_used_bytes: 0,
-        tick: 0,
-        map: HashMap::new(),
-    }));
+    let capture_cache = Arc::new(Mutex::new(new_capture_lru()));
 
     let mut alerts = String::from("z,tile_x,tile_y,hole_pixels_after_fill,coverage\n");
     let z_max = SCALE_WORLD_UNITS_PER_PIXEL.len() - 1;
@@ -94,6 +84,44 @@ pub fn render_tiles_to_pyramid(
     finest_tasks.sort_by_key(|(tx, ty, _)| (*tx, *ty));
     let total_tiles = finest_tasks.len();
     println!("Stage 2/2 finest render: {} tile(s).", total_tiles);
+    let finest_units_per_px = SCALE_WORLD_UNITS_PER_PIXEL[z_max];
+    let precompute_total = finest_tasks.len();
+    println!("  precompute walkable masks for finest tiles: {} tile(s).", precompute_total);
+    let precompute_done = Arc::new(AtomicUsize::new(0));
+    let precompute_store: Arc<Mutex<TileWalkableMask>> =
+        Arc::new(Mutex::new(HashMap::with_capacity(precompute_total)));
+    let mask_for_precompute = mask.clone();
+    let store_for_precompute = Arc::clone(&precompute_store);
+    let done_for_precompute = Arc::clone(&precompute_done);
+    let precompute_tasks: Vec<(i32, i32)> =
+        finest_tasks.iter().map(|(tx, ty, _)| (*tx, *ty)).collect();
+    let _precompute_peak = run_with_budget(
+        precompute_tasks,
+        |_| 1usize,
+        MAX_POINT_BYTES_IN_FLIGHT,
+        std::thread::available_parallelism().map_or(1usize, |n| n.get().max(1)),
+        move |(tx, ty), _| {
+            let bits =
+                rasterize_walkable_mask_tile(&mask_for_precompute, tx, ty, finest_units_per_px);
+            store_for_precompute.lock().expect("precompute_store poisoned").insert((tx, ty), bits);
+            let done = done_for_precompute.fetch_add(1, Ordering::SeqCst) + 1;
+            if done.is_multiple_of(8) || done == precompute_total {
+                let pct = if precompute_total == 0 {
+                    100.0
+                } else {
+                    (done as f32 / precompute_total as f32) * 100.0
+                };
+                println!("    precompute {}/{} ({:.1}%)", done, precompute_total, pct);
+            }
+            Ok(())
+        },
+    )?;
+    let precomputed_masks = Arc::new(
+        Arc::try_unwrap(precompute_store)
+            .expect("precompute_store still referenced")
+            .into_inner()
+            .expect("precompute_store poisoned"),
+    );
 
     let completed = Arc::new(AtomicUsize::new(0));
     let finest_hits: Arc<Mutex<Vec<(i32, i32)>>> = Arc::new(Mutex::new(Vec::new()));
@@ -103,6 +131,7 @@ pub fn render_tiles_to_pyramid(
     let finest_hits_in_task = Arc::clone(&finest_hits);
     let alert_lines_in_task = Arc::clone(&alert_lines);
     let mask_in_task = mask.clone();
+    let masks_in_task = Arc::clone(&precomputed_masks);
     let cache_in_task = Arc::clone(&capture_cache);
     let finest_peak_inflight = run_with_budget(
         finest_tasks,
@@ -112,12 +141,15 @@ pub fn render_tiles_to_pyramid(
         move |(tx, ty, refs), reserved_bytes| {
             let output = render_one_finest_tile(
                 &refs,
-                &finest_tiles_root,
-                z_max,
                 tx,
                 ty,
-                &mask_in_task,
-                &cache_in_task,
+                FinestRenderEnv {
+                    tiles_root: &finest_tiles_root,
+                    z_max,
+                    mask: &mask_in_task,
+                    precomputed_mask: masks_in_task.get(&(tx, ty)).map(|v| v.as_slice()),
+                    capture_cache: &cache_in_task,
+                },
             )?;
 
             if let Some(tile) = output {
@@ -212,6 +244,7 @@ pub fn render_tiles_to_pyramid(
     fs::write(alerts_path, alerts).with_context(|| format!("write {}", alerts_path.display()))?;
     let json = serde_json::to_vec_pretty(&tile_index).context("serialize tile index")?;
     fs::write(index_path, json).with_context(|| format!("write {}", index_path.display()))?;
+    print_stage2_profile_summary();
     let capture_peak = capture_cache.lock().expect("capture_cache poisoned").peak_used_bytes;
     Ok(Stage2BudgetStats {
         point_inflight_peak_bytes: stage2_point_peak,
@@ -219,66 +252,41 @@ pub fn render_tiles_to_pyramid(
     })
 }
 
-fn load_walkable_mask(capture_dir: &Path) -> Result<WalkableMask> {
-    let mut loops_xz: Vec<Vec<[f32; 2]>> = Vec::new();
-    let tomls = find_all_toml_in_capture(capture_dir)?;
-    let mut seen_dirs = std::collections::HashSet::new();
-    for toml in tomls {
-        let Some(dir) = toml.parent() else { continue };
-        if !seen_dirs.insert(dir.to_path_buf()) {
-            continue;
-        }
-        let p = dir.join("walkable_loops.json");
-        if !p.is_file() {
-            continue;
-        }
-        let bytes = fs::read(&p).with_context(|| format!("read {}", p.display()))?;
-        let parsed: WalkableLoopsFile =
-            serde_json::from_slice(&bytes).with_context(|| format!("parse {}", p.display()))?;
-        for lp in parsed.loops {
-            if lp.len() < 3 {
-                continue;
-            }
-            // Probe loop capture is raw world space; processor derived outputs are right-handed (z flipped).
-            // Align walkable mask to the same right-handed space here.
-            loops_xz.push(lp.into_iter().map(|v| [v[0], -v[2]]).collect());
-        }
-    }
-    Ok(WalkableMask { loops_xz })
-}
-
-fn write_merged_walkable_file(tiles_root: &Path, mask: &WalkableMask) -> Result<()> {
-    let loops =
-        mask.loops_xz.iter().map(|lp| lp.iter().map(|p| [p[0], 0.0, p[1]]).collect()).collect();
-    let out = WalkableLoopsMerged { version: 1, loops, expand_world: MASK_EXPAND_WORLD };
-    let bytes = serde_json::to_vec_pretty(&out).context("serialize merged walkable loops")?;
-    fs::write(tiles_root.join("walkable_loops_merged.json"), bytes)
-        .context("write merged walkable loops")?;
-    Ok(())
-}
 
 fn render_one_finest_tile(
     refs: &[crate::common::TilePixelRef],
-    tiles_root: &Path,
-    z_max: usize,
     tx: i32,
     ty: i32,
-    mask: &WalkableMask,
-    capture_cache: &Arc<Mutex<CaptureLru>>,
+    env: FinestRenderEnv<'_>,
 ) -> Result<Option<TileRenderResult>> {
-    let mut points = Vec::new();
+    let FinestRenderEnv {
+        tiles_root,
+        z_max,
+        mask,
+        precomputed_mask,
+        capture_cache,
+    } = env;
+    let units_per_px = SCALE_WORLD_UNITS_PER_PIXEL[z_max];
+    let mut accum = new_tile_render_accum();
+    let mut has_any_points = false;
     let tile_world_size = TILE_SIZE_PX as f32 * SCALE_WORLD_UNITS_PER_PIXEL[z_max];
     for r in refs {
+        PROF_REF_COUNT.fetch_add(1, Ordering::Relaxed);
+        let t_load = std::time::Instant::now();
         let capture = get_or_load_capture(capture_cache, &r.capture_toml)?;
+        add_prof_ns(&PROF_GET_OR_LOAD_NS, t_load.elapsed().as_nanos());
+        let mut capture_points = Vec::new();
+        let t_iter = std::time::Instant::now();
         iter_points_in_aabb_for_tile(
             &capture,
             &r.aabb,
             tx,
             ty,
             tile_world_size,
-            |wx, _wy, wz, rgb| {
-                points.push(CloudPoint {
+            |wx, wy, wz, rgb| {
+                capture_points.push(CloudPoint {
                     x: wx,
+                    y: wy,
                     z: wz,
                     r: srgb_u8_to_linear_f32(rgb[0]),
                     g: srgb_u8_to_linear_f32(rgb[1]),
@@ -286,15 +294,26 @@ fn render_one_finest_tile(
                 });
             },
         );
+        add_prof_ns(&PROF_ITER_POINTS_NS, t_iter.elapsed().as_nanos());
+        if !capture_points.is_empty() {
+            has_any_points = true;
+            let t_accum = std::time::Instant::now();
+            accumulate_points_for_tile(&mut accum, capture_points.as_slice(), tx, ty, units_per_px);
+            add_prof_ns(&PROF_ACCUM_NS, t_accum.elapsed().as_nanos());
+        }
     }
 
-    if points.is_empty() {
+    if !has_any_points {
         return Ok(None);
     }
 
-    let units_per_px = SCALE_WORLD_UNITS_PER_PIXEL[z_max];
-    let mut tile = render_tile(points.as_slice(), tx, ty, units_per_px);
-    apply_walkable_mask(&mut tile.image, tx, ty, units_per_px, mask);
+    PROF_TILE_COUNT.fetch_add(1, Ordering::Relaxed);
+    let t_render = std::time::Instant::now();
+    let mut tile = render_tile_from_accum(accum);
+    add_prof_ns(&PROF_RENDER_NS, t_render.elapsed().as_nanos());
+    let t_mask = std::time::Instant::now();
+    apply_walkable_mask(&mut tile.image, tx, ty, units_per_px, mask, precomputed_mask);
+    add_prof_ns(&PROF_MASK_NS, t_mask.elapsed().as_nanos());
     if tile.coverage < 0.0001 || is_all_black(&tile.image) {
         return Ok(None);
     }
@@ -305,90 +324,13 @@ fn render_one_finest_tile(
     let z_dir = tiles_root.join(&z_name).join(&x_name);
     fs::create_dir_all(&z_dir).with_context(|| format!("mkdir {}", z_dir.display()))?;
     let tile_path = z_dir.join(format!("{}.jpg", y_name));
+    let t_jpeg = std::time::Instant::now();
     save_jpeg(&tile.image, &tile_path)?;
+    add_prof_ns(&PROF_JPEG_NS, t_jpeg.elapsed().as_nanos());
 
     Ok(Some(tile))
 }
 
-fn apply_walkable_mask(
-    img: &mut RgbImage,
-    tx: i32,
-    ty: i32,
-    units_per_px: f32,
-    mask: &WalkableMask,
-) {
-    if mask.loops_xz.is_empty() {
-        return;
-    }
-    let tile_world_size = TILE_SIZE_PX as f32 * units_per_px;
-    let min_x = tx as f32 * tile_world_size;
-    let min_z = ty as f32 * tile_world_size;
-
-    for py in 0..TILE_SIZE_PX {
-        for px in 0..TILE_SIZE_PX {
-            let wx = min_x + (px as f32 + 0.5) * units_per_px;
-            let wz = min_z + (py as f32 + 0.5) * units_per_px;
-            if !point_in_or_near_loops(wx, wz, &mask.loops_xz, MASK_EXPAND_WORLD) {
-                img.put_pixel(px, py, Rgb([0, 0, 0]));
-            }
-        }
-    }
-}
-
-fn point_in_or_near_loops(x: f32, z: f32, loops: &[Vec<[f32; 2]>], expand: f32) -> bool {
-    let e2 = expand * expand;
-    for lp in loops {
-        // Self-intersections are handled robustly enough for v1 by combining:
-        // 1) odd-even inside test, and
-        // 2) distance-to-edge expansion band.
-        if point_in_polygon(x, z, lp) {
-            return true;
-        }
-        for i in 0..lp.len() {
-            let a = lp[i];
-            let b = lp[(i + 1) % lp.len()];
-            if dist2_point_seg(x, z, a[0], a[1], b[0], b[1]) <= e2 {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn point_in_polygon(x: f32, z: f32, poly: &[[f32; 2]]) -> bool {
-    let mut inside = false;
-    let mut j = poly.len() - 1;
-    for i in 0..poly.len() {
-        let xi = poly[i][0];
-        let zi = poly[i][1];
-        let xj = poly[j][0];
-        let zj = poly[j][1];
-        let intersect =
-            ((zi > z) != (zj > z)) && (x < (xj - xi) * (z - zi) / (zj - zi + 1.0e-12) + xi);
-        if intersect {
-            inside = !inside;
-        }
-        j = i;
-    }
-    inside
-}
-
-fn dist2_point_seg(px: f32, pz: f32, ax: f32, az: f32, bx: f32, bz: f32) -> f32 {
-    let abx = bx - ax;
-    let abz = bz - az;
-    let apx = px - ax;
-    let apz = pz - az;
-    let d = abx * abx + abz * abz;
-    if d <= 1.0e-12 {
-        return apx * apx + apz * apz;
-    }
-    let t = ((apx * abx + apz * abz) / d).clamp(0.0, 1.0);
-    let qx = ax + t * abx;
-    let qz = az + t * abz;
-    let dx = px - qx;
-    let dz = pz - qz;
-    dx * dx + dz * dz
-}
 
 fn save_jpeg(img: &RgbImage, path: &Path) -> Result<()> {
     let file = fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
@@ -471,229 +413,3 @@ fn build_coarse_tile_from_children(
     Ok(true)
 }
 
-fn render_tile(points: &[CloudPoint], tx: i32, ty: i32, units_per_px: f32) -> TileRenderResult {
-    let tile_world_size = TILE_SIZE_PX as f32 * units_per_px;
-    let tile_min_x = tx as f32 * tile_world_size;
-    let tile_min_z = ty as f32 * tile_world_size;
-    let tile_max_x = tile_min_x + tile_world_size;
-    let tile_max_z = tile_min_z + tile_world_size;
-
-    let n = (TILE_SIZE_PX * TILE_SIZE_PX) as usize;
-    let mut sum_r = vec![0.0_f32; n];
-    let mut sum_g = vec![0.0_f32; n];
-    let mut sum_b = vec![0.0_f32; n];
-    let mut sum_w = vec![0.0_f32; n];
-    let mut has_core = vec![false; n];
-
-    for p in points {
-        if p.x < tile_min_x || p.x >= tile_max_x || p.z < tile_min_z || p.z >= tile_max_z {
-            continue;
-        }
-
-        let fx = (p.x - tile_min_x) / units_per_px;
-        let fy = (p.z - tile_min_z) / units_per_px;
-        let cx = fx.floor() as i32;
-        let cy = fy.floor() as i32;
-
-        for oy in -1..=1 {
-            for ox in -1..=1 {
-                let px = cx + ox;
-                let py = cy + oy;
-                if px < 0 || py < 0 || px >= TILE_SIZE_PX as i32 || py >= TILE_SIZE_PX as i32 {
-                    continue;
-                }
-                let dx = fx - (px as f32 + 0.5);
-                let dy = fy - (py as f32 + 0.5);
-                let d2 = dx * dx + dy * dy;
-                let w = (1.0 - d2 / 2.25).max(0.0);
-                if w <= 0.0 {
-                    continue;
-                }
-                let idx = py as usize * TILE_SIZE_PX as usize + px as usize;
-                sum_r[idx] += p.r * w;
-                sum_g[idx] += p.g * w;
-                sum_b[idx] += p.b * w;
-                sum_w[idx] += w;
-                if ox == 0 && oy == 0 {
-                    has_core[idx] = true;
-                }
-            }
-        }
-    }
-
-    let mut has_value = vec![false; n];
-    for i in 0..n {
-        has_value[i] = sum_w[i] > 0.0;
-    }
-
-    for _ in 0..HOLE_FILL_ITERS {
-        let prev_has = has_value.clone();
-        let prev_r = sum_r.clone();
-        let prev_g = sum_g.clone();
-        let prev_b = sum_b.clone();
-        let prev_w = sum_w.clone();
-
-        for y in 0..TILE_SIZE_PX as i32 {
-            for x in 0..TILE_SIZE_PX as i32 {
-                let idx = y as usize * TILE_SIZE_PX as usize + x as usize;
-                if prev_has[idx] {
-                    continue;
-                }
-                let mut ar = 0.0;
-                let mut ag = 0.0;
-                let mut ab = 0.0;
-                let mut aw = 0.0;
-                for (ox, oy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-                    let nx = x + ox;
-                    let ny = y + oy;
-                    if nx < 0 || ny < 0 || nx >= TILE_SIZE_PX as i32 || ny >= TILE_SIZE_PX as i32 {
-                        continue;
-                    }
-                    let nidx = ny as usize * TILE_SIZE_PX as usize + nx as usize;
-                    if !prev_has[nidx] {
-                        continue;
-                    }
-                    ar += prev_r[nidx] / prev_w[nidx];
-                    ag += prev_g[nidx] / prev_w[nidx];
-                    ab += prev_b[nidx] / prev_w[nidx];
-                    aw += 1.0;
-                }
-                if aw > 0.0 {
-                    sum_r[idx] = ar / aw;
-                    sum_g[idx] = ag / aw;
-                    sum_b[idx] = ab / aw;
-                    sum_w[idx] = 1.0;
-                    has_value[idx] = true;
-                }
-            }
-        }
-    }
-
-    let mut holes_after_fill = 0usize;
-    let mut covered = 0usize;
-    let mut out = RgbImage::new(TILE_SIZE_PX, TILE_SIZE_PX);
-
-    for y in 0..TILE_SIZE_PX as i32 {
-        for x in 0..TILE_SIZE_PX as i32 {
-            let idx = y as usize * TILE_SIZE_PX as usize + x as usize;
-            if has_value[idx] {
-                covered += 1;
-                let rr = (sum_r[idx] / sum_w[idx]).clamp(0.0, 1.0);
-                let gg = (sum_g[idx] / sum_w[idx]).clamp(0.0, 1.0);
-                let bb = (sum_b[idx] / sum_w[idx]).clamp(0.0, 1.0);
-                out.put_pixel(
-                    x as u32,
-                    y as u32,
-                    Rgb([
-                        linear_f32_to_srgb_u8(rr),
-                        linear_f32_to_srgb_u8(gg),
-                        linear_f32_to_srgb_u8(bb),
-                    ]),
-                );
-            } else if has_neighbor_within(&has_core, x, y, HOLE_ALERT_RADIUS) {
-                holes_after_fill += 1;
-                out.put_pixel(x as u32, y as u32, Rgb([255, 0, 255]));
-            } else {
-                out.put_pixel(x as u32, y as u32, Rgb([0, 0, 0]));
-            }
-        }
-    }
-
-    TileRenderResult {
-        image: out,
-        coverage: covered as f32 / n as f32,
-        hole_pixels_after_fill: holes_after_fill,
-    }
-}
-
-fn linear_f32_to_srgb_u8(v: f32) -> u8 {
-    let s = if v <= 0.0031308 { 12.92 * v } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
-    (s.clamp(0.0, 1.0) * 255.0).round() as u8
-}
-
-fn srgb_u8_to_linear_f32(v: u8) -> f32 {
-    let s = v as f32 / 255.0;
-    if s <= 0.04045 {
-        s / 12.92
-    } else {
-        ((s + 0.055) / 1.055).powf(2.4)
-    }
-}
-
-fn has_neighbor_within(mask: &[bool], x: i32, y: i32, radius: i32) -> bool {
-    for oy in -radius..=radius {
-        for ox in -radius..=radius {
-            let nx = x + ox;
-            let ny = y + oy;
-            if nx < 0 || ny < 0 || nx >= TILE_SIZE_PX as i32 || ny >= TILE_SIZE_PX as i32 {
-                continue;
-            }
-            let idx = ny as usize * TILE_SIZE_PX as usize + nx as usize;
-            if mask[idx] {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn is_all_black(img: &RgbImage) -> bool {
-    img.pixels().all(|p| p.0 == [0, 0, 0])
-}
-
-fn capture_data_bytes(c: &CaptureData) -> usize {
-    c.rgb.as_raw().len().saturating_add(c.depth.len().saturating_mul(4))
-}
-
-fn get_or_load_capture(cache: &Arc<Mutex<CaptureLru>>, toml_path: &str) -> Result<Arc<CaptureData>> {
-    {
-        let mut guard = cache.lock().expect("capture_cache poisoned");
-        let tick = guard.tick.saturating_add(1);
-        guard.tick = tick;
-        if let Some(e) = guard.map.get_mut(toml_path) {
-            e.last_used_tick = tick;
-            return Ok(Arc::clone(&e.data));
-        }
-    }
-
-    let loaded = Arc::new(load_capture_from_toml(Path::new(toml_path))?);
-    let loaded_bytes = capture_data_bytes(&loaded);
-
-    let mut guard = cache.lock().expect("capture_cache poisoned");
-    let tick = guard.tick.saturating_add(1);
-    guard.tick = tick;
-    if let Some(e) = guard.map.get_mut(toml_path) {
-        e.last_used_tick = tick;
-        return Ok(Arc::clone(&e.data));
-    }
-
-    guard.used_bytes = guard.used_bytes.saturating_add(loaded_bytes);
-    guard.peak_used_bytes = guard.peak_used_bytes.max(guard.used_bytes);
-    guard.map.insert(
-        toml_path.to_string(),
-        CachedCapture {
-            data: Arc::clone(&loaded),
-            bytes: loaded_bytes,
-            last_used_tick: tick,
-        },
-    );
-
-    while guard.used_bytes > guard.budget_bytes {
-        let mut oldest_key: Option<String> = None;
-        let mut oldest_tick = u64::MAX;
-        for (k, v) in &guard.map {
-            if v.last_used_tick < oldest_tick {
-                oldest_tick = v.last_used_tick;
-                oldest_key = Some(k.clone());
-            }
-        }
-        let Some(k) = oldest_key else { break };
-        if let Some(removed) = guard.map.remove(&k) {
-            guard.used_bytes = guard.used_bytes.saturating_sub(removed.bytes);
-        } else {
-            break;
-        }
-    }
-
-    Ok(loaded)
-}

@@ -3,15 +3,47 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use ds3_depthbuffer::{camera_to_world, linearize_depth, read_depth_exr_first_channel};
+use ds3_depthbuffer::{cross, linearize_depth, normalize3, read_depth_exr_first_channel};
 
 use crate::common::{
     CaptureData, CaptureToml, PixelAabb, TilePixelIndex, TilePixelRef, SCALE_WORLD_UNITS_PER_PIXEL,
     TILE_SIZE_PX,
 };
 
+#[derive(Clone, Copy)]
+struct CameraBasis {
+    right: [f32; 3],
+    up_ortho: [f32; 3],
+    dir: [f32; 3],
+    pos: [f32; 3],
+}
+
+fn build_camera_basis(capture: &CaptureData) -> CameraBasis {
+    let up = normalize3(capture.camera_up);
+    let dir = normalize3(capture.camera_dir);
+    let right = normalize3(cross(up, dir));
+    let up_ortho = normalize3(cross(dir, right));
+    CameraBasis {
+        right,
+        up_ortho,
+        dir,
+        pos: capture.camera_position,
+    }
+}
+
+#[inline]
+fn camera_to_world_fast(p_camera: [f32; 3], basis: &CameraBasis) -> [f32; 3] {
+    let [vx, vy, vz] = p_camera;
+    [
+        basis.pos[0] + basis.right[0] * vx + basis.up_ortho[0] * vy + basis.dir[0] * vz,
+        basis.pos[1] + basis.right[1] * vx + basis.up_ortho[1] * vy + basis.dir[1] * vz,
+        basis.pos[2] + basis.right[2] * vx + basis.up_ortho[2] * vy + basis.dir[2] * vz,
+    ]
+}
+
 pub fn preprocess_capture_tile_spans(toml_path: &Path) -> Result<HashMap<(i32, i32), PixelAabb>> {
     let capture = load_capture_from_toml(toml_path)?;
+    let basis = build_camera_basis(&capture);
     let z_max = SCALE_WORLD_UNITS_PER_PIXEL.len() - 1;
     let tile_world_size = TILE_SIZE_PX as f32 * SCALE_WORLD_UNITS_PER_PIXEL[z_max];
 
@@ -42,12 +74,7 @@ pub fn preprocess_capture_tile_spans(toml_path: &Path) -> Result<HashMap<(i32, i
             let px = nx * tan_half_fovx * z;
             let py = ny * tan_half_fovy * z;
             let pz = z;
-            let [wx, _wy, wz_raw] = camera_to_world(
-                [px, py, pz],
-                capture.camera_up,
-                capture.camera_dir,
-                capture.camera_position,
-            );
+            let [wx, _wy, wz_raw] = camera_to_world_fast([px, py, pz], &basis);
             // Match processor right-handed convention.
             let wz = -wz_raw;
 
@@ -164,6 +191,7 @@ pub fn iter_points_in_aabb_for_tile<F>(
 {
     let w = capture.width;
     let h = capture.height;
+    let basis = build_camera_basis(capture);
     let aspect = w as f32 / h as f32;
     let tan_half_fovy = (capture.fov_y_rad * 0.5).tan();
     let tan_half_fovx = tan_half_fovy * aspect;
@@ -192,12 +220,7 @@ pub fn iter_points_in_aabb_for_tile<F>(
             let px = nx * tan_half_fovx * z;
             let py = ny * tan_half_fovy * z;
             let pz = z;
-            let [wx, wy, wz_raw] = camera_to_world(
-                [px, py, pz],
-                capture.camera_up,
-                capture.camera_dir,
-                capture.camera_position,
-            );
+            let [wx, wy, wz_raw] = camera_to_world_fast([px, py, pz], &basis);
             let wz = -wz_raw;
 
             if wx < tile_min_x || wx >= tile_max_x || wz < tile_min_z || wz >= tile_max_z {
