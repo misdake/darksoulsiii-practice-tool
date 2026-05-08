@@ -3,7 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use ds3_depthbuffer::{cross, linearize_depth, normalize3, read_depth_exr_first_channel};
+use ds3_depthbuffer::{linearize_depth, read_depth_exr_first_channel};
 
 use crate::common::{
     CaptureData, CaptureToml, PixelAabb, TilePixelIndex, TilePixelRef, SCALE_WORLD_UNITS_PER_PIXEL,
@@ -12,27 +12,39 @@ use crate::common::{
 
 #[derive(Clone, Copy)]
 struct CameraBasis {
-    right: [f32; 3],
-    up_ortho: [f32; 3],
-    dir: [f32; 3],
-    pos: [f32; 3],
+    right: [f64; 3],
+    up_ortho: [f64; 3],
+    dir: [f64; 3],
+    pos: [f64; 3],
 }
 
 fn build_camera_basis(capture: &CaptureData) -> CameraBasis {
-    let up = normalize3(capture.camera_up);
-    let dir = normalize3(capture.camera_dir);
-    let right = normalize3(cross(up, dir));
-    let up_ortho = normalize3(cross(dir, right));
+    let up = normalize3_f64([
+        capture.camera_up[0] as f64,
+        capture.camera_up[1] as f64,
+        capture.camera_up[2] as f64,
+    ]);
+    let dir = normalize3_f64([
+        capture.camera_dir[0] as f64,
+        capture.camera_dir[1] as f64,
+        capture.camera_dir[2] as f64,
+    ]);
+    let right = normalize3_f64(cross_f64(up, dir));
+    let up_ortho = normalize3_f64(cross_f64(dir, right));
     CameraBasis {
         right,
         up_ortho,
         dir,
-        pos: capture.camera_position,
+        pos: [
+            capture.camera_position[0] as f64,
+            capture.camera_position[1] as f64,
+            capture.camera_position[2] as f64,
+        ],
     }
 }
 
 #[inline]
-fn camera_to_world_fast(p_camera: [f32; 3], basis: &CameraBasis) -> [f32; 3] {
+fn camera_to_world_fast_f64(p_camera: [f64; 3], basis: &CameraBasis) -> [f64; 3] {
     let [vx, vy, vz] = p_camera;
     [
         basis.pos[0] + basis.right[0] * vx + basis.up_ortho[0] * vy + basis.dir[0] * vz,
@@ -49,8 +61,8 @@ pub fn preprocess_capture_tile_spans(toml_path: &Path) -> Result<HashMap<(i32, i
 
     let w = capture.width;
     let h = capture.height;
-    let aspect = w as f32 / h as f32;
-    let tan_half_fovy = (capture.fov_y_rad * 0.5).tan();
+    let aspect = w as f64 / h as f64;
+    let tan_half_fovy = (capture.fov_y_rad as f64 * 0.5).tan();
     let tan_half_fovx = tan_half_fovy * aspect;
 
     let mut by_tile: HashMap<(i32, i32), PixelAabb> = HashMap::new();
@@ -64,22 +76,22 @@ pub fn preprocess_capture_tile_spans(toml_path: &Path) -> Result<HashMap<(i32, i
             }
 
             let depth01 = depth_raw.clamp(0.0, 1.0);
-            let z = linearize_depth(depth01, capture.near, capture.far);
-            if !(z > capture.near && z < capture.far) {
+            let z = linearize_depth(depth01, capture.near, capture.far) as f64;
+            if !(z > capture.near as f64 && z < capture.far as f64) {
                 continue;
             }
 
-            let nx = ((x as f32 + 0.5) / w as f32) * 2.0 - 1.0;
-            let ny = 1.0 - ((y as f32 + 0.5) / h as f32) * 2.0;
+            let nx = ((x as f64 + 0.5) / w as f64) * 2.0 - 1.0;
+            let ny = 1.0 - ((y as f64 + 0.5) / h as f64) * 2.0;
             let px = nx * tan_half_fovx * z;
             let py = ny * tan_half_fovy * z;
             let pz = z;
-            let [wx, _wy, wz_raw] = camera_to_world_fast([px, py, pz], &basis);
+            let [wx, _wy, wz_raw] = camera_to_world_fast_f64([px, py, pz], &basis);
             // Match processor right-handed convention.
             let wz = -wz_raw;
 
-            let tx = (wx / tile_world_size).floor() as i32;
-            let ty = (wz / tile_world_size).floor() as i32;
+            let tx = (wx / tile_world_size as f64).floor() as i32;
+            let ty = (wz / tile_world_size as f64).floor() as i32;
             let e = by_tile.entry((tx, ty)).or_insert(PixelAabb {
                 x_min: x as u32,
                 x_max: x as u32,
@@ -192,14 +204,14 @@ pub fn iter_points_in_aabb_for_tile<F>(
     let w = capture.width;
     let h = capture.height;
     let basis = build_camera_basis(capture);
-    let aspect = w as f32 / h as f32;
-    let tan_half_fovy = (capture.fov_y_rad * 0.5).tan();
+    let aspect = w as f64 / h as f64;
+    let tan_half_fovy = (capture.fov_y_rad as f64 * 0.5).tan();
     let tan_half_fovx = tan_half_fovy * aspect;
 
-    let tile_min_x = tx as f32 * tile_world_size;
-    let tile_min_z = ty as f32 * tile_world_size;
-    let tile_max_x = tile_min_x + tile_world_size;
-    let tile_max_z = tile_min_z + tile_world_size;
+    let tile_min_x = tx as f64 * tile_world_size as f64;
+    let tile_min_z = ty as f64 * tile_world_size as f64;
+    let tile_max_x = tile_min_x + tile_world_size as f64;
+    let tile_max_z = tile_min_z + tile_world_size as f64;
 
     for y in aabb.y_min as usize..=aabb.y_max as usize {
         for x in aabb.x_min as usize..=aabb.x_max as usize {
@@ -210,17 +222,17 @@ pub fn iter_points_in_aabb_for_tile<F>(
             }
 
             let depth01 = depth_raw.clamp(0.0, 1.0);
-            let z = linearize_depth(depth01, capture.near, capture.far);
-            if !(z > capture.near && z < capture.far) {
+            let z = linearize_depth(depth01, capture.near, capture.far) as f64;
+            if !(z > capture.near as f64 && z < capture.far as f64) {
                 continue;
             }
 
-            let nx = ((x as f32 + 0.5) / w as f32) * 2.0 - 1.0;
-            let ny = 1.0 - ((y as f32 + 0.5) / h as f32) * 2.0;
+            let nx = ((x as f64 + 0.5) / w as f64) * 2.0 - 1.0;
+            let ny = 1.0 - ((y as f64 + 0.5) / h as f64) * 2.0;
             let px = nx * tan_half_fovx * z;
             let py = ny * tan_half_fovy * z;
             let pz = z;
-            let [wx, wy, wz_raw] = camera_to_world_fast([px, py, pz], &basis);
+            let [wx, wy, wz_raw] = camera_to_world_fast_f64([px, py, pz], &basis);
             let wz = -wz_raw;
 
             if wx < tile_min_x || wx >= tile_max_x || wz < tile_min_z || wz >= tile_max_z {
@@ -228,11 +240,26 @@ pub fn iter_points_in_aabb_for_tile<F>(
             }
 
             let rgb = capture.rgb.get_pixel(x as u32, y as u32).0;
-            f(wx, wy, wz, rgb);
+            f(wx as f32, wy as f32, wz as f32, rgb);
         }
     }
 }
 
 pub fn make_tile_pixel_ref(capture_toml: &Path, aabb: PixelAabb) -> TilePixelRef {
     TilePixelRef { capture_toml: capture_toml.to_string_lossy().to_string(), aabb }
+}
+
+#[inline]
+fn cross_f64(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+#[inline]
+fn normalize3_f64(v: [f64; 3]) -> [f64; 3] {
+    let n2 = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+    if n2 <= 1.0e-24 {
+        return [0.0, 0.0, 0.0];
+    }
+    let inv = n2.sqrt().recip();
+    [v[0] * inv, v[1] * inv, v[2] * inv]
 }
