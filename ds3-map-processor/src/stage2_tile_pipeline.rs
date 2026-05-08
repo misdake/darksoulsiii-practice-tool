@@ -236,8 +236,6 @@ pub fn render_tiles_to_pyramid(
         coarse_vec.sort();
         let total = coarse_vec.len();
         println!("  pyramid z={} from z={} : {} tile(s).", z, child_z, total);
-
-        let level_done = Arc::new(AtomicUsize::new(0));
         let built_coords: Arc<Mutex<Vec<(i32, i32)>>> = Arc::new(Mutex::new(Vec::new()));
         let level_tiles_root = tiles_root.to_path_buf();
         let level_peak = run_with_budget(
@@ -247,15 +245,10 @@ pub fn render_tiles_to_pyramid(
             std::thread::available_parallelism().map_or(1usize, |n| n.get().max(1)),
             {
                 let built_coords = Arc::clone(&built_coords);
-                let level_done = Arc::clone(&level_done);
                 move |(tx, ty), _| {
                     if build_coarse_tile_from_children(&level_tiles_root, child_z, z, tx, ty)? {
                         built_coords.lock().expect("built_coords poisoned").push((tx, ty));
                     }
-
-                    let done = level_done.fetch_add(1, Ordering::SeqCst) + 1;
-                    let pct = if total == 0 { 100.0 } else { (done as f32 / total as f32) * 100.0 };
-                    println!("    z={} {}/{} ({:.1}%)", z, done, total, pct);
                     Ok(())
                 }
             },

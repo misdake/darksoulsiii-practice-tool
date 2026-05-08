@@ -9,6 +9,10 @@ use crate::common::TILE_SIZE_PX;
 use crate::fs_utils::find_all_toml_in_capture;
 
 pub(super) const MASK_EXPAND_WORLD: f32 = 2.0;
+const LOOP_MIN_EDGE_WORLD: f32 = 0.01;
+const LOOP_COLLINEAR_DIST_WORLD: f32 = 0.015;
+const LOOP_COLLINEAR_ANGLE_SIN: f32 = 0.02;
+const LOOP_RDP_EPS_WORLD: f32 = 0.02;
 
 #[derive(Deserialize)]
 struct WalkableLoopsFile {
@@ -40,6 +44,8 @@ pub(super) type TileWalkableMask = HashMap<(i32, i32), Vec<bool>>;
 
 pub(super) fn load_walkable_mask(capture_dir: &Path) -> Result<WalkableMask> {
     let mut loops_xz: Vec<Vec<[f32; 2]>> = Vec::new();
+    let mut raw_points = 0usize;
+    let mut simp_points = 0usize;
     let tomls = find_all_toml_in_capture(capture_dir)?;
     let mut seen_dirs = std::collections::HashSet::new();
     for toml in tomls {
@@ -58,7 +64,14 @@ pub(super) fn load_walkable_mask(capture_dir: &Path) -> Result<WalkableMask> {
             if lp.len() < 3 {
                 continue;
             }
-            loops_xz.push(lp.into_iter().map(|v| [v[0], -v[2]]).collect());
+            let raw: Vec<[f32; 2]> = lp.into_iter().map(|v| [v[0], -v[2]]).collect();
+            raw_points += raw.len();
+            let simp = simplify_loop_xz(&raw);
+            if simp.len() < 3 {
+                continue;
+            }
+            simp_points += simp.len();
+            loops_xz.push(simp);
         }
     }
     let mut loop_bounds = Vec::with_capacity(loops_xz.len());
@@ -74,6 +87,13 @@ pub(super) fn load_walkable_mask(capture_dir: &Path) -> Result<WalkableMask> {
             max_z = max_z.max(p[1]);
         }
         loop_bounds.push(LoopBounds { min_x, max_x, min_z, max_z });
+    }
+    if raw_points > 0 {
+        let ratio = simp_points as f32 / raw_points as f32 * 100.0;
+        println!(
+            "  walkable loop simplify: {} -> {} points ({:.1}%)",
+            raw_points, simp_points, ratio
+        );
     }
     Ok(WalkableMask { loops_xz, loop_bounds })
 }
@@ -289,4 +309,167 @@ fn dist2_point_seg(px: f32, pz: f32, ax: f32, az: f32, bx: f32, bz: f32) -> f32 
     let dx = px - qx;
     let dz = pz - qz;
     dx * dx + dz * dz
+}
+
+fn simplify_loop_xz(points: &[[f32; 2]]) -> Vec<[f32; 2]> {
+    if points.len() < 3 {
+        return points.to_vec();
+    }
+    let mut cleaned = remove_near_duplicates(points, LOOP_MIN_EDGE_WORLD);
+    if cleaned.len() < 3 {
+        return cleaned;
+    }
+    cleaned = remove_near_collinear(&cleaned, LOOP_COLLINEAR_DIST_WORLD, LOOP_COLLINEAR_ANGLE_SIN);
+    if cleaned.len() < 3 {
+        return cleaned;
+    }
+    cleaned = rdp_closed_polygon(&cleaned, LOOP_RDP_EPS_WORLD);
+    if cleaned.len() < 3 {
+        return cleaned;
+    }
+    remove_near_collinear(&cleaned, LOOP_COLLINEAR_DIST_WORLD, LOOP_COLLINEAR_ANGLE_SIN)
+}
+
+fn remove_near_duplicates(points: &[[f32; 2]], min_edge_world: f32) -> Vec<[f32; 2]> {
+    let min_edge2 = min_edge_world * min_edge_world;
+    let mut out: Vec<[f32; 2]> = Vec::with_capacity(points.len());
+    for &p in points {
+        if let Some(&last) = out.last() {
+            let dx = p[0] - last[0];
+            let dz = p[1] - last[1];
+            if dx * dx + dz * dz <= min_edge2 {
+                continue;
+            }
+        }
+        out.push(p);
+    }
+    while out.len() >= 2 {
+        let a = out[0];
+        let b = *out.last().expect("out not empty");
+        let dx = a[0] - b[0];
+        let dz = a[1] - b[1];
+        if dx * dx + dz * dz > min_edge2 {
+            break;
+        }
+        out.pop();
+    }
+    out
+}
+
+fn remove_near_collinear(points: &[[f32; 2]], dist_eps: f32, sin_eps: f32) -> Vec<[f32; 2]> {
+    if points.len() < 4 {
+        return points.to_vec();
+    }
+    let mut out = points.to_vec();
+    let dist_eps2 = dist_eps * dist_eps;
+    let mut changed = true;
+    while changed && out.len() >= 4 {
+        changed = false;
+        let n = out.len();
+        let mut keep = vec![true; n];
+        for i in 0..n {
+            let prev = out[(i + n - 1) % n];
+            let cur = out[i];
+            let next = out[(i + 1) % n];
+
+            let vx0 = cur[0] - prev[0];
+            let vz0 = cur[1] - prev[1];
+            let vx1 = next[0] - cur[0];
+            let vz1 = next[1] - cur[1];
+            let len0 = (vx0 * vx0 + vz0 * vz0).sqrt();
+            let len1 = (vx1 * vx1 + vz1 * vz1).sqrt();
+            if len0 <= 1.0e-6 || len1 <= 1.0e-6 {
+                keep[i] = false;
+                changed = true;
+                continue;
+            }
+            let cross = (vx0 * vz1 - vz0 * vx1).abs() / (len0 * len1 + 1.0e-12);
+            if cross > sin_eps {
+                continue;
+            }
+            if dist2_point_seg(cur[0], cur[1], prev[0], prev[1], next[0], next[1]) <= dist_eps2 {
+                keep[i] = false;
+                changed = true;
+            }
+        }
+        if changed {
+            out = out.into_iter().enumerate().filter_map(|(i, p)| keep[i].then_some(p)).collect();
+        }
+    }
+    out
+}
+
+fn rdp_closed_polygon(points: &[[f32; 2]], eps: f32) -> Vec<[f32; 2]> {
+    if points.len() < 4 {
+        return points.to_vec();
+    }
+    let mut max_d2 = -1.0f32;
+    let mut seed = 0usize;
+    for i in 0..points.len() {
+        let a = points[i];
+        let b = points[(i + points.len() / 2) % points.len()];
+        let dx = a[0] - b[0];
+        let dz = a[1] - b[1];
+        let d2 = dx * dx + dz * dz;
+        if d2 > max_d2 {
+            max_d2 = d2;
+            seed = i;
+        }
+    }
+    let n = points.len();
+    let mut opened = Vec::with_capacity(n + 1);
+    for k in 0..n {
+        opened.push(points[(seed + k) % n]);
+    }
+    opened.push(opened[0]);
+
+    let keep = rdp_open_keep_mask(&opened, eps);
+    let mut out = Vec::with_capacity(n);
+    for (i, p) in opened.into_iter().enumerate().take(n) {
+        if keep[i] {
+            out.push(p);
+        }
+    }
+    if out.len() < 3 {
+        points.to_vec()
+    } else {
+        out
+    }
+}
+
+fn rdp_open_keep_mask(points: &[[f32; 2]], eps: f32) -> Vec<bool> {
+    let n = points.len();
+    let mut keep = vec![false; n];
+    if n == 0 {
+        return keep;
+    }
+    keep[0] = true;
+    keep[n - 1] = true;
+    if n <= 2 {
+        return keep;
+    }
+    let mut stack = vec![(0usize, n - 1usize)];
+    let eps2 = eps * eps;
+    while let Some((a, b)) = stack.pop() {
+        if b <= a + 1 {
+            continue;
+        }
+        let pa = points[a];
+        let pb = points[b];
+        let mut best_i = 0usize;
+        let mut best_d2 = -1.0f32;
+        for (i, p) in points.iter().enumerate().take(b).skip(a + 1) {
+            let d2 = dist2_point_seg(p[0], p[1], pa[0], pa[1], pb[0], pb[1]);
+            if d2 > best_d2 {
+                best_d2 = d2;
+                best_i = i;
+            }
+        }
+        if best_d2 > eps2 {
+            keep[best_i] = true;
+            stack.push((a, best_i));
+            stack.push((best_i, b));
+        }
+    }
+    keep
 }
