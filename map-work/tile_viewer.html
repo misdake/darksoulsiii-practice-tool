@@ -25,8 +25,8 @@
   <div id="app">
     <div id="panel">
       <div class="row">
-        <input id="tilesRoot" value="./tiles" />
-        <button id="loadBtn">Load</button>
+        <label>Source</label>
+        <select id="sourceSel"></select>
       </div>
       <div class="row">
         <label>Scale mode</label>
@@ -50,8 +50,7 @@
 <script>
 const canvas = document.getElementById('view');
 const ctx = canvas.getContext('2d');
-const tilesRootInput = document.getElementById('tilesRoot');
-const loadBtn = document.getElementById('loadBtn');
+const sourceSel = document.getElementById('sourceSel');
 const modeSel = document.getElementById('modeSel');
 const levelSel = document.getElementById('levelSel');
 const scaleButtons = document.getElementById('scaleButtons');
@@ -67,6 +66,7 @@ let walkableLoops = [];
 let centerX = 0;
 let centerZ = 0;
 let worldSpanX = 4096;
+let currentTilesRoot = './tiles';
 
 let dragging = false;
 let dragLastX = 0;
@@ -96,9 +96,9 @@ function alignCenterToPixelGridForLevel(level) {
   centerZ = Math.round(centerZ / wuPerPx) * wuPerPx;
 }
 
-async function loadIndex() {
-  const root = tilesRootInput.value.replace(/\/$/, '');
-  const res = await fetch(`${root}/index.json`);
+async function loadIndex(root) {
+  currentTilesRoot = (root || './tiles').replace(/\/$/, '');
+  const res = await fetch(`${currentTilesRoot}/index.json`);
   if (!res.ok) throw new Error(`index load failed: ${res.status}`);
   tileIndex = await res.json();
 
@@ -171,7 +171,7 @@ async function loadIndex() {
 
   walkableLoops = [];
   try {
-    const wr = await fetch(`${root}/walkable_loops_merged.json`);
+    const wr = await fetch(`${currentTilesRoot}/walkable_loops_merged.json`);
     if (wr.ok) {
       const wj = await wr.json();
       if (Array.isArray(wj.loops)) {
@@ -287,7 +287,6 @@ function render() {
   const ty1 = Math.floor(maxZ / tw);
 
   let drawn = 0;
-  const root = tilesRootInput.value.replace(/\/$/, '');
   const ext = tileIndex.image_ext || 'jpg';
 
   for (let tx = tx0; tx <= tx1; tx++) {
@@ -299,7 +298,7 @@ function render() {
       const yName = encodeCoord(ty);
       if (!ySet.has(yName)) continue;
 
-      const url = `${root}/${zName}/${xName}/${yName}.${ext}`;
+      const url = `${currentTilesRoot}/${zName}/${xName}/${yName}.${ext}`;
       const state = ensureImage(url);
 
       const x0 = tx * tw, x1 = x0 + tw;
@@ -356,14 +355,41 @@ canvas.addEventListener('wheel', (e) => {
   worldSpanX = Math.max(minSpan, Math.min(2_000_000, worldSpanX * zoom));
 }, { passive: false });
 
-loadBtn.addEventListener('click', async () => {
+sourceSel.addEventListener('change', async () => {
   imageCache.clear();
-  await loadIndex();
+  await loadIndex(sourceSel.value);
 });
+
+async function loadSourceList() {
+  const fallback = [{ name: 'stage3 merged', path: './tiles' }];
+  let items = fallback;
+  try {
+    const r = await fetch('./tiles/sources.json');
+    if (r.ok) {
+      const j = await r.json();
+      if (j && Array.isArray(j.sources) && j.sources.length > 0) {
+        items = j.sources
+          .filter((x) => x && typeof x.path === 'string' && x.path.length > 0)
+          .map((x) => ({ name: typeof x.name === 'string' && x.name ? x.name : x.path, path: x.path }));
+      }
+    }
+  } catch (_) {}
+
+  sourceSel.innerHTML = '';
+  for (const src of items) {
+    const op = document.createElement('option');
+    op.value = src.path;
+    op.textContent = src.name;
+    sourceSel.appendChild(op);
+  }
+  sourceSel.value = items[0].path;
+  return items[0].path;
+}
 
 (async () => {
   try {
-    await loadIndex();
+    const root = await loadSourceList();
+    await loadIndex(root);
   } catch (e) {
     stat1.textContent = String(e);
   }

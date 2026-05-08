@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use image::{Rgb, RgbImage};
+use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 
 use crate::common::TILE_SIZE_PX;
@@ -89,7 +89,7 @@ pub(super) fn write_merged_walkable_file(tiles_root: &Path, mask: &WalkableMask)
 }
 
 pub(super) fn apply_walkable_mask(
-    img: &mut RgbImage,
+    img: &mut RgbaImage,
     tx: i32,
     ty: i32,
     units_per_px: f32,
@@ -101,7 +101,7 @@ pub(super) fn apply_walkable_mask(
             for px in 0..TILE_SIZE_PX {
                 let idx = py as usize * TILE_SIZE_PX as usize + px as usize;
                 if !mask_bits[idx] {
-                    img.put_pixel(px, py, Rgb([0, 0, 0]));
+                    img.put_pixel(px, py, Rgba([0, 0, 0, 0]));
                 }
             }
         }
@@ -119,7 +119,7 @@ pub(super) fn apply_walkable_mask(
             let wx = min_x + (px as f32 + 0.5) * units_per_px;
             let wz = min_z + (py as f32 + 0.5) * units_per_px;
             if !point_in_or_near_loops(wx, wz, &mask.loops_xz, MASK_EXPAND_WORLD) {
-                img.put_pixel(px, py, Rgb([0, 0, 0]));
+                img.put_pixel(px, py, Rgba([0, 0, 0, 0]));
             }
         }
     }
@@ -184,6 +184,10 @@ pub(super) fn rasterize_walkable_mask_tile(
                 if px0 > px1 {
                     std::mem::swap(&mut px0, &mut px1);
                 }
+                if px1 < 0 || px0 > TILE_SIZE_PX as i32 - 1 {
+                    i += 2;
+                    continue;
+                }
                 px0 = px0.clamp(0, TILE_SIZE_PX as i32 - 1);
                 px1 = px1.clamp(0, TILE_SIZE_PX as i32 - 1);
                 for px in px0..=px1 {
@@ -195,41 +199,45 @@ pub(super) fn rasterize_walkable_mask_tile(
         }
     }
 
-    let expand_px = (MASK_EXPAND_WORLD / units_per_px).ceil() as i32;
-    if expand_px <= 0 {
-        return bits;
-    }
-    let mut dilated = bits.clone();
+    let mut expanded = bits;
+    let e2 = expand * expand;
     for py in 0..TILE_SIZE_PX as i32 {
         for px in 0..TILE_SIZE_PX as i32 {
             let idx = py as usize * TILE_SIZE_PX as usize + px as usize;
-            if bits[idx] {
+            if expanded[idx] {
                 continue;
             }
+            let wx = min_x + (px as f32 + 0.5) * units_per_px;
+            let wz = min_z + (py as f32 + 0.5) * units_per_px;
             let mut near = false;
-            for oy in -expand_px..=expand_px {
-                if near {
-                    break;
+            for &li in &candidates {
+                let b = mask.loop_bounds[li];
+                if wx < b.min_x - expand
+                    || wx > b.max_x + expand
+                    || wz < b.min_z - expand
+                    || wz > b.max_z + expand
+                {
+                    continue;
                 }
-                for ox in -expand_px..=expand_px {
-                    let nx = px + ox;
-                    let ny = py + oy;
-                    if nx < 0 || ny < 0 || nx >= TILE_SIZE_PX as i32 || ny >= TILE_SIZE_PX as i32 {
-                        continue;
-                    }
-                    let nidx = ny as usize * TILE_SIZE_PX as usize + nx as usize;
-                    if bits[nidx] {
+                let poly = &mask.loops_xz[li];
+                for i in 0..poly.len() {
+                    let a = poly[i];
+                    let b = poly[(i + 1) % poly.len()];
+                    if dist2_point_seg(wx, wz, a[0], a[1], b[0], b[1]) <= e2 {
                         near = true;
                         break;
                     }
                 }
+                if near {
+                    break;
+                }
             }
             if near {
-                dilated[idx] = true;
+                expanded[idx] = true;
             }
         }
     }
-    dilated
+    expanded
 }
 
 pub(super) fn point_in_or_near_loops(x: f32, z: f32, loops: &[Vec<[f32; 2]>], expand: f32) -> bool {

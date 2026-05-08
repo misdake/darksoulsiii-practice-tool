@@ -1,4 +1,4 @@
-use image::{Rgb, RgbImage};
+use image::{Rgba, RgbaImage};
 
 use crate::common::{CloudPoint, HOLE_ALERT_RADIUS, HOLE_FILL_ITERS, TILE_SIZE_PX};
 
@@ -202,7 +202,7 @@ pub(super) fn render_tile_from_accum(accum: TileRenderAccum) -> crate::common::T
 
     let mut holes_after_fill = 0usize;
     let mut covered = 0usize;
-    let mut out = RgbImage::new(TILE_SIZE_PX, TILE_SIZE_PX);
+    let mut out = RgbaImage::new(TILE_SIZE_PX, TILE_SIZE_PX);
 
     for y in 0..TILE_SIZE_PX as i32 {
         for x in 0..TILE_SIZE_PX as i32 {
@@ -215,17 +215,18 @@ pub(super) fn render_tile_from_accum(accum: TileRenderAccum) -> crate::common::T
                 out.put_pixel(
                     x as u32,
                     y as u32,
-                    Rgb([
+                    Rgba([
                         linear_f32_to_srgb_u8(rr),
                         linear_f32_to_srgb_u8(gg),
                         linear_f32_to_srgb_u8(bb),
+                        255,
                     ]),
                 );
             } else if has_neighbor_within(&accum.has_core, x, y, HOLE_ALERT_RADIUS) {
                 holes_after_fill += 1;
-                out.put_pixel(x as u32, y as u32, Rgb([255, 0, 255]));
+                out.put_pixel(x as u32, y as u32, Rgba([255, 0, 255, 255]));
             } else {
-                out.put_pixel(x as u32, y as u32, Rgb([0, 0, 0]));
+                out.put_pixel(x as u32, y as u32, Rgba([0, 0, 0, 0]));
             }
         }
     }
@@ -246,8 +247,8 @@ pub(super) fn srgb_u8_to_linear_f32(v: u8) -> f32 {
     }
 }
 
-pub(super) fn is_all_black(img: &RgbImage) -> bool {
-    img.pixels().all(|p| p.0 == [0, 0, 0])
+pub(super) fn is_all_black(img: &RgbaImage) -> bool {
+    img.pixels().all(|p| p.0[3] == 0)
 }
 
 fn insert_topk_by_height(buf: &mut PixelTopK, entry: TopKEntry) {

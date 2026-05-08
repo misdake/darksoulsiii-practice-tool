@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, collections::HashSet, fs};
 
 use anyhow::{Context, Result};
-use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use image::{ColorType, RgbImage};
+use image::{DynamicImage, RgbaImage};
+use serde::Serialize;
 use crate::common::{
     CloudPoint, LevelIndex, TileIndex, TileRenderResult,
     MAX_POINT_BYTES_IN_FLIGHT, SCALE_WORLD_UNITS_PER_PIXEL, TILE_SIZE_PX,
@@ -39,11 +39,27 @@ use render::{
     srgb_u8_to_linear_f32,
 };
 
-const JPEG_QUALITY: u8 = 95;
+const STAGE2_IMAGE_EXT: &str = "png";
 
 pub struct Stage2BudgetStats {
     pub point_inflight_peak_bytes: usize,
     pub capture_cache_peak_bytes: usize,
+}
+
+#[derive(Clone, Copy, Serialize)]
+struct TileZRange {
+    tx: i32,
+    ty: i32,
+    z_min: f32,
+    z_max: f32,
+}
+
+#[derive(Serialize)]
+struct FinestManifest {
+    version: u32,
+    image_ext: String,
+    finest_z: usize,
+    tiles: Vec<TileZRange>,
 }
 
 struct FinestRenderEnv<'a> {
@@ -52,6 +68,11 @@ struct FinestRenderEnv<'a> {
     mask: &'a WalkableMask,
     precomputed_mask: Option<&'a [bool]>,
     capture_cache: &'a Arc<Mutex<CaptureLru>>,
+}
+
+struct FinestTileOutput {
+    tile: TileRenderResult,
+    z_range: TileZRange,
 }
 
 pub fn render_tiles_to_pyramid(
@@ -70,7 +91,7 @@ pub fn render_tiles_to_pyramid(
     let z_max = SCALE_WORLD_UNITS_PER_PIXEL.len() - 1;
     let mut tile_index = TileIndex {
         tile_size_px: TILE_SIZE_PX,
-        image_ext: "jpg".to_string(),
+        image_ext: STAGE2_IMAGE_EXT.to_string(),
         scales_world_units_per_pixel: SCALE_WORLD_UNITS_PER_PIXEL.to_vec(),
         levels: std::collections::BTreeMap::new(),
     };
@@ -126,10 +147,12 @@ pub fn render_tiles_to_pyramid(
     let completed = Arc::new(AtomicUsize::new(0));
     let finest_hits: Arc<Mutex<Vec<(i32, i32)>>> = Arc::new(Mutex::new(Vec::new()));
     let alert_lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let z_ranges: Arc<Mutex<Vec<TileZRange>>> = Arc::new(Mutex::new(Vec::new()));
 
     let finest_tiles_root = tiles_root.to_path_buf();
     let finest_hits_in_task = Arc::clone(&finest_hits);
     let alert_lines_in_task = Arc::clone(&alert_lines);
+    let z_ranges_in_task = Arc::clone(&z_ranges);
     let mask_in_task = mask.clone();
     let masks_in_task = Arc::clone(&precomputed_masks);
     let cache_in_task = Arc::clone(&capture_cache);
@@ -152,12 +175,13 @@ pub fn render_tiles_to_pyramid(
                 },
             )?;
 
-            if let Some(tile) = output {
+            if let Some(out) = output {
                 finest_hits_in_task.lock().expect("finest_hits poisoned").push((tx, ty));
-                if tile.hole_pixels_after_fill > 0 {
+                z_ranges_in_task.lock().expect("z_ranges poisoned").push(out.z_range);
+                if out.tile.hole_pixels_after_fill > 0 {
                     alert_lines_in_task.lock().expect("alert_lines poisoned").push(format!(
                         "{},{},{},{},{}",
-                        z_max, tx, ty, tile.hole_pixels_after_fill, tile.coverage
+                        z_max, tx, ty, out.tile.hole_pixels_after_fill, out.tile.coverage
                     ));
                 }
             }
@@ -185,6 +209,8 @@ pub fn render_tiles_to_pyramid(
         alerts.push_str(line);
         alerts.push('\n');
     }
+    let mut manifest_tiles = z_ranges.lock().expect("z_ranges poisoned").clone();
+    manifest_tiles.sort_by_key(|t| (t.tx, t.ty));
 
     for z in (0..z_max).rev() {
         let child_z = z + 1;
@@ -242,6 +268,18 @@ pub fn render_tiles_to_pyramid(
     }
 
     fs::write(alerts_path, alerts).with_context(|| format!("write {}", alerts_path.display()))?;
+    let manifest = FinestManifest {
+        version: 1,
+        image_ext: STAGE2_IMAGE_EXT.to_string(),
+        finest_z: z_max,
+        tiles: manifest_tiles,
+    };
+    let manifest_path = tiles_root.join("finest_manifest.json");
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).context("serialize finest manifest")?,
+    )
+    .with_context(|| format!("write {}", manifest_path.display()))?;
     let json = serde_json::to_vec_pretty(&tile_index).context("serialize tile index")?;
     fs::write(index_path, json).with_context(|| format!("write {}", index_path.display()))?;
     print_stage2_profile_summary();
@@ -258,7 +296,7 @@ fn render_one_finest_tile(
     tx: i32,
     ty: i32,
     env: FinestRenderEnv<'_>,
-) -> Result<Option<TileRenderResult>> {
+) -> Result<Option<FinestTileOutput>> {
     let FinestRenderEnv {
         tiles_root,
         z_max,
@@ -269,6 +307,8 @@ fn render_one_finest_tile(
     let units_per_px = SCALE_WORLD_UNITS_PER_PIXEL[z_max];
     let mut accum = new_tile_render_accum();
     let mut has_any_points = false;
+    let mut z_min = f32::INFINITY;
+    let mut z_max_world = f32::NEG_INFINITY;
     let tile_world_size = TILE_SIZE_PX as f32 * SCALE_WORLD_UNITS_PER_PIXEL[z_max];
     for r in refs {
         PROF_REF_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -297,6 +337,10 @@ fn render_one_finest_tile(
         add_prof_ns(&PROF_ITER_POINTS_NS, t_iter.elapsed().as_nanos());
         if !capture_points.is_empty() {
             has_any_points = true;
+            for p in &capture_points {
+                z_min = z_min.min(p.y);
+                z_max_world = z_max_world.max(p.y);
+            }
             let t_accum = std::time::Instant::now();
             accumulate_points_for_tile(&mut accum, capture_points.as_slice(), tx, ty, units_per_px);
             add_prof_ns(&PROF_ACCUM_NS, t_accum.elapsed().as_nanos());
@@ -323,22 +367,24 @@ fn render_one_finest_tile(
     let z_name = z_max.to_string();
     let z_dir = tiles_root.join(&z_name).join(&x_name);
     fs::create_dir_all(&z_dir).with_context(|| format!("mkdir {}", z_dir.display()))?;
-    let tile_path = z_dir.join(format!("{}.jpg", y_name));
+    let tile_path = z_dir.join(format!("{}.png", y_name));
     let t_jpeg = std::time::Instant::now();
-    save_jpeg(&tile.image, &tile_path)?;
+    tile.image
+        .save(&tile_path)
+        .with_context(|| format!("save png {}", tile_path.display()))?;
     add_prof_ns(&PROF_JPEG_NS, t_jpeg.elapsed().as_nanos());
 
-    Ok(Some(tile))
+    Ok(Some(FinestTileOutput {
+        tile,
+        z_range: TileZRange {
+            tx,
+            ty,
+            z_min,
+            z_max: z_max_world,
+        },
+    }))
 }
 
-
-fn save_jpeg(img: &RgbImage, path: &Path) -> Result<()> {
-    let file = fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
-    let mut enc = JpegEncoder::new_with_quality(file, JPEG_QUALITY);
-    enc.encode(img.as_raw(), img.width(), img.height(), ColorType::Rgb8)
-        .with_context(|| format!("encode jpeg {}", path.display()))?;
-    Ok(())
-}
 
 fn estimate_tile_refs_bytes(refs: &[crate::common::TilePixelRef]) -> usize {
     let mut px = 0usize;
@@ -375,21 +421,21 @@ fn build_coarse_tile_from_children(
     let child_coords =
         [(tx * 2, ty * 2), (tx * 2 + 1, ty * 2), (tx * 2, ty * 2 + 1), (tx * 2 + 1, ty * 2 + 1)];
 
-    let mut canvas = RgbImage::new(TILE_SIZE_PX * 2, TILE_SIZE_PX * 2);
+    let mut canvas = RgbaImage::new(TILE_SIZE_PX * 2, TILE_SIZE_PX * 2);
     let mut has_any = false;
 
     for (i, (cx, cy)) in child_coords.iter().enumerate() {
         let x_name = encode_coord(*cx);
         let y_name = encode_coord(*cy);
         let child_path =
-            tiles_root.join(child_z.to_string()).join(&x_name).join(format!("{}.jpg", y_name));
+            tiles_root.join(child_z.to_string()).join(&x_name).join(format!("{}.png", y_name));
         if !child_path.is_file() {
             continue;
         }
 
         let child_img = image::open(&child_path)
             .with_context(|| format!("open {}", child_path.display()))?
-            .to_rgb8();
+            .to_rgba8();
         let ox = if i % 2 == 0 { 0 } else { TILE_SIZE_PX };
         let oy = if i < 2 { 0 } else { TILE_SIZE_PX };
         for y in 0..TILE_SIZE_PX {
@@ -408,8 +454,10 @@ fn build_coarse_tile_from_children(
 
     let out_dir = tiles_root.join(z.to_string()).join(encode_coord(tx));
     fs::create_dir_all(&out_dir).with_context(|| format!("mkdir {}", out_dir.display()))?;
-    let path = out_dir.join(format!("{}.jpg", encode_coord(ty)));
-    save_jpeg(&out, &path)?;
+    let path = out_dir.join(format!("{}.png", encode_coord(ty)));
+    DynamicImage::ImageRgba8(out)
+        .save(&path)
+        .with_context(|| format!("save png {}", path.display()))?;
     Ok(true)
 }
 

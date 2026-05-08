@@ -81,6 +81,21 @@ pub fn find_all_toml_in_capture(capture_dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(all)
 }
 
+pub fn group_tomls_by_first_subdir(capture_dir: &Path, tomls: &[PathBuf]) -> Result<Vec<(String, Vec<PathBuf>)>> {
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+    for p in tomls {
+        let rel = p
+            .strip_prefix(capture_dir)
+            .with_context(|| format!("{} is not under {}", p.display(), capture_dir.display()))?;
+        let mut comps = rel.components();
+        let Some(first) = comps.next() else { continue };
+        let name = first.as_os_str().to_string_lossy().to_string();
+        groups.entry(name).or_default().push(p.clone());
+    }
+    Ok(groups.into_iter().collect())
+}
+
 pub fn encode_coord(v: i32) -> String {
     v.to_string()
 }

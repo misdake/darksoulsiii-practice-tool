@@ -61,7 +61,7 @@ pub struct LevelIndex {
 }
 
 pub struct TileRenderResult {
-    pub image: image::RgbImage,
+    pub image: image::RgbaImage,
     pub coverage: f32,
     pub hole_pixels_after_fill: usize,
 }
