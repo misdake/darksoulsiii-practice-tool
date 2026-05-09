@@ -1,12 +1,14 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::{collections::HashMap, collections::HashSet, fs};
+use std::time::SystemTime;
+use std::{collections::HashSet, fs};
 
 use anyhow::{Context, Result};
 use image::imageops::FilterType;
 use image::{DynamicImage, RgbaImage};
 use serde::Serialize;
+use crate::coord_space::CoordSpace;
 use crate::common::{
     CloudPoint, LevelIndex, TileIndex, TileRenderResult,
     MAX_POINT_BYTES_IN_FLIGHT, SCALE_WORLD_UNITS_PER_PIXEL, TILE_SIZE_PX,
@@ -27,12 +29,11 @@ mod render;
 use cache::{get_or_load_capture, new_capture_lru, CaptureLru};
 use profile::{
     add_prof_ns, print_stage2_profile_summary, reset_stage2_profile_counters, PROF_ACCUM_NS,
-    PROF_GET_OR_LOAD_NS, PROF_ITER_POINTS_NS, PROF_JPEG_NS, PROF_MASK_NS, PROF_REF_COUNT,
+    PROF_GET_OR_LOAD_NS, PROF_ITER_POINTS_NS, PROF_JPEG_NS, PROF_REF_COUNT,
     PROF_RENDER_NS, PROF_TILE_COUNT,
 };
 use walkable::{
-    apply_walkable_mask, load_walkable_mask, rasterize_walkable_mask_tile,
-    write_merged_walkable_file, TileWalkableMask, WalkableMask,
+    load_walkable_mask, write_merged_walkable_file,
 };
 use render::{
     accumulate_points_for_tile, is_all_black, new_tile_render_accum, render_tile_from_accum,
@@ -65,14 +66,28 @@ struct FinestManifest {
 struct FinestRenderEnv<'a> {
     tiles_root: &'a Path,
     z_max: usize,
-    mask: &'a WalkableMask,
-    precomputed_mask: Option<&'a [bool]>,
     capture_cache: &'a Arc<Mutex<CaptureLru>>,
 }
 
 struct FinestTileOutput {
     tile: TileRenderResult,
     z_range: TileZRange,
+}
+
+#[derive(Serialize)]
+struct Stage2ShotPoint {
+    id: usize,
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+#[derive(Serialize)]
+struct Stage2ShotPointsFile {
+    coord_space: String,
+    version: u32,
+    source: String,
+    points: Vec<Stage2ShotPoint>,
 }
 
 pub fn render_tiles_to_pyramid(
@@ -85,6 +100,8 @@ pub fn render_tiles_to_pyramid(
     reset_stage2_profile_counters();
     let mask = load_walkable_mask(capture_dir)?;
     write_merged_walkable_file(tiles_root, &mask)?;
+    let stage2_group_root = tiles_root.parent().unwrap_or(tiles_root);
+    write_shot_points_from_capture_tomls(capture_dir, stage2_group_root)?;
     let capture_cache = Arc::new(Mutex::new(new_capture_lru()));
 
     let mut alerts = String::from("z,tile_x,tile_y,hole_pixels_after_fill,coverage\n");
@@ -105,44 +122,6 @@ pub fn render_tiles_to_pyramid(
     finest_tasks.sort_by_key(|(tx, ty, _)| (*tx, *ty));
     let total_tiles = finest_tasks.len();
     println!("Stage 2/2 finest render: {} tile(s).", total_tiles);
-    let finest_units_per_px = SCALE_WORLD_UNITS_PER_PIXEL[z_max];
-    let precompute_total = finest_tasks.len();
-    println!("  precompute walkable masks for finest tiles: {} tile(s).", precompute_total);
-    let precompute_done = Arc::new(AtomicUsize::new(0));
-    let precompute_store: Arc<Mutex<TileWalkableMask>> =
-        Arc::new(Mutex::new(HashMap::with_capacity(precompute_total)));
-    let mask_for_precompute = mask.clone();
-    let store_for_precompute = Arc::clone(&precompute_store);
-    let done_for_precompute = Arc::clone(&precompute_done);
-    let precompute_tasks: Vec<(i32, i32)> =
-        finest_tasks.iter().map(|(tx, ty, _)| (*tx, *ty)).collect();
-    let _precompute_peak = run_with_budget(
-        precompute_tasks,
-        |_| 1usize,
-        MAX_POINT_BYTES_IN_FLIGHT,
-        std::thread::available_parallelism().map_or(1usize, |n| n.get().max(1)),
-        move |(tx, ty), _| {
-            let bits =
-                rasterize_walkable_mask_tile(&mask_for_precompute, tx, ty, finest_units_per_px);
-            store_for_precompute.lock().expect("precompute_store poisoned").insert((tx, ty), bits);
-            let done = done_for_precompute.fetch_add(1, Ordering::SeqCst) + 1;
-            if done.is_multiple_of(8) || done == precompute_total {
-                let pct = if precompute_total == 0 {
-                    100.0
-                } else {
-                    (done as f32 / precompute_total as f32) * 100.0
-                };
-                println!("    precompute {}/{} ({:.1}%)", done, precompute_total, pct);
-            }
-            Ok(())
-        },
-    )?;
-    let precomputed_masks = Arc::new(
-        Arc::try_unwrap(precompute_store)
-            .expect("precompute_store still referenced")
-            .into_inner()
-            .expect("precompute_store poisoned"),
-    );
 
     let completed = Arc::new(AtomicUsize::new(0));
     let finest_hits: Arc<Mutex<Vec<(i32, i32)>>> = Arc::new(Mutex::new(Vec::new()));
@@ -153,8 +132,6 @@ pub fn render_tiles_to_pyramid(
     let finest_hits_in_task = Arc::clone(&finest_hits);
     let alert_lines_in_task = Arc::clone(&alert_lines);
     let z_ranges_in_task = Arc::clone(&z_ranges);
-    let mask_in_task = mask.clone();
-    let masks_in_task = Arc::clone(&precomputed_masks);
     let cache_in_task = Arc::clone(&capture_cache);
     let finest_peak_inflight = run_with_budget(
         finest_tasks,
@@ -169,8 +146,6 @@ pub fn render_tiles_to_pyramid(
                 FinestRenderEnv {
                     tiles_root: &finest_tiles_root,
                     z_max,
-                    mask: &mask_in_task,
-                    precomputed_mask: masks_in_task.get(&(tx, ty)).map(|v| v.as_slice()),
                     capture_cache: &cache_in_task,
                 },
             )?;
@@ -283,6 +258,71 @@ pub fn render_tiles_to_pyramid(
     })
 }
 
+fn write_shot_points_from_capture_tomls(capture_dir: &Path, stage2_group_root: &Path) -> Result<()> {
+    let mut tomls = Vec::new();
+    for e in fs::read_dir(capture_dir).with_context(|| format!("read_dir {}", capture_dir.display()))? {
+        let e = e?;
+        let p = e.path();
+        if p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("toml") {
+            tomls.push(p);
+        }
+    }
+    tomls.sort_by(|a, b| {
+        let am = fs::metadata(a).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
+        let bm = fs::metadata(b).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
+        am.cmp(&bm)
+    });
+
+    let mut points = Vec::<Stage2ShotPoint>::new();
+    for p in tomls {
+        let content = match fs::read_to_string(&p) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let value: toml::Value = match toml::from_str(&content) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let Some(arr) = value.get("camera_position").and_then(|v| v.as_array()) else {
+            continue;
+        };
+        if arr.len() != 3 {
+            continue;
+        }
+        let Some(x) = arr[0].as_float() else { continue };
+        let Some(y) = arr[1].as_float() else { continue };
+        let Some(z) = arr[2].as_float() else { continue };
+        let p3 = [x as f32, y as f32, -(z as f32)];
+        let is_dup = points.last().map(|q| {
+            let dx = q.x - p3[0];
+            let dy = q.y - p3[1];
+            let dz = q.z - p3[2];
+            dx * dx + dy * dy + dz * dz < 1.0e-6
+        }).unwrap_or(false);
+        if !is_dup {
+            points.push(Stage2ShotPoint {
+                id: points.len(),
+                x: p3[0],
+                y: p3[1],
+                z: p3[2],
+            });
+        }
+    }
+    if points.is_empty() {
+        return Ok(());
+    }
+    let out = Stage2ShotPointsFile {
+        coord_space: CoordSpace::Processor.as_str().to_string(),
+        version: 1,
+        source: "stage2_capture_camera_positions".to_string(),
+        points,
+    };
+    let dst = stage2_group_root.join("shot_points.json");
+    let bytes = serde_json::to_vec_pretty(&out).context("serialize stage2 shot points")?;
+    fs::write(&dst, bytes).with_context(|| format!("write {}", dst.display()))?;
+    Ok(())
+}
+
 
 fn render_one_finest_tile(
     refs: &[crate::common::TilePixelRef],
@@ -293,8 +333,6 @@ fn render_one_finest_tile(
     let FinestRenderEnv {
         tiles_root,
         z_max,
-        mask,
-        precomputed_mask,
         capture_cache,
     } = env;
     let units_per_px = SCALE_WORLD_UNITS_PER_PIXEL[z_max];
@@ -346,11 +384,8 @@ fn render_one_finest_tile(
 
     PROF_TILE_COUNT.fetch_add(1, Ordering::Relaxed);
     let t_render = std::time::Instant::now();
-    let mut tile = render_tile_from_accum(accum);
+    let tile = render_tile_from_accum(accum);
     add_prof_ns(&PROF_RENDER_NS, t_render.elapsed().as_nanos());
-    let t_mask = std::time::Instant::now();
-    apply_walkable_mask(&mut tile.image, tx, ty, units_per_px, mask, precomputed_mask);
-    add_prof_ns(&PROF_MASK_NS, t_mask.elapsed().as_nanos());
     if tile.coverage < 0.0001 || is_all_black(&tile.image) {
         return Ok(None);
     }

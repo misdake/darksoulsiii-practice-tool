@@ -1,8 +1,10 @@
 mod common;
+mod coord_space;
 mod fs_utils;
+mod stage0_shot_points;
 mod stage1_pointcloud;
-mod stage3_merge;
 mod stage2_tile_pipeline;
+mod stage3_merge;
 mod task_budget;
 
 use anyhow::{Context, Result};
@@ -19,18 +21,20 @@ use crate::fs_utils::{
     clear_directory, ensure_workdir_layout, find_all_toml_in_capture, find_repo_root,
     group_tomls_by_first_subdir,
 };
+use crate::stage0_shot_points::run_shot_points_stage;
 use crate::stage1_pointcloud::{
     make_tile_pixel_ref, preprocess_capture_tile_spans, tile_key, write_tile_pixel_index,
 };
-use crate::stage3_merge::merge_stage2_outputs;
 use crate::stage2_tile_pipeline::render_tiles_to_pyramid;
+use crate::stage3_merge::merge_stage2_outputs;
 use crate::task_budget::run_with_budget;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RunMode {
-    All,
+    ShotPoints,
     Stage12,
     Stage3,
+    Stage123,
 }
 
 fn main() -> Result<()> {
@@ -47,7 +51,13 @@ fn main() -> Result<()> {
     let mut stage2_peak_point_global = 0usize;
     let mut stage2_peak_cache_global = 0usize;
 
-    if run_mode == RunMode::All || run_mode == RunMode::Stage12 {
+    if run_mode == RunMode::ShotPoints {
+        let n = run_shot_points_stage(&capture_dir, selected_filter.as_deref())?;
+        println!("shot-points done. subfolders written: {}", n);
+        return Ok(());
+    }
+
+    if run_mode == RunMode::Stage123 || run_mode == RunMode::Stage12 {
         let selected_all = find_all_toml_in_capture(&capture_dir)?;
         let groups = group_tomls_by_first_subdir(&capture_dir, &selected_all)?;
         let mut picked: Vec<(String, Vec<std::path::PathBuf>)> = Vec::new();
@@ -63,7 +73,8 @@ fn main() -> Result<()> {
             anyhow::bail!("No capture subfolders selected.");
         }
 
-        fs::create_dir_all(&stage2_root).with_context(|| format!("mkdir {}", stage2_root.display()))?;
+        fs::create_dir_all(&stage2_root)
+            .with_context(|| format!("mkdir {}", stage2_root.display()))?;
         clear_directory(&stage2_root)?;
 
         for (group_name, selected) in picked {
@@ -110,7 +121,8 @@ fn main() -> Result<()> {
                 finest_z,
                 tiles: std::collections::BTreeMap::new(),
             };
-            for (tkey, capture_toml, aabb) in all_refs.lock().expect("all_refs poisoned").drain(..) {
+            for (tkey, capture_toml, aabb) in all_refs.lock().expect("all_refs poisoned").drain(..)
+            {
                 index
                     .tiles
                     .entry(tkey)
@@ -122,7 +134,8 @@ fn main() -> Result<()> {
 
             let stage2_start = Instant::now();
             let tiles_root = group_root.join("tiles");
-            fs::create_dir_all(&tiles_root).with_context(|| format!("mkdir {}", tiles_root.display()))?;
+            fs::create_dir_all(&tiles_root)
+                .with_context(|| format!("mkdir {}", tiles_root.display()))?;
             clear_directory(&tiles_root)?;
             let alerts_path = group_root.join("alerts.csv");
             let index_path = tiles_root.join("index.json");
@@ -135,15 +148,19 @@ fn main() -> Result<()> {
                 &index_path,
             )?;
             println!("Stage 2/2 done in {:.3}s", stage2_start.elapsed().as_secs_f64());
-            stage2_peak_point_global = stage2_peak_point_global.max(stage2_stats.point_inflight_peak_bytes);
-            stage2_peak_cache_global = stage2_peak_cache_global.max(stage2_stats.capture_cache_peak_bytes);
+            stage2_peak_point_global =
+                stage2_peak_point_global.max(stage2_stats.point_inflight_peak_bytes);
+            stage2_peak_cache_global =
+                stage2_peak_cache_global.max(stage2_stats.capture_cache_peak_bytes);
             stage2_outputs.push(group_root.join("tiles"));
         }
     } else {
         if !stage2_root.is_dir() {
             anyhow::bail!("stage2 output directory not found: {}", stage2_root.display());
         }
-        for entry in fs::read_dir(&stage2_root).with_context(|| format!("read_dir {}", stage2_root.display()))? {
+        for entry in fs::read_dir(&stage2_root)
+            .with_context(|| format!("read_dir {}", stage2_root.display()))?
+        {
             let entry = entry?;
             let p = entry.path();
             if !p.is_dir() {
@@ -166,9 +183,10 @@ fn main() -> Result<()> {
         }
     }
 
-    if run_mode == RunMode::All || run_mode == RunMode::Stage3 {
+    if run_mode == RunMode::Stage123 || run_mode == RunMode::Stage3 {
         let stage3_out = work_dir.join("tiles");
-        fs::create_dir_all(&stage3_out).with_context(|| format!("mkdir {}", stage3_out.display()))?;
+        fs::create_dir_all(&stage3_out)
+            .with_context(|| format!("mkdir {}", stage3_out.display()))?;
         clear_directory(&stage3_out)?;
         merge_stage2_outputs(&stage2_outputs, &stage3_out)?;
     }
@@ -180,8 +198,7 @@ fn main() -> Result<()> {
     );
     println!(
         "Peak point in-flight: {:.2} GB / {} GB",
-        stage1_peak_global.max(stage2_peak_point_global) as f64
-            / (1024.0 * 1024.0 * 1024.0),
+        stage1_peak_global.max(stage2_peak_point_global) as f64 / (1024.0 * 1024.0 * 1024.0),
         crate::common::MAX_POINT_IN_FLIGHT_GB
     );
     println!(
@@ -209,15 +226,19 @@ fn parse_maps_filter(args: &[String]) -> Option<Vec<String>> {
 }
 
 fn parse_args(args: Vec<String>) -> Result<(RunMode, Option<Vec<String>>)> {
-    let mut mode = RunMode::All;
+    let mut mode = RunMode::Stage123;
     let mut i = 0usize;
     while i < args.len() {
         if args[i] == "--run" && i + 1 < args.len() {
             mode = match args[i + 1].as_str() {
-                "all" => RunMode::All,
+                "shotpoints" => RunMode::ShotPoints,
                 "stage12" => RunMode::Stage12,
                 "stage3" => RunMode::Stage3,
-                other => anyhow::bail!("Invalid --run value: {} (expected all|stage12|stage3)", other),
+                "stage123" => RunMode::Stage123,
+                other => anyhow::bail!(
+                    "Invalid --run value: {} (expected all|shotpoints|stage12|stage3)",
+                    other
+                ),
             };
         }
         i += 1;

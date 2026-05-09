@@ -29,6 +29,24 @@
         <select id="sourceSel"></select>
       </div>
       <div class="row">
+        <label><input type="checkbox" id="previewMode" /> Capture Preview</label>
+        <input id="previewSubdir" value="default" placeholder="capture subdir" />
+        <button id="previewLoad">Load</button>
+      </div>
+      <div id="trajEditPanel" style="display:none; border:1px solid #2f3747; border-radius:8px; padding:8px; margin-bottom:8px;">
+        <div class="row">
+          <label>Y</label><input id="loopY" value="0" style="width:90px; flex:0 0 auto;" />
+          <button id="newLoopBtn">New Loop</button>
+          <button id="finishLoopBtn">Finish Loop</button>
+          <button id="cancelLoopBtn">Cancel</button>
+        </div>
+        <div class="row">
+          <button id="undoLoopPtBtn">Undo Point</button>
+          <button id="exportTrajBtn">Export trajectory.json</button>
+        </div>
+        <div id="loopList" class="stat"></div>
+      </div>
+      <div class="row">
         <label>Scale mode</label>
         <select id="modeSel">
           <option value="auto">Auto</option>
@@ -39,7 +57,8 @@
       </div>
       <div class="row" id="scaleButtons"></div>
       <div class="row">
-        <label><input type="checkbox" id="showLoops" checked /> Show Loops</label>
+        <label><input type="checkbox" id="showLoops" checked /> Show Trajectory</label>
+        <label><input type="checkbox" id="showShotPoints" checked /> Show ShotPoints</label>
       </div>
       <div class="stat" id="stat1">-</div>
       <div class="stat" id="stat2">Drag: pan, Wheel: zoom.</div>
@@ -55,6 +74,18 @@ const modeSel = document.getElementById('modeSel');
 const levelSel = document.getElementById('levelSel');
 const scaleButtons = document.getElementById('scaleButtons');
 const showLoops = document.getElementById('showLoops');
+const showShotPoints = document.getElementById('showShotPoints');
+const previewMode = document.getElementById('previewMode');
+const previewSubdir = document.getElementById('previewSubdir');
+const previewLoad = document.getElementById('previewLoad');
+const trajEditPanel = document.getElementById('trajEditPanel');
+const loopY = document.getElementById('loopY');
+const newLoopBtn = document.getElementById('newLoopBtn');
+const finishLoopBtn = document.getElementById('finishLoopBtn');
+const cancelLoopBtn = document.getElementById('cancelLoopBtn');
+const undoLoopPtBtn = document.getElementById('undoLoopPtBtn');
+const exportTrajBtn = document.getElementById('exportTrajBtn');
+const loopList = document.getElementById('loopList');
 const stat1 = document.getElementById('stat1');
 
 let tileIndex = null;
@@ -62,21 +93,138 @@ let levelList = [];
 let levelMaps = new Map();
 let imageCache = new Map();
 let walkableLoops = [];
+let shotPoints = [];
+let walkableCoordSpace = '';
+let shotPointsCoordSpace = '';
+let previewActive = false;
+let previewTileWorldSize = 16.0;
+let previewBounds = null;
+let drawingLoop = false;
+let currentLoop = [];
+
+function normalizeTrajectoryAndShotPoints(trajectoryCoordSpace, shotCoordSpace) {
+  const trajFlip = trajectoryCoordSpace === 'game';
+  const shotFlip = shotCoordSpace === 'game';
+  if (Array.isArray(walkableLoops)) {
+    walkableLoops = walkableLoops.map((lp) => {
+      if (!Array.isArray(lp)) return [];
+      return lp
+        .filter((p) => Array.isArray(p) && p.length >= 3)
+        .map((p) => [p[0], p[1], trajFlip ? -p[2] : p[2]]);
+    });
+  } else {
+    walkableLoops = [];
+  }
+
+  if (Array.isArray(shotPoints)) {
+    shotPoints = shotPoints
+      .filter((p) => p && typeof p.x === 'number' && typeof p.z === 'number')
+      .map((p) => ({ ...p, z: shotFlip ? -p.z : p.z }));
+  } else {
+    shotPoints = [];
+  }
+}
+
+function screenToWorld(sx, sy) {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  const spanY = worldSpanX * (h / Math.max(1, w));
+  const wx = (sx / w) * worldSpanX + (centerX - worldSpanX / 2);
+  const wz = (sy / h) * spanY + (centerZ - spanY / 2);
+  return [wx, wz];
+}
+
+function refreshLoopList() {
+  if (!previewActive) {
+    loopList.innerHTML = '';
+    return;
+  }
+  let html = `loops=${walkableLoops.length}`;
+  for (let i = 0; i < walkableLoops.length; i++) {
+    const lp = Array.isArray(walkableLoops[i]) ? walkableLoops[i] : [];
+    const n = lp.length;
+    let yMin = Infinity, yMax = -Infinity;
+    for (const p of lp) {
+      if (!Array.isArray(p) || p.length < 3 || !Number.isFinite(p[1])) continue;
+      yMin = Math.min(yMin, p[1]);
+      yMax = Math.max(yMax, p[1]);
+    }
+    const yInfo = Number.isFinite(yMin) ? ` y=[${yMin.toFixed(1)}, ${yMax.toFixed(1)}]` : '';
+    html += `<div>loop ${i+1} (${n} pts${yInfo}) <button data-del-loop="${i}">Delete</button></div>`;
+  }
+  if (drawingLoop) html += `<div>current loop points=${currentLoop.length}</div>`;
+  loopList.innerHTML = html;
+  for (const btn of loopList.querySelectorAll('button[data-del-loop]')) {
+    btn.addEventListener('click', () => {
+      const idx = Number(btn.getAttribute('data-del-loop'));
+      if (Number.isInteger(idx) && idx >= 0 && idx < walkableLoops.length) {
+        walkableLoops.splice(idx, 1);
+        recomputePreviewBounds();
+        refreshLoopList();
+        scheduleRender();
+      }
+    });
+  }
+}
+
+function recomputePreviewBounds() {
+  const pts = [];
+  for (const lp of walkableLoops) {
+    if (!Array.isArray(lp)) continue;
+    for (const p of lp) {
+      if (Array.isArray(p) && p.length >= 3) pts.push([p[0], p[2]]);
+    }
+  }
+  for (const p of shotPoints) {
+    if (typeof p.x === 'number' && typeof p.z === 'number') pts.push([p.x, p.z]);
+  }
+  if (pts.length === 0) {
+    previewBounds = null;
+    centerX = 0; centerZ = 0; worldSpanX = 1024;
+    return;
+  }
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of pts) {
+    minX = Math.min(minX, p[0]); maxX = Math.max(maxX, p[0]);
+    minZ = Math.min(minZ, p[1]); maxZ = Math.max(maxZ, p[1]);
+  }
+  const pad = Math.max(previewTileWorldSize, 32);
+  minX -= pad; maxX += pad; minZ -= pad; maxZ += pad;
+  previewBounds = { minX, maxX, minZ, maxZ };
+}
 
 let centerX = 0;
 let centerZ = 0;
 let worldSpanX = 4096;
-let currentTilesRoot = './tiles';
+let currentTilesRoot = '/map-work/tiles';
 
 let dragging = false;
 let dragLastX = 0;
 let dragLastY = 0;
+let renderQueued = false;
+
+function isStage2Source() {
+  return typeof currentTilesRoot === 'string' && currentTilesRoot.includes('/stage2/');
+}
+
+function isTrajectoryEditEnabled() {
+  return !previewActive && isStage2Source();
+}
+
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    render();
+  });
+}
 
 function resize() {
   canvas.width = Math.max(1, canvas.clientWidth * devicePixelRatio);
   canvas.height = Math.max(1, canvas.clientHeight * devicePixelRatio);
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   ctx.imageSmoothingEnabled = false;
+  scheduleRender();
 }
 window.addEventListener('resize', resize);
 resize();
@@ -97,7 +245,8 @@ function alignCenterToPixelGridForLevel(level) {
 }
 
 async function loadIndex(root) {
-  currentTilesRoot = (root || './tiles').replace(/\/$/, '');
+  previewActive = false;
+  currentTilesRoot = (root || '/map-work/tiles').replace(/\/$/, '');
   const res = await fetch(`${currentTilesRoot}/index.json`);
   if (!res.ok) throw new Error(`index load failed: ${res.status}`);
   tileIndex = await res.json();
@@ -122,6 +271,7 @@ async function loadIndex(root) {
       levelSel.value = String(lv);
       worldSpanX = wuPerPx * Math.max(1, canvas.clientWidth);
       alignCenterToPixelGridForLevel(lv);
+      scheduleRender();
     });
     scaleButtons.appendChild(btn);
   }
@@ -170,15 +320,93 @@ async function loadIndex(root) {
   modeSel.value = 'auto';
 
   walkableLoops = [];
+  shotPoints = [];
+  walkableCoordSpace = '';
+  shotPointsCoordSpace = '';
+  // trajectory/shotpoints are stage2 artifacts; skip for stage3 merged root.
+  if (isStage2Source()) {
+    try {
+      const wr = await fetch(`${currentTilesRoot}/trajectory_simplified.json`);
+      if (wr.ok) {
+        const wj = await wr.json();
+        if (Array.isArray(wj.loops)) {
+          walkableLoops = wj.loops;
+          walkableCoordSpace = (typeof wj.coord_space === 'string' ? wj.coord_space : 'processor');
+        }
+      }
+    } catch (e) { stat1.textContent = `trajectory load error: ${e}`; }
+    try {
+      let shotUrl = `${currentTilesRoot}/shot_points.json`;
+      if (currentTilesRoot.endsWith('/tiles')) {
+        shotUrl = `${currentTilesRoot.slice(0, -('/tiles'.length))}/shot_points.json`;
+      }
+      const sr = await fetch(shotUrl);
+      if (sr.ok) {
+        const sj = await sr.json();
+        if (sj && Array.isArray(sj.points)) {
+          shotPoints = sj.points;
+          shotPointsCoordSpace = (typeof sj.coord_space === 'string' ? sj.coord_space : 'processor');
+        }
+      }
+    } catch (e) { stat1.textContent = `shot points load error: ${e}`; }
+  } else {
+    walkableLoops = [];
+    shotPoints = [];
+  }
+  normalizeTrajectoryAndShotPoints(walkableCoordSpace, shotPointsCoordSpace);
+  trajEditPanel.style.display = isTrajectoryEditEnabled() ? '' : 'none';
+  refreshLoopList();
+}
+
+async function loadCapturePreview(subdir) {
+  previewActive = true;
+  const base = `/capture/${(subdir || 'default').replace(/\/$/, '')}`;
+  walkableLoops = [];
+  shotPoints = [];
+  walkableCoordSpace = '';
+  shotPointsCoordSpace = '';
+
   try {
-    const wr = await fetch(`${currentTilesRoot}/walkable_loops_merged.json`);
-    if (wr.ok) {
-      const wj = await wr.json();
-      if (Array.isArray(wj.loops)) {
-        walkableLoops = wj.loops;
+    const tr = await fetch(`${base}/trajectory.json`);
+    if (tr.ok) {
+      const tj = await tr.json();
+      if (Array.isArray(tj.loops)) {
+        walkableLoops = tj.loops;
+        walkableCoordSpace = (typeof tj.coord_space === 'string' ? tj.coord_space : 'game');
       }
     }
+  } catch (e) { stat1.textContent = `capture trajectory load error: ${e}`; }
+
+  try {
+    const sr = await fetch(`${base}/shot_points.json`);
+    if (sr.ok) {
+      const sj = await sr.json();
+      if (sj && Array.isArray(sj.points)) {
+        shotPoints = sj.points;
+        shotPointsCoordSpace = (typeof sj.coord_space === 'string' ? sj.coord_space : 'game');
+      }
+    }
+  } catch (e) { stat1.textContent = `capture shot points load error: ${e}`; }
+  normalizeTrajectoryAndShotPoints(walkableCoordSpace, shotPointsCoordSpace);
+
+  try {
+    const cr = await fetch(`${base}/shot_config.json`);
+    if (cr.ok) {
+      const cj = await cr.json();
+      const tile = 512 * (1.0 / (cj.base_ratio_px_per_wu || 32.0));
+      if (Number.isFinite(tile) && tile > 0) previewTileWorldSize = tile;
+    }
   } catch (_) {}
+
+  recomputePreviewBounds();
+  if (!previewBounds) {
+    refreshLoopList();
+    return;
+  }
+  centerX = (previewBounds.minX + previewBounds.maxX) * 0.5;
+  centerZ = (previewBounds.minZ + previewBounds.maxZ) * 0.5;
+  worldSpanX = Math.max(previewBounds.maxX - previewBounds.minX, previewTileWorldSize * 4);
+  refreshLoopList();
 }
 
 function pickLevelAuto() {
@@ -219,8 +447,8 @@ function worldToScreen(wx, wz) {
 function ensureImage(url) {
   if (imageCache.has(url)) return imageCache.get(url);
   const item = { img: new Image(), ok: false, done: false };
-  item.img.onload = () => { item.ok = true; item.done = true; };
-  item.img.onerror = () => { item.ok = false; item.done = true; };
+  item.img.onload = () => { item.ok = true; item.done = true; scheduleRender(); };
+  item.img.onerror = () => { item.ok = false; item.done = true; scheduleRender(); };
   item.img.src = url;
   imageCache.set(url, item);
   return item;
@@ -232,6 +460,8 @@ function drawWalkableOverlay() {
   ctx.save();
   ctx.strokeStyle = '#00d2a8';
   ctx.lineWidth = 1.5;
+  ctx.fillStyle = '#8fffe4';
+  ctx.font = '10px Consolas, Menlo, monospace';
   for (const loop of walkableLoops) {
     if (!Array.isArray(loop) || loop.length < 2) continue;
     ctx.beginPath();
@@ -245,8 +475,66 @@ function drawWalkableOverlay() {
       } else {
         ctx.lineTo(sx, sy);
       }
+      ctx.fillText(`y=${p[1].toFixed(1)}`, sx + 4, sy + 10);
     }
     if (started) ctx.stroke();
+  }
+  if (drawingLoop && currentLoop.length >= 1) {
+    ctx.strokeStyle = '#ff8c3a';
+    ctx.beginPath();
+    for (let i = 0; i < currentLoop.length; i++) {
+      const p = currentLoop[i];
+      const [sx, sy] = worldToScreen(p[0], p[2]);
+      if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawShotPointsOverlay() {
+  if (!showShotPoints.checked) return;
+  if (!Array.isArray(shotPoints) || shotPoints.length === 0) return;
+  ctx.save();
+  ctx.fillStyle = '#ffce4a';
+  ctx.strokeStyle = '#1b1200';
+  ctx.lineWidth = 1;
+  ctx.font = '11px Consolas, Menlo, monospace';
+  for (let i = 0; i < shotPoints.length; i++) {
+    const p = shotPoints[i];
+    if (typeof p.x !== 'number' || typeof p.z !== 'number') continue;
+    const [sx, sy] = worldToScreen(p.x, p.z);
+    if (sx < -50 || sy < -20 || sx > canvas.clientWidth + 50 || sy > canvas.clientHeight + 20) continue;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    const label = `${i + 1}: (${p.x.toFixed(1)}, ${p.z.toFixed(1)})`;
+    ctx.fillStyle = '#ffd86f';
+    ctx.fillText(label, sx + 6, sy - 6);
+    ctx.fillStyle = '#ffce4a';
+  }
+  ctx.restore();
+}
+
+function drawPreviewTileGrid() {
+  if (!previewActive || !previewBounds) return;
+  const tw = previewTileWorldSize;
+  const minTx = Math.floor(previewBounds.minX / tw);
+  const maxTx = Math.floor(previewBounds.maxX / tw);
+  const minTy = Math.floor(previewBounds.minZ / tw);
+  const maxTy = Math.floor(previewBounds.maxZ / tw);
+  ctx.save();
+  ctx.strokeStyle = '#4a5a74';
+  ctx.lineWidth = 1;
+  for (let tx = minTx; tx <= maxTx; tx++) {
+    for (let ty = minTy; ty <= maxTy; ty++) {
+      const x0 = tx * tw, z0 = ty * tw;
+      const x1 = x0 + tw, z1 = z0 + tw;
+      const [sx0, sy0] = worldToScreen(x0, z0);
+      const [sx1, sy1] = worldToScreen(x1, z1);
+      ctx.strokeRect(Math.round(sx0)+0.5, Math.round(sy0)+0.5, Math.round(sx1-sx0)-1, Math.round(sy1-sy0)-1);
+    }
   }
   ctx.restore();
 }
@@ -257,8 +545,16 @@ function render() {
   ctx.fillStyle = '#0d1016';
   ctx.fillRect(0, 0, w, h);
 
+  if (previewActive) {
+    drawPreviewTileGrid();
+    drawWalkableOverlay();
+    drawShotPointsOverlay();
+    const n = Array.isArray(shotPoints) ? shotPoints.length : 0;
+    stat1.textContent = `capture preview subdir=${previewSubdir.value} shotpoints=${n} tile=${previewTileWorldSize.toFixed(2)}wu`;
+    return;
+  }
+
   if (!tileIndex) {
-    requestAnimationFrame(render);
     return;
   }
 
@@ -270,7 +566,6 @@ function render() {
   const level = tileIndex.levels[zName];
   const xMap = levelMaps.get(zName);
   if (!level || !xMap) {
-    requestAnimationFrame(render);
     return;
   }
 
@@ -324,9 +619,9 @@ function render() {
   ctx.strokeStyle = '#3a475f';
   ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
   drawWalkableOverlay();
+  drawShotPointsOverlay();
 
   stat1.textContent = `z=${z} mode=${modeSel.value} span=${worldSpanX.toFixed(1)}wu tiles=${drawn}`;
-  requestAnimationFrame(render);
 }
 
 canvas.addEventListener('mousedown', (e) => {
@@ -347,24 +642,114 @@ window.addEventListener('mousemove', (e) => {
   const spanY = worldSpanX * (h / w);
   centerX -= dx / w * worldSpanX;
   centerZ -= dy / h * spanY;
+  scheduleRender();
 });
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   const zoom = Math.exp(e.deltaY * 0.0015);
   const minSpan = minPointToPointSpanX();
   worldSpanX = Math.max(minSpan, Math.min(2_000_000, worldSpanX * zoom));
+  scheduleRender();
 }, { passive: false });
 
 sourceSel.addEventListener('change', async () => {
   imageCache.clear();
   await loadIndex(sourceSel.value);
+  scheduleRender();
+});
+previewLoad.addEventListener('click', async () => {
+  imageCache.clear();
+  await loadCapturePreview(previewSubdir.value.trim() || 'default');
+  scheduleRender();
+});
+previewMode.addEventListener('change', async () => {
+  imageCache.clear();
+  if (previewMode.checked) {
+    await loadCapturePreview(previewSubdir.value.trim() || 'default');
+    trajEditPanel.style.display = 'none';
+  } else {
+    await loadIndex(sourceSel.value);
+  }
+  if (!isTrajectoryEditEnabled()) {
+    drawingLoop = false;
+    currentLoop = [];
+  }
+  scheduleRender();
+});
+modeSel.addEventListener('change', scheduleRender);
+levelSel.addEventListener('change', scheduleRender);
+showLoops.addEventListener('change', scheduleRender);
+showShotPoints.addEventListener('change', scheduleRender);
+
+newLoopBtn.addEventListener('click', () => {
+  if (!isTrajectoryEditEnabled()) return;
+  drawingLoop = true;
+  currentLoop = [];
+  refreshLoopList();
+  scheduleRender();
+});
+finishLoopBtn.addEventListener('click', () => {
+  if (!isTrajectoryEditEnabled() || !drawingLoop || currentLoop.length < 3) return;
+  const loop = currentLoop.slice();
+  const first = loop[0];
+  const last = loop[loop.length - 1];
+  const dx = first[0] - last[0], dz = first[2] - last[2];
+  if (Math.sqrt(dx*dx + dz*dz) > 1.0e-6) loop.push(first);
+  walkableLoops.push(loop);
+  drawingLoop = false;
+  currentLoop = [];
+  recomputePreviewBounds();
+  refreshLoopList();
+  scheduleRender();
+});
+cancelLoopBtn.addEventListener('click', () => {
+  if (!isTrajectoryEditEnabled()) return;
+  drawingLoop = false;
+  currentLoop = [];
+  refreshLoopList();
+  scheduleRender();
+});
+undoLoopPtBtn.addEventListener('click', () => {
+  if (!isTrajectoryEditEnabled()) return;
+  if (!drawingLoop || currentLoop.length === 0) return;
+  currentLoop.pop();
+  refreshLoopList();
+  scheduleRender();
+});
+exportTrajBtn.addEventListener('click', () => {
+  if (!isTrajectoryEditEnabled()) return;
+  const payload = {
+    coord_space: 'processor',
+    version: 1,
+    close_distance: 2.0,
+    loops: walkableLoops.map((lp) => lp.map((p) => [p[0], p[1], p[2]])),
+    polylines: []
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'trajectory_simplified.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+canvas.addEventListener('click', (e) => {
+  if (!isTrajectoryEditEnabled() || !drawingLoop) return;
+  const rect = canvas.getBoundingClientRect();
+  const sx = e.clientX - rect.left;
+  const sy = e.clientY - rect.top;
+  const [wx, wz] = screenToWorld(sx, sy);
+  const yv = Number(loopY.value);
+  currentLoop.push([wx, Number.isFinite(yv) ? yv : 0, wz]);
+  refreshLoopList();
+  scheduleRender();
 });
 
 async function loadSourceList() {
-  const fallback = [{ name: 'stage3 merged', path: './tiles' }];
+  const fallback = [{ name: 'stage3 merged', path: '/map-work/tiles' }];
   let items = fallback;
   try {
-    const r = await fetch('./tiles/sources.json');
+    const r = await fetch('/map-work/tiles/sources.json');
     if (r.ok) {
       const j = await r.json();
       if (j && Array.isArray(j.sources) && j.sources.length > 0) {
@@ -393,7 +778,7 @@ async function loadSourceList() {
   } catch (e) {
     stat1.textContent = String(e);
   }
-  render();
+  scheduleRender();
 })();
 </script>
 </body>
