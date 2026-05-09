@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+use std::time::Instant;
 use std::time::UNIX_EPOCH;
 
 use ds3_depthbuffer::{
@@ -11,6 +13,10 @@ use hudhook::{eject, ImguiRenderLoop, RenderContext};
 use imgui::{Condition, Context, Key, StyleVar, WindowFlags};
 use libds3::pointers::PointerChains;
 use serde::Serialize;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE,
+    MapVirtualKeyW, VIRTUAL_KEY, VK_F10, MAPVK_VK_TO_VSC,
+};
 
 use crate::camera_info::CameraInfo;
 use crate::capture_files::{self, CaptureContext};
@@ -20,6 +26,8 @@ pub(crate) static BLOCK_XINPUT: AtomicBool = AtomicBool::new(false);
 
 const LOOP_CLOSE_DISTANCE: f32 = 2.0;
 const LOOP_SAMPLE_EPS: f32 = 1.0e-3;
+const RESHADE_HOTKEY_HOLD_MS: u64 = 110;
+const DEFAULT_SUBDIR_PRESETS: &str = include_str!("../data/probe_subfolder_presets.txt");
 
 #[derive(Serialize)]
 struct WalkableLoopsFile {
@@ -39,11 +47,13 @@ pub(crate) struct Probe {
     exe_path: Option<String>,
     capture_root: PathBuf,
     capture_subdir: String,
+    capture_subdir_presets: Vec<String>,
     capture_status: String,
     show_ui: bool,
     show_inject_hint: bool,
     auto_near_far_offset: f32,
     auto_near_far_range: f32,
+    reshade_hotkey_up_due_at: Option<Instant>,
     loop_recording: bool,
     current_loop: Vec<[f32; 3]>,
     closed_loops: Vec<Vec<[f32; 3]>>,
@@ -60,6 +70,7 @@ impl Probe {
             .or_else(|| std::env::current_dir().ok().map(|dir| dir.join("capture")))
             .unwrap_or_else(|| PathBuf::from(".").join("capture"));
         let _ = std::fs::create_dir_all(&capture_root);
+        let capture_subdir_presets = parse_subdir_presets(DEFAULT_SUBDIR_PRESETS);
 
         Probe {
             pointers,
@@ -67,11 +78,13 @@ impl Probe {
             exe_path,
             capture_root,
             capture_subdir: "default".to_string(),
+            capture_subdir_presets,
             capture_status: String::new(),
             show_ui: false,
             show_inject_hint: true,
             auto_near_far_offset: 0.0,
             auto_near_far_range: 3.0,
+            reshade_hotkey_up_due_at: None,
             loop_recording: false,
             current_loop: Vec::new(),
             closed_loops: Vec::new(),
@@ -236,6 +249,29 @@ impl Probe {
     fn clear_all_closed_loops(&mut self) {
         self.closed_loops.clear();
         self.capture_status = "All closed loops cleared.".to_string();
+    }
+
+    fn trigger_reshade_screenshot(&mut self) {
+        let (sent_vk_down, sent_scan_down, scan) = send_reshade_f10(false);
+        self.reshade_hotkey_up_due_at =
+            Some(Instant::now() + Duration::from_millis(RESHADE_HOTKEY_HOLD_MS));
+        self.capture_status =
+            format!("ReShade F10 down: vk={sent_vk_down} scan={sent_scan_down} sc=0x{scan:X}");
+    }
+
+    fn service_reshade_screenshot_trigger(&mut self) {
+        let Some(up_due_at) = self.reshade_hotkey_up_due_at else {
+            return;
+        };
+
+        if Instant::now() < up_due_at {
+            return;
+        }
+
+        let (sent_vk_up, sent_scan_up, scan) = send_reshade_f10(true);
+        self.capture_status =
+            format!("ReShade F10 up: vk={sent_vk_up} scan={sent_scan_up} sc=0x{scan:X}");
+        self.reshade_hotkey_up_due_at = None;
     }
 
     fn toggle_player_visibility_flag(&mut self) {
@@ -413,6 +449,7 @@ impl ImguiRenderLoop for Probe {
             BLOCK_XINPUT.store(false, Ordering::SeqCst);
             return;
         }
+        self.service_reshade_screenshot_trigger();
 
         let _style_tokens = [
             ui.push_style_var(StyleVar::WindowRounding(0.0)),
@@ -434,7 +471,18 @@ impl ImguiRenderLoop for Probe {
                 ui.text_wrapped(format!("Capture Root: {}", self.capture_root.display()));
                 ui.text("Capture Subfolder:");
                 ui.input_text("##capture_subdir", &mut self.capture_subdir).build();
-                if ui.button("Process Latest Capture Pair (F11)") {
+                ui.same_line();
+                if ui.small_button("Presets") {
+                    ui.open_popup("capture_subdir_presets_menu");
+                }
+                ui.popup("capture_subdir_presets_menu", || {
+                    for item in &self.capture_subdir_presets {
+                        if ui.menu_item(item) {
+                            self.capture_subdir = item.clone();
+                        }
+                    }
+                });
+                if ui.button("Process Pair (F11)") {
                     self.process_capture_files();
                 }
                 if !self.capture_status.is_empty() {
@@ -448,18 +496,18 @@ impl ImguiRenderLoop for Probe {
                     self.current_loop.len(),
                     self.closed_loops.len()
                 ));
-                if ui.button("Close Current Loop") {
+                if ui.button("Close Loop") {
                     self.try_close_current_loop();
                 }
                 ui.same_line();
-                if ui.button("Discard Current Loop") {
+                if ui.button("Discard Loop") {
                     self.discard_current_loop();
                 }
-                if ui.button("Export Walkable Loops") {
+                if ui.button("Export Loops") {
                     self.export_walkable_loops();
                 }
                 ui.same_line();
-                if ui.button("Clear Closed Loops") {
+                if ui.button("Clear Loops") {
                     self.clear_all_closed_loops();
                 }
 
@@ -492,15 +540,18 @@ impl ImguiRenderLoop for Probe {
                     self.pointers.rend_chr.set(render_chr);
                 }
 
-                if ui.button("Reset Free Camera (F7)") {
+                if ui.button("Reset Camera (F7)") {
                     self.reset_free_camera();
                 }
                 ui.same_line();
-                if ui.button("Toggle Player Visibility (F6)") {
+                if ui.button("Player Visible (F6)") {
                     self.toggle_player_visibility_flag();
                 }
-                if ui.button("Teleport Player To Latest Depth Center + Delete Pair (F12)") {
+                if ui.button("Teleport + Del Pair (F12)") {
                     self.teleport_player_from_latest_depth_center();
+                }
+                if ui.button("ReShade Shot (F10)") {
+                    self.trigger_reshade_screenshot();
                 }
 
                 if !free_camera {
@@ -541,6 +592,40 @@ impl ImguiRenderLoop for Probe {
         BLOCK_XINPUT
             .store(ui.io().want_capture_mouse || ui.io().want_capture_keyboard, Ordering::SeqCst);
     }
+}
+
+fn send_reshade_f10(key_up: bool) -> (u32, u32, u16) {
+    let vk = VIRTUAL_KEY(VK_F10.0);
+    let scan = unsafe { MapVirtualKeyW(VK_F10.0 as u32, MAPVK_VK_TO_VSC) } as u16;
+    let vk_flags = if key_up { KEYEVENTF_KEYUP } else { Default::default() };
+    let scan_flags = if key_up {
+        KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP
+    } else {
+        KEYEVENTF_SCANCODE
+    };
+
+    let vk_input = [INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: vk_flags, time: 0, dwExtraInfo: 0 },
+        },
+    }];
+    let scan_input = [INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: scan,
+                dwFlags: scan_flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }];
+    let cb_size = std::mem::size_of::<INPUT>() as i32;
+    let sent_vk = unsafe { SendInput(&vk_input, cb_size) };
+    let sent_scan = unsafe { SendInput(&scan_input, cb_size) };
+    (sent_vk, sent_scan, scan)
 }
 
 fn find_latest_capture_pair(game_dir: &std::path::Path) -> Option<(PathBuf, PathBuf)> {
@@ -657,4 +742,19 @@ fn dedup_loops(loops: &mut Vec<Vec<[f32; 3]>>) {
         }
     }
     *loops = out;
+}
+
+fn parse_subdir_presets(raw: &str) -> Vec<String> {
+    let mut items: Vec<String> = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(ToOwned::to_owned)
+        .collect();
+    items.sort();
+    items.dedup();
+    if !items.iter().any(|x| x == "default") {
+        items.insert(0, "default".to_string());
+    }
+    items
 }
