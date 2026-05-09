@@ -7,8 +7,10 @@ use anyhow::{Context, Result};
 pub fn ensure_workdir_layout(work_dir: &Path) -> Result<()> {
     fs::create_dir_all(work_dir).with_context(|| format!("mkdir {}", work_dir.display()))?;
     let gitignore_path = work_dir.join(".gitignore");
-    if !gitignore_path.exists() {
-        let content = "# generated map workspace\n/bins/\n/tiles/\n/alerts.csv\n*.tmp\n";
+    let content =
+        "# generated map workspace\n/tiles/\n/tile_pixel_index.json\n/alerts.csv\n*.tmp\n";
+    let existing = fs::read_to_string(&gitignore_path).unwrap_or_default();
+    if existing != content {
         fs::write(&gitignore_path, content)
             .with_context(|| format!("write {}", gitignore_path.display()))?;
     }
@@ -79,37 +81,21 @@ pub fn find_all_toml_in_capture(capture_dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(all)
 }
 
-pub fn file_stem_utf8(path: &Path) -> Result<String> {
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .with_context(|| format!("invalid file stem: {}", path.display()))?;
-    Ok(stem.to_string())
-}
-
-pub fn file_name_utf8(path: &Path) -> Result<String> {
-    let name = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .with_context(|| format!("invalid file name: {}", path.display()))?;
-    Ok(name.to_string())
-}
-
-pub fn sanitize_filename(input: &str) -> String {
-    input
-        .chars()
-        .map(
-            |c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' },
-        )
-        .collect()
+pub fn group_tomls_by_first_subdir(capture_dir: &Path, tomls: &[PathBuf]) -> Result<Vec<(String, Vec<PathBuf>)>> {
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
+    for p in tomls {
+        let rel = p
+            .strip_prefix(capture_dir)
+            .with_context(|| format!("{} is not under {}", p.display(), capture_dir.display()))?;
+        let mut comps = rel.components();
+        let Some(first) = comps.next() else { continue };
+        let name = first.as_os_str().to_string_lossy().to_string();
+        groups.entry(name).or_default().push(p.clone());
+    }
+    Ok(groups.into_iter().collect())
 }
 
 pub fn encode_coord(v: i32) -> String {
-    let zz = ((v << 1) ^ (v >> 31)) as u32;
-    zz.to_string()
-}
-
-pub fn decode_coord(s: &str) -> Result<i32> {
-    let zz: u32 = s.parse().with_context(|| format!("invalid coord '{}'", s))?;
-    Ok(((zz >> 1) as i32) ^ (-((zz & 1) as i32)))
+    v.to_string()
 }

@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+use std::time::Instant;
 use std::time::UNIX_EPOCH;
 
 use ds3_depthbuffer::{
@@ -10,6 +12,11 @@ use ds3_depthbuffer::{
 use hudhook::{eject, ImguiRenderLoop, RenderContext};
 use imgui::{Condition, Context, Key, StyleVar, WindowFlags};
 use libds3::pointers::PointerChains;
+use serde::Serialize;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE,
+    MapVirtualKeyW, VIRTUAL_KEY, VK_F10, MAPVK_VK_TO_VSC,
+};
 
 use crate::camera_info::CameraInfo;
 use crate::capture_files::{self, CaptureContext};
@@ -17,17 +24,39 @@ use crate::util;
 
 pub(crate) static BLOCK_XINPUT: AtomicBool = AtomicBool::new(false);
 
+const LOOP_CLOSE_DISTANCE: f32 = 2.0;
+const LOOP_SAMPLE_EPS: f32 = 1.0e-3;
+const RESHADE_HOTKEY_HOLD_MS: u64 = 110;
+const DEFAULT_SUBDIR_PRESETS: &str = include_str!("../data/probe_subfolder_presets.txt");
+
+#[derive(Serialize)]
+struct WalkableLoopsFile {
+    version: u32,
+    close_distance: f32,
+    loops: Vec<Vec<[f32; 3]>>,
+}
+
+#[derive(serde::Deserialize)]
+struct WalkableLoopsFileIn {
+    loops: Vec<Vec<[f32; 3]>>,
+}
+
 pub(crate) struct Probe {
     pointers: PointerChains,
     camera_info: CameraInfo,
     exe_path: Option<String>,
     capture_root: PathBuf,
     capture_subdir: String,
+    capture_subdir_presets: Vec<String>,
     capture_status: String,
     show_ui: bool,
     show_inject_hint: bool,
     auto_near_far_offset: f32,
     auto_near_far_range: f32,
+    reshade_hotkey_up_due_at: Option<Instant>,
+    loop_recording: bool,
+    current_loop: Vec<[f32; 3]>,
+    closed_loops: Vec<Vec<[f32; 3]>>,
 }
 
 impl Probe {
@@ -41,6 +70,7 @@ impl Probe {
             .or_else(|| std::env::current_dir().ok().map(|dir| dir.join("capture")))
             .unwrap_or_else(|| PathBuf::from(".").join("capture"));
         let _ = std::fs::create_dir_all(&capture_root);
+        let capture_subdir_presets = parse_subdir_presets(DEFAULT_SUBDIR_PRESETS);
 
         Probe {
             pointers,
@@ -48,11 +78,16 @@ impl Probe {
             exe_path,
             capture_root,
             capture_subdir: "default".to_string(),
+            capture_subdir_presets,
             capture_status: String::new(),
             show_ui: false,
             show_inject_hint: true,
             auto_near_far_offset: 0.0,
             auto_near_far_range: 3.0,
+            reshade_hotkey_up_due_at: None,
+            loop_recording: false,
+            current_loop: Vec::new(),
+            closed_loops: Vec::new(),
         }
     }
 
@@ -94,6 +129,149 @@ impl Probe {
             Ok(_) => self.capture_status.clear(),
             Err(err) => self.capture_status = format!("Capture failed: {err}"),
         }
+    }
+
+    fn toggle_loop_recording(&mut self) {
+        self.loop_recording = !self.loop_recording;
+        if self.loop_recording {
+            self.current_loop.clear();
+            self.capture_status = "Loop recording started (F1).".to_string();
+        } else {
+            self.capture_status = "Loop recording stopped (F1).".to_string();
+        }
+    }
+
+    fn update_loop_recording(&mut self) {
+        if !self.loop_recording {
+            return;
+        }
+        let Some(p) = self.camera_info.player_position() else {
+            return;
+        };
+        if let Some(last) = self.current_loop.last().copied() {
+            let dx = p[0] - last[0];
+            let dy = p[1] - last[1];
+            let dz = p[2] - last[2];
+            if (dx * dx + dy * dy + dz * dz) <= LOOP_SAMPLE_EPS * LOOP_SAMPLE_EPS {
+                return;
+            }
+        }
+        self.current_loop.push(p);
+
+        if self.current_loop.len() >= 3 {
+            let first = self.current_loop[0];
+            let last = *self.current_loop.last().unwrap_or(&first);
+            let dx = last[0] - first[0];
+            let dz = last[2] - first[2];
+            let d = (dx * dx + dz * dz).sqrt();
+            if d <= LOOP_CLOSE_DISTANCE {
+                self.capture_status = format!(
+                    "Loop can close now (dist {:.2} <= {:.2}). Use 'Close Loop'.",
+                    d, LOOP_CLOSE_DISTANCE
+                );
+            }
+        }
+    }
+
+    fn try_close_current_loop(&mut self) {
+        if self.current_loop.len() < 3 {
+            self.capture_status = "Close failed: need at least 3 points.".to_string();
+            return;
+        }
+        let first = self.current_loop[0];
+        let last = *self.current_loop.last().unwrap_or(&first);
+        let dx = last[0] - first[0];
+        let dz = last[2] - first[2];
+        let d = (dx * dx + dz * dz).sqrt();
+        if d > LOOP_CLOSE_DISTANCE {
+            self.capture_status = format!(
+                "Close failed: start/end too far ({:.2} > {:.2}), keep recording.",
+                d, LOOP_CLOSE_DISTANCE
+            );
+            return;
+        }
+
+        let mut loop_pts = self.current_loop.clone();
+        if let Some(end) = loop_pts.last().copied() {
+            let ex = end[0] - first[0];
+            let ez = end[2] - first[2];
+            if (ex * ex + ez * ez).sqrt() > LOOP_SAMPLE_EPS {
+                loop_pts.push(first);
+            }
+        }
+        self.closed_loops.push(loop_pts);
+        self.current_loop.clear();
+        self.loop_recording = false;
+        self.capture_status =
+            format!("Loop closed. total closed loops={}", self.closed_loops.len());
+    }
+
+    fn discard_current_loop(&mut self) {
+        self.current_loop.clear();
+        self.loop_recording = false;
+        self.capture_status = "Current loop discarded.".to_string();
+    }
+
+    fn export_walkable_loops(&mut self) {
+        let subdir = self.capture_subdir.trim();
+        if subdir.is_empty() {
+            self.capture_status = "Export failed: subfolder name is empty.".to_string();
+            return;
+        }
+        let output_dir = self.capture_root.join(subdir);
+        if let Err(e) = fs::create_dir_all(&output_dir) {
+            self.capture_status = format!("Export failed: create dir: {e}");
+            return;
+        }
+
+        let path = output_dir.join("walkable_loops.json");
+        let mut merged = read_existing_loops(&path).unwrap_or_default();
+        merged.extend(self.closed_loops.iter().cloned());
+        dedup_loops(&mut merged);
+
+        let payload =
+            WalkableLoopsFile { version: 1, close_distance: LOOP_CLOSE_DISTANCE, loops: merged };
+        match serde_json::to_vec_pretty(&payload)
+            .map_err(|e| e.to_string())
+            .and_then(|v| fs::write(&path, v).map_err(|e| e.to_string()))
+        {
+            Ok(_) => {
+                self.capture_status = format!(
+                    "Exported walkable loops (merged): {} ({} loop(s))",
+                    path.display(),
+                    payload.loops.len()
+                );
+            },
+            Err(e) => self.capture_status = format!("Export failed: {e}"),
+        }
+    }
+
+    fn clear_all_closed_loops(&mut self) {
+        self.closed_loops.clear();
+        self.capture_status = "All closed loops cleared.".to_string();
+    }
+
+    fn trigger_reshade_screenshot(&mut self) {
+        let (sent_vk_down, sent_scan_down, scan) = send_reshade_f10(false);
+        self.reshade_hotkey_up_due_at =
+            Some(Instant::now() + Duration::from_millis(RESHADE_HOTKEY_HOLD_MS));
+        self.capture_status =
+            format!("ReShade F10 down: vk={sent_vk_down} scan={sent_scan_down} sc=0x{scan:X}");
+    }
+
+    fn service_reshade_screenshot_trigger(&mut self) {
+        let Some(up_due_at) = self.reshade_hotkey_up_due_at else {
+            return;
+        };
+
+        if Instant::now() < up_due_at {
+            return;
+        }
+
+        let (sent_vk_up, sent_scan_up, scan) = send_reshade_f10(true);
+        self.capture_status =
+            format!("ReShade F10 up: vk={sent_vk_up} scan={sent_scan_up} sc=0x{scan:X}");
+        self.reshade_hotkey_up_due_at = None;
     }
 
     fn toggle_player_visibility_flag(&mut self) {
@@ -203,12 +381,17 @@ impl Probe {
 impl ImguiRenderLoop for Probe {
     fn before_render(&mut self, _ctx: &mut Context, _r: &mut dyn RenderContext) {
         self.camera_info.update();
+        self.update_loop_recording();
     }
 
     fn render(&mut self, ui: &mut imgui::Ui) {
         if ui.is_key_pressed(Key::F9) {
             self.set_ui_visibility(!self.show_ui);
             self.show_inject_hint = false;
+        }
+
+        if ui.is_key_pressed(Key::F1) {
+            self.toggle_loop_recording();
         }
 
         if ui.is_key_pressed(Key::F8) {
@@ -266,6 +449,7 @@ impl ImguiRenderLoop for Probe {
             BLOCK_XINPUT.store(false, Ordering::SeqCst);
             return;
         }
+        self.service_reshade_screenshot_trigger();
 
         let _style_tokens = [
             ui.push_style_var(StyleVar::WindowRounding(0.0)),
@@ -273,7 +457,7 @@ impl ImguiRenderLoop for Probe {
         ];
 
         ui.window("DS3 Map Data Collector")
-            .size([420.0, 220.0], Condition::FirstUseEver)
+            .size([520.0, 330.0], Condition::FirstUseEver)
             .position([20.0, 20.0], Condition::FirstUseEver)
             .flags(WindowFlags::NO_COLLAPSE)
             .build(|| {
@@ -287,12 +471,46 @@ impl ImguiRenderLoop for Probe {
                 ui.text_wrapped(format!("Capture Root: {}", self.capture_root.display()));
                 ui.text("Capture Subfolder:");
                 ui.input_text("##capture_subdir", &mut self.capture_subdir).build();
-                if ui.button("Process Latest Capture Pair (F11)") {
+                ui.same_line();
+                if ui.small_button("Presets") {
+                    ui.open_popup("capture_subdir_presets_menu");
+                }
+                ui.popup("capture_subdir_presets_menu", || {
+                    for item in &self.capture_subdir_presets {
+                        if ui.menu_item(item) {
+                            self.capture_subdir = item.clone();
+                        }
+                    }
+                });
+                if ui.button("Process Pair (F11)") {
                     self.process_capture_files();
                 }
                 if !self.capture_status.is_empty() {
                     ui.text_wrapped(&self.capture_status);
                 }
+                ui.separator();
+
+                ui.text(format!(
+                    "Walkable loop: {} (F1), current points={}, closed loops={}",
+                    if self.loop_recording { "Recording" } else { "Idle" },
+                    self.current_loop.len(),
+                    self.closed_loops.len()
+                ));
+                if ui.button("Close Loop") {
+                    self.try_close_current_loop();
+                }
+                ui.same_line();
+                if ui.button("Discard Loop") {
+                    self.discard_current_loop();
+                }
+                if ui.button("Export Loops") {
+                    self.export_walkable_loops();
+                }
+                ui.same_line();
+                if ui.button("Clear Loops") {
+                    self.clear_all_closed_loops();
+                }
+
                 ui.separator();
 
                 if !self.camera_info.ui_pointers_available() {
@@ -322,15 +540,18 @@ impl ImguiRenderLoop for Probe {
                     self.pointers.rend_chr.set(render_chr);
                 }
 
-                if ui.button("Reset Free Camera (F7)") {
+                if ui.button("Reset Camera (F7)") {
                     self.reset_free_camera();
                 }
                 ui.same_line();
-                if ui.button("Toggle Player Visibility (F6)") {
+                if ui.button("Player Visible (F6)") {
                     self.toggle_player_visibility_flag();
                 }
-                if ui.button("Teleport Player To Latest Depth Center + Delete Pair (F12)") {
+                if ui.button("Teleport + Del Pair (F12)") {
                     self.teleport_player_from_latest_depth_center();
+                }
+                if ui.button("ReShade Shot (F10)") {
+                    self.trigger_reshade_screenshot();
                 }
 
                 if !free_camera {
@@ -358,21 +579,6 @@ impl ImguiRenderLoop for Probe {
                     ui.slider_config("Auto Offset", -2.0, 2.0)
                         .build(&mut self.auto_near_far_offset);
                     ui.slider_config("Auto Range", 0.0, 10.0).build(&mut self.auto_near_far_range);
-
-                    ui.text(format!(
-                        "Camera Up [x,y,z]: {:.3}, {:.3}, {:.3}",
-                        render_state.camera_up[0],
-                        render_state.camera_up[1],
-                        render_state.camera_up[2]
-                    ));
-                    ui.text(format!(
-                        "Camera Dir [x,y,z]: {:.3}, {:.3}, {:.3}",
-                        render_state.camera_dir[0],
-                        render_state.camera_dir[1],
-                        render_state.camera_dir[2]
-                    ));
-                } else {
-                    ui.text("Camera render state: N/A");
                 }
 
                 match self.camera_info.player_position() {
@@ -381,18 +587,45 @@ impl ImguiRenderLoop for Probe {
                     },
                     None => ui.text("Player Position: N/A"),
                 }
-
-                match self.camera_info.camera_position() {
-                    Some([x, y, z]) => {
-                        ui.text(format!("Camera Position: {x:.3}, {y:.3}, {z:.3}"));
-                    },
-                    None => ui.text("Camera Position: N/A"),
-                }
             });
 
         BLOCK_XINPUT
             .store(ui.io().want_capture_mouse || ui.io().want_capture_keyboard, Ordering::SeqCst);
     }
+}
+
+fn send_reshade_f10(key_up: bool) -> (u32, u32, u16) {
+    let vk = VIRTUAL_KEY(VK_F10.0);
+    let scan = unsafe { MapVirtualKeyW(VK_F10.0 as u32, MAPVK_VK_TO_VSC) } as u16;
+    let vk_flags = if key_up { KEYEVENTF_KEYUP } else { Default::default() };
+    let scan_flags = if key_up {
+        KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP
+    } else {
+        KEYEVENTF_SCANCODE
+    };
+
+    let vk_input = [INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT { wVk: vk, wScan: 0, dwFlags: vk_flags, time: 0, dwExtraInfo: 0 },
+        },
+    }];
+    let scan_input = [INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(0),
+                wScan: scan,
+                dwFlags: scan_flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }];
+    let cb_size = std::mem::size_of::<INPUT>() as i32;
+    let sent_vk = unsafe { SendInput(&vk_input, cb_size) };
+    let sent_scan = unsafe { SendInput(&scan_input, cb_size) };
+    (sent_vk, sent_scan, scan)
 }
 
 fn find_latest_capture_pair(game_dir: &std::path::Path) -> Option<(PathBuf, PathBuf)> {
@@ -470,4 +703,58 @@ fn sample_center_depth(depth: &[f32], w: usize, h: usize) -> Option<f32> {
     }
     vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     Some(vals[vals.len() / 2].clamp(0.0, 1.0))
+}
+
+fn read_existing_loops(path: &std::path::Path) -> Option<Vec<Vec<[f32; 3]>>> {
+    if !path.is_file() {
+        return None;
+    }
+    let bytes = fs::read(path).ok()?;
+    let parsed: WalkableLoopsFileIn = serde_json::from_slice(&bytes).ok()?;
+    Some(parsed.loops)
+}
+
+fn dedup_loops(loops: &mut Vec<Vec<[f32; 3]>>) {
+    let mut out: Vec<Vec<[f32; 3]>> = Vec::new();
+    for lp in loops.drain(..) {
+        if lp.len() < 3 {
+            continue;
+        }
+        let Some(first) = lp.first().copied() else {
+            continue;
+        };
+        let mut dup = false;
+        for ex in &out {
+            if ex.len() != lp.len() {
+                continue;
+            }
+            let ef = ex[0];
+            let dx = first[0] - ef[0];
+            let dy = first[1] - ef[1];
+            let dz = first[2] - ef[2];
+            if (dx * dx + dy * dy + dz * dz).sqrt() <= 0.05 {
+                dup = true;
+                break;
+            }
+        }
+        if !dup {
+            out.push(lp);
+        }
+    }
+    *loops = out;
+}
+
+fn parse_subdir_presets(raw: &str) -> Vec<String> {
+    let mut items: Vec<String> = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(ToOwned::to_owned)
+        .collect();
+    items.sort();
+    items.dedup();
+    if !items.iter().any(|x| x == "default") {
+        items.insert(0, "default".to_string());
+    }
+    items
 }

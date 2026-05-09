@@ -1,5 +1,6 @@
 # generated map workspace
-/bins/
+/stage2/
 /tiles/
+/tile_pixel_index.json
 /alerts.csv
 *.tmp

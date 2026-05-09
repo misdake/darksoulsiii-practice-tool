@@ -1,0 +1,27 @@
+# Dark Souls III location presets for Probe "Capture Subfolder".
+# Source list (retrieved from network): https://soulslore.wikidot.com/das3-locations
+# You can freely edit/add/remove any line below.
+default
+anor_londo
+archdragon_peak
+catacombs_of_carthus
+cathedral_of_the_deep
+cemetery_of_ash
+consumed_kings_garden
+farron_keep
+firelink_shrine
+grand_archives
+high_wall_of_lothric
+irithyll_of_the_boreal_valley
+kiln_of_the_first_flame
+lothric_castle
+profaned_capital
+road_of_sacrifices
+smouldering_lake
+undead_settlement
+untended_graves
+painted_world_of_ariandel
+corvian_settlement
+depths_of_the_painting
+the_dreg_heap
+the_ringed_city

@@ -25,8 +25,8 @@
   <div id="app">
     <div id="panel">
       <div class="row">
-        <input id="tilesRoot" value="./tiles" />
-        <button id="loadBtn">Load</button>
+        <label>Source</label>
+        <select id="sourceSel"></select>
       </div>
       <div class="row">
         <label>Scale mode</label>
@@ -38,6 +38,9 @@
         <select id="levelSel"></select>
       </div>
       <div class="row" id="scaleButtons"></div>
+      <div class="row">
+        <label><input type="checkbox" id="showLoops" checked /> Show Loops</label>
+      </div>
       <div class="stat" id="stat1">-</div>
       <div class="stat" id="stat2">Drag: pan, Wheel: zoom.</div>
     </div>
@@ -47,21 +50,23 @@
 <script>
 const canvas = document.getElementById('view');
 const ctx = canvas.getContext('2d');
-const tilesRootInput = document.getElementById('tilesRoot');
-const loadBtn = document.getElementById('loadBtn');
+const sourceSel = document.getElementById('sourceSel');
 const modeSel = document.getElementById('modeSel');
 const levelSel = document.getElementById('levelSel');
 const scaleButtons = document.getElementById('scaleButtons');
+const showLoops = document.getElementById('showLoops');
 const stat1 = document.getElementById('stat1');
 
 let tileIndex = null;
 let levelList = [];
 let levelMaps = new Map();
 let imageCache = new Map();
+let walkableLoops = [];
 
 let centerX = 0;
 let centerZ = 0;
 let worldSpanX = 4096;
+let currentTilesRoot = './tiles';
 
 let dragging = false;
 let dragLastX = 0;
@@ -77,13 +82,12 @@ window.addEventListener('resize', resize);
 resize();
 
 function decodeCoord(name) {
-  const zz = Number(name);
-  if (!Number.isInteger(zz) || zz < 0) return null;
-  return (zz >> 1) ^ (-(zz & 1));
+  const v = Number(name);
+  if (!Number.isInteger(v)) return null;
+  return v;
 }
 function encodeCoord(v) {
-  const zz = ((v << 1) ^ (v >> 31)) >>> 0;
-  return String(zz);
+  return String(v);
 }
 
 function alignCenterToPixelGridForLevel(level) {
@@ -92,9 +96,9 @@ function alignCenterToPixelGridForLevel(level) {
   centerZ = Math.round(centerZ / wuPerPx) * wuPerPx;
 }
 
-async function loadIndex() {
-  const root = tilesRootInput.value.replace(/\/$/, '');
-  const res = await fetch(`${root}/index.json`);
+async function loadIndex(root) {
+  currentTilesRoot = (root || './tiles').replace(/\/$/, '');
+  const res = await fetch(`${currentTilesRoot}/index.json`);
   if (!res.ok) throw new Error(`index load failed: ${res.status}`);
   tileIndex = await res.json();
 
@@ -102,18 +106,21 @@ async function loadIndex() {
   levelSel.innerHTML = '';
   scaleButtons.innerHTML = '';
   for (const lv of levelList) {
+    const wuPerPx = tileIndex.scales_world_units_per_pixel[lv];
+    const scaleMul = wuPerPx > 0 ? Math.round(1 / wuPerPx) : 1;
     const op = document.createElement('option');
     op.value = String(lv);
-    op.textContent = `z=${lv} (${tileIndex.scales_world_units_per_pixel[lv]} wu/px)`;
+    op.textContent = `z=${lv} (x${scaleMul}, ${wuPerPx} wu/px)`;
     levelSel.appendChild(op);
 
     const btn = document.createElement('button');
-    btn.textContent = `1:${tileIndex.scales_world_units_per_pixel[lv]}`;
+    btn.textContent = `x${scaleMul}`;
     btn.title = `Set point-to-point zoom for z=${lv}`;
     btn.addEventListener('click', () => {
-      modeSel.value = 'manual';
+      const wasAuto = modeSel.value === 'auto';
+      if (!wasAuto) modeSel.value = 'manual';
       levelSel.value = String(lv);
-      worldSpanX = tileIndex.scales_world_units_per_pixel[lv] * Math.max(1, canvas.clientWidth);
+      worldSpanX = wuPerPx * Math.max(1, canvas.clientWidth);
       alignCenterToPixelGridForLevel(lv);
     });
     scaleButtons.appendChild(btn);
@@ -128,19 +135,50 @@ async function loadIndex() {
     levelMaps.set(z, xMap);
   }
 
-  // initialize center from first available tile.
-  const z0 = String(levelList[0]);
+  // initialize center from full finest-level bounds.
+  const z0 = String(levelList[levelList.length - 1]);
   const lv0 = tileIndex.levels[z0];
-  const x0Name = Object.keys(lv0.x)[0];
-  const y0Name = lv0.x[x0Name][0];
-  const x0 = decodeCoord(x0Name);
-  const y0 = decodeCoord(y0Name);
   const tw = lv0.tile_world_size;
-  centerX = (x0 + 0.5) * tw;
-  centerZ = (y0 + 0.5) * tw;
-  worldSpanX = tw * 4;
+  let minTx = Infinity, maxTx = -Infinity, minTy = Infinity, maxTy = -Infinity;
+  for (const [xName, yArr] of Object.entries(lv0.x)) {
+    const tx = decodeCoord(xName);
+    if (tx == null) continue;
+    minTx = Math.min(minTx, tx);
+    maxTx = Math.max(maxTx, tx);
+    for (const yName of yArr) {
+      const ty = decodeCoord(yName);
+      if (ty == null) continue;
+      minTy = Math.min(minTy, ty);
+      maxTy = Math.max(maxTy, ty);
+    }
+  }
+  if (Number.isFinite(minTx) && Number.isFinite(minTy)) {
+    const minX = minTx * tw;
+    const maxX = (maxTx + 1) * tw;
+    const minZ = minTy * tw;
+    const maxZ = (maxTy + 1) * tw;
+    centerX = (minX + maxX) * 0.5;
+    centerZ = (minZ + maxZ) * 0.5;
+    worldSpanX = Math.max(maxX - minX, tw * 2);
+  } else {
+    centerX = 0;
+    centerZ = 0;
+    worldSpanX = tw * 4;
+  }
 
   levelSel.value = String(levelList[Math.floor(levelList.length / 2)]);
+  modeSel.value = 'auto';
+
+  walkableLoops = [];
+  try {
+    const wr = await fetch(`${currentTilesRoot}/walkable_loops_merged.json`);
+    if (wr.ok) {
+      const wj = await wr.json();
+      if (Array.isArray(wj.loops)) {
+        walkableLoops = wj.loops;
+      }
+    }
+  } catch (_) {}
 }
 
 function pickLevelAuto() {
@@ -162,6 +200,14 @@ function currentLevel() {
   return pickLevelAuto();
 }
 
+function minPointToPointSpanX() {
+  if (!tileIndex || !Array.isArray(tileIndex.scales_world_units_per_pixel) || tileIndex.scales_world_units_per_pixel.length === 0) {
+    return 64;
+  }
+  const finest = Math.min(...tileIndex.scales_world_units_per_pixel);
+  return finest * Math.max(1, canvas.clientWidth);
+}
+
 function worldToScreen(wx, wz) {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   const spanY = worldSpanX * (h / Math.max(1, w));
@@ -180,6 +226,31 @@ function ensureImage(url) {
   return item;
 }
 
+function drawWalkableOverlay() {
+  if (!showLoops.checked) return;
+  if (!Array.isArray(walkableLoops) || walkableLoops.length === 0) return;
+  ctx.save();
+  ctx.strokeStyle = '#00d2a8';
+  ctx.lineWidth = 1.5;
+  for (const loop of walkableLoops) {
+    if (!Array.isArray(loop) || loop.length < 2) continue;
+    ctx.beginPath();
+    let started = false;
+    for (const p of loop) {
+      if (!Array.isArray(p) || p.length < 3) continue;
+      const [sx, sy] = worldToScreen(p[0], p[2]);
+      if (!started) {
+        ctx.moveTo(sx, sy);
+        started = true;
+      } else {
+        ctx.lineTo(sx, sy);
+      }
+    }
+    if (started) ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function render() {
   const w = canvas.clientWidth, h = canvas.clientHeight;
   ctx.clearRect(0, 0, w, h);
@@ -192,6 +263,9 @@ function render() {
   }
 
   const z = currentLevel();
+  if (modeSel.value === 'auto' && levelSel.value !== String(z)) {
+    levelSel.value = String(z);
+  }
   const zName = String(z);
   const level = tileIndex.levels[zName];
   const xMap = levelMaps.get(zName);
@@ -213,7 +287,7 @@ function render() {
   const ty1 = Math.floor(maxZ / tw);
 
   let drawn = 0;
-  const root = tilesRootInput.value.replace(/\/$/, '');
+  const ext = tileIndex.image_ext || 'jpg';
 
   for (let tx = tx0; tx <= tx1; tx++) {
     const xName = encodeCoord(tx);
@@ -224,7 +298,7 @@ function render() {
       const yName = encodeCoord(ty);
       if (!ySet.has(yName)) continue;
 
-      const url = `${root}/${zName}/${xName}/${yName}.png`;
+      const url = `${currentTilesRoot}/${zName}/${xName}/${yName}.${ext}`;
       const state = ensureImage(url);
 
       const x0 = tx * tw, x1 = x0 + tw;
@@ -249,6 +323,7 @@ function render() {
 
   ctx.strokeStyle = '#3a475f';
   ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+  drawWalkableOverlay();
 
   stat1.textContent = `z=${z} mode=${modeSel.value} span=${worldSpanX.toFixed(1)}wu tiles=${drawn}`;
   requestAnimationFrame(render);
@@ -276,17 +351,45 @@ window.addEventListener('mousemove', (e) => {
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   const zoom = Math.exp(e.deltaY * 0.0015);
-  worldSpanX = Math.max(64, Math.min(2_000_000, worldSpanX * zoom));
+  const minSpan = minPointToPointSpanX();
+  worldSpanX = Math.max(minSpan, Math.min(2_000_000, worldSpanX * zoom));
 }, { passive: false });
 
-loadBtn.addEventListener('click', async () => {
+sourceSel.addEventListener('change', async () => {
   imageCache.clear();
-  await loadIndex();
+  await loadIndex(sourceSel.value);
 });
+
+async function loadSourceList() {
+  const fallback = [{ name: 'stage3 merged', path: './tiles' }];
+  let items = fallback;
+  try {
+    const r = await fetch('./tiles/sources.json');
+    if (r.ok) {
+      const j = await r.json();
+      if (j && Array.isArray(j.sources) && j.sources.length > 0) {
+        items = j.sources
+          .filter((x) => x && typeof x.path === 'string' && x.path.length > 0)
+          .map((x) => ({ name: typeof x.name === 'string' && x.name ? x.name : x.path, path: x.path }));
+      }
+    }
+  } catch (_) {}
+
+  sourceSel.innerHTML = '';
+  for (const src of items) {
+    const op = document.createElement('option');
+    op.value = src.path;
+    op.textContent = src.name;
+    sourceSel.appendChild(op);
+  }
+  sourceSel.value = items[0].path;
+  return items[0].path;
+}
 
 (async () => {
   try {
-    await loadIndex();
+    const root = await loadSourceList();
+    await loadIndex(root);
   } catch (e) {
     stat1.textContent = String(e);
   }

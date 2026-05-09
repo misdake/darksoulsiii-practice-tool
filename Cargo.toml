@@ -18,14 +18,13 @@ members = [
 version = "1.7.1"
 authors = ["Andrea Venuta <venutawebdesign@gmail.com>"]
 
-[profile.dev]
-opt-level = 2
-debug = 2
-
 [profile.release]
+opt-level = 3
+
+[profile.viewer-release]
+inherits = "release"
 lto = true
 codegen-units = 1
-opt-level = 3
 
 [workspace.dependencies]
 imgui = "0.12"
@@ -58,4 +57,3 @@ features = [
 # [patch.'https://github.com/veeenu/practice-tool-core']
 # practice-tool-core = { path = "../practice-tool-core" }
 # practice-tool-tasks = { path = "../practice-tool-core/tasks" }
-
