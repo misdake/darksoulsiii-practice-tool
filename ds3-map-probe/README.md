@@ -49,6 +49,15 @@ Before batch capture, set a stable game state:
    - Write metadata TOML with the same prefix.
 5. Repeat until area coverage is complete.
 
+## Trajectory + Shot Config
+
+- In probe, record trajectory points with `F1`.
+- Use `Close Loop` to save a closed area loop, or `Add Polyline` for open trajectories.
+- Export to `capture/<subdir>/trajectory.json`.
+- Open `Shot Points Config` window to edit screenshot density/resolution/timing and save to `capture/<subdir>/shot_config.json`.
+- Run processor with `--run shotpoints` to generate `capture/<subdir>/shot_points.json`.
+- Load `shot_points.json` in probe and run semi-auto capture (`F2` confirms each shot).
+
 Optional:
 - Press `F6` to teleport player to current camera position (with a small Y offset) if needed for map loading.
 

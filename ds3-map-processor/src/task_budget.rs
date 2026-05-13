@@ -14,6 +14,7 @@ pub fn run_with_budget<T, FEst, FJob>(
 where
     T: Send + Sync + Clone + 'static,
     FEst: Fn(&T) -> usize + Send + Sync + 'static,
+    // job receives (task, reserved_bytes_for_this_task)
     FJob: Fn(T, usize) -> Result<()> + Send + Sync + 'static,
 {
     let workers = max_workers.max(1);
@@ -86,7 +87,7 @@ where
                 thread::sleep(std::time::Duration::from_millis(2));
             }
 
-            let result = job(task, inflight.load(Ordering::SeqCst));
+            let result = job(task, reserve);
             inflight.fetch_sub(reserve, Ordering::SeqCst);
 
             if let Err(err) = result {

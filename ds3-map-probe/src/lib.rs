@@ -1,5 +1,6 @@
 mod camera_info;
 mod capture_files;
+mod coord_space;
 mod probe;
 mod util;
 

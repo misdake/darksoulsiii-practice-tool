@@ -1,21 +1,20 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::{collections::HashMap, collections::HashSet, fs};
+use std::{collections::HashSet, fs};
 
 use anyhow::{Context, Result};
-use image::imageops::FilterType;
-use image::{DynamicImage, RgbaImage};
-use serde::Serialize;
 use crate::common::{
-    CloudPoint, LevelIndex, TileIndex, TileRenderResult,
+    CloudPoint, TileIndex, TileRenderResult,
     MAX_POINT_BYTES_IN_FLIGHT, SCALE_WORLD_UNITS_PER_PIXEL, TILE_SIZE_PX,
 };
 use crate::fs_utils::encode_coord;
+use crate::tile_pyramid::{add_tile_to_index, build_coarse_png_from_children};
 use crate::stage1_pointcloud::{
     iter_points_in_aabb_for_tile, parse_tile_key, read_tile_pixel_index,
 };
 use crate::task_budget::run_with_budget;
+use serde::Serialize;
 #[path = "stage2/cache.rs"]
 mod cache;
 #[path = "stage2/walkable.rs"]
@@ -27,12 +26,11 @@ mod render;
 use cache::{get_or_load_capture, new_capture_lru, CaptureLru};
 use profile::{
     add_prof_ns, print_stage2_profile_summary, reset_stage2_profile_counters, PROF_ACCUM_NS,
-    PROF_GET_OR_LOAD_NS, PROF_ITER_POINTS_NS, PROF_JPEG_NS, PROF_MASK_NS, PROF_REF_COUNT,
+    PROF_GET_OR_LOAD_NS, PROF_ITER_POINTS_NS, PROF_JPEG_NS, PROF_REF_COUNT,
     PROF_RENDER_NS, PROF_TILE_COUNT,
 };
 use walkable::{
-    apply_walkable_mask, load_walkable_mask, rasterize_walkable_mask_tile,
-    write_merged_walkable_file, TileWalkableMask, WalkableMask,
+    load_walkable_mask, write_merged_walkable_file,
 };
 use render::{
     accumulate_points_for_tile, is_all_black, new_tile_render_accum, render_tile_from_accum,
@@ -65,8 +63,6 @@ struct FinestManifest {
 struct FinestRenderEnv<'a> {
     tiles_root: &'a Path,
     z_max: usize,
-    mask: &'a WalkableMask,
-    precomputed_mask: Option<&'a [bool]>,
     capture_cache: &'a Arc<Mutex<CaptureLru>>,
 }
 
@@ -105,44 +101,6 @@ pub fn render_tiles_to_pyramid(
     finest_tasks.sort_by_key(|(tx, ty, _)| (*tx, *ty));
     let total_tiles = finest_tasks.len();
     println!("Stage 2/2 finest render: {} tile(s).", total_tiles);
-    let finest_units_per_px = SCALE_WORLD_UNITS_PER_PIXEL[z_max];
-    let precompute_total = finest_tasks.len();
-    println!("  precompute walkable masks for finest tiles: {} tile(s).", precompute_total);
-    let precompute_done = Arc::new(AtomicUsize::new(0));
-    let precompute_store: Arc<Mutex<TileWalkableMask>> =
-        Arc::new(Mutex::new(HashMap::with_capacity(precompute_total)));
-    let mask_for_precompute = mask.clone();
-    let store_for_precompute = Arc::clone(&precompute_store);
-    let done_for_precompute = Arc::clone(&precompute_done);
-    let precompute_tasks: Vec<(i32, i32)> =
-        finest_tasks.iter().map(|(tx, ty, _)| (*tx, *ty)).collect();
-    let _precompute_peak = run_with_budget(
-        precompute_tasks,
-        |_| 1usize,
-        MAX_POINT_BYTES_IN_FLIGHT,
-        std::thread::available_parallelism().map_or(1usize, |n| n.get().max(1)),
-        move |(tx, ty), _| {
-            let bits =
-                rasterize_walkable_mask_tile(&mask_for_precompute, tx, ty, finest_units_per_px);
-            store_for_precompute.lock().expect("precompute_store poisoned").insert((tx, ty), bits);
-            let done = done_for_precompute.fetch_add(1, Ordering::SeqCst) + 1;
-            if done.is_multiple_of(8) || done == precompute_total {
-                let pct = if precompute_total == 0 {
-                    100.0
-                } else {
-                    (done as f32 / precompute_total as f32) * 100.0
-                };
-                println!("    precompute {}/{} ({:.1}%)", done, precompute_total, pct);
-            }
-            Ok(())
-        },
-    )?;
-    let precomputed_masks = Arc::new(
-        Arc::try_unwrap(precompute_store)
-            .expect("precompute_store still referenced")
-            .into_inner()
-            .expect("precompute_store poisoned"),
-    );
 
     let completed = Arc::new(AtomicUsize::new(0));
     let finest_hits: Arc<Mutex<Vec<(i32, i32)>>> = Arc::new(Mutex::new(Vec::new()));
@@ -153,8 +111,6 @@ pub fn render_tiles_to_pyramid(
     let finest_hits_in_task = Arc::clone(&finest_hits);
     let alert_lines_in_task = Arc::clone(&alert_lines);
     let z_ranges_in_task = Arc::clone(&z_ranges);
-    let mask_in_task = mask.clone();
-    let masks_in_task = Arc::clone(&precomputed_masks);
     let cache_in_task = Arc::clone(&capture_cache);
     let finest_peak_inflight = run_with_budget(
         finest_tasks,
@@ -169,8 +125,6 @@ pub fn render_tiles_to_pyramid(
                 FinestRenderEnv {
                     tiles_root: &finest_tiles_root,
                     z_max,
-                    mask: &mask_in_task,
-                    precomputed_mask: masks_in_task.get(&(tx, ty)).map(|v| v.as_slice()),
                     capture_cache: &cache_in_task,
                 },
             )?;
@@ -246,7 +200,8 @@ pub fn render_tiles_to_pyramid(
             {
                 let built_coords = Arc::clone(&built_coords);
                 move |(tx, ty), _| {
-                    if build_coarse_tile_from_children(&level_tiles_root, child_z, z, tx, ty)? {
+                    if build_coarse_png_from_children(&level_tiles_root, child_z, z, tx, ty, false)?
+                    {
                         built_coords.lock().expect("built_coords poisoned").push((tx, ty));
                     }
                     Ok(())
@@ -283,7 +238,6 @@ pub fn render_tiles_to_pyramid(
     })
 }
 
-
 fn render_one_finest_tile(
     refs: &[crate::common::TilePixelRef],
     tx: i32,
@@ -293,8 +247,6 @@ fn render_one_finest_tile(
     let FinestRenderEnv {
         tiles_root,
         z_max,
-        mask,
-        precomputed_mask,
         capture_cache,
     } = env;
     let units_per_px = SCALE_WORLD_UNITS_PER_PIXEL[z_max];
@@ -346,11 +298,8 @@ fn render_one_finest_tile(
 
     PROF_TILE_COUNT.fetch_add(1, Ordering::Relaxed);
     let t_render = std::time::Instant::now();
-    let mut tile = render_tile_from_accum(accum);
+    let tile = render_tile_from_accum(accum);
     add_prof_ns(&PROF_RENDER_NS, t_render.elapsed().as_nanos());
-    let t_mask = std::time::Instant::now();
-    apply_walkable_mask(&mut tile.image, tx, ty, units_per_px, mask, precomputed_mask);
-    add_prof_ns(&PROF_MASK_NS, t_mask.elapsed().as_nanos());
     if tile.coverage < 0.0001 || is_all_black(&tile.image) {
         return Ok(None);
     }
@@ -388,69 +337,4 @@ fn estimate_tile_refs_bytes(refs: &[crate::common::TilePixelRef]) -> usize {
     (px.saturating_mul(24)).max(1)
 }
 
-fn add_tile_to_index(index: &mut TileIndex, z: usize, tx: i32, ty: i32) {
-    let z_name = z.to_string();
-    let tile_world_size = TILE_SIZE_PX as f32 * SCALE_WORLD_UNITS_PER_PIXEL[z];
-    let level = index
-        .levels
-        .entry(z_name)
-        .or_insert_with(|| LevelIndex { tile_world_size, x: std::collections::BTreeMap::new() });
-    let x_name = encode_coord(tx);
-    let y_name = encode_coord(ty);
-    let ys = level.x.entry(x_name).or_default();
-    if !ys.iter().any(|v| v == &y_name) {
-        ys.push(y_name);
-        ys.sort();
-    }
-}
-
-fn build_coarse_tile_from_children(
-    tiles_root: &Path,
-    child_z: usize,
-    z: usize,
-    tx: i32,
-    ty: i32,
-) -> Result<bool> {
-    let child_coords =
-        [(tx * 2, ty * 2), (tx * 2 + 1, ty * 2), (tx * 2, ty * 2 + 1), (tx * 2 + 1, ty * 2 + 1)];
-
-    let mut canvas = RgbaImage::new(TILE_SIZE_PX * 2, TILE_SIZE_PX * 2);
-    let mut has_any = false;
-
-    for (i, (cx, cy)) in child_coords.iter().enumerate() {
-        let x_name = encode_coord(*cx);
-        let y_name = encode_coord(*cy);
-        let child_path =
-            tiles_root.join(child_z.to_string()).join(&x_name).join(format!("{}.png", y_name));
-        if !child_path.is_file() {
-            continue;
-        }
-
-        let child_img = image::open(&child_path)
-            .with_context(|| format!("open {}", child_path.display()))?
-            .to_rgba8();
-        let ox = if i % 2 == 0 { 0 } else { TILE_SIZE_PX };
-        let oy = if i < 2 { 0 } else { TILE_SIZE_PX };
-        for y in 0..TILE_SIZE_PX {
-            for x in 0..TILE_SIZE_PX {
-                canvas.put_pixel(ox + x, oy + y, *child_img.get_pixel(x, y));
-            }
-        }
-        has_any = true;
-    }
-
-    if !has_any {
-        return Ok(false);
-    }
-
-    let out = image::imageops::resize(&canvas, TILE_SIZE_PX, TILE_SIZE_PX, FilterType::CatmullRom);
-
-    let out_dir = tiles_root.join(z.to_string()).join(encode_coord(tx));
-    fs::create_dir_all(&out_dir).with_context(|| format!("mkdir {}", out_dir.display()))?;
-    let path = out_dir.join(format!("{}.png", encode_coord(ty)));
-    DynamicImage::ImageRgba8(out)
-        .save(&path)
-        .with_context(|| format!("save png {}", path.display()))?;
-    Ok(true)
-}
 

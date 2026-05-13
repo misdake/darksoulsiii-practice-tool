@@ -6,20 +6,20 @@ use std::time::Instant;
 use std::time::UNIX_EPOCH;
 
 use ds3_depthbuffer::{
-    dot3, normalize3, read_depth_exr_first_channel, unproject_center_to_world, CameraProjection,
-    ImageSize,
+    read_depth_exr_first_channel, unproject_center_to_world, CameraProjection, ImageSize,
 };
 use hudhook::{eject, ImguiRenderLoop, RenderContext};
 use imgui::{Condition, Context, Key, StyleVar, WindowFlags};
 use libds3::pointers::PointerChains;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE,
-    MapVirtualKeyW, VIRTUAL_KEY, VK_F10, MAPVK_VK_TO_VSC,
+    MapVirtualKeyW, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+    KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC, VIRTUAL_KEY, VK_F10,
 };
 
 use crate::camera_info::CameraInfo;
 use crate::capture_files::{self, CaptureContext};
+use crate::coord_space::{convert_z, parse_coord_space, CoordSpace};
 use crate::util;
 
 pub(crate) static BLOCK_XINPUT: AtomicBool = AtomicBool::new(false);
@@ -29,16 +29,80 @@ const LOOP_SAMPLE_EPS: f32 = 1.0e-3;
 const RESHADE_HOTKEY_HOLD_MS: u64 = 110;
 const DEFAULT_SUBDIR_PRESETS: &str = include_str!("../data/probe_subfolder_presets.txt");
 
-#[derive(Serialize)]
-struct WalkableLoopsFile {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShotRunnerState {
+    Idle,
+    WaitLoad,
+    WaitConfirm,
+    WaitShot,
+}
+
+#[derive(Serialize, Deserialize)]
+struct TrajectoryFile {
+    coord_space: String,
     version: u32,
     close_distance: f32,
     loops: Vec<Vec<[f32; 3]>>,
+    polylines: Vec<Vec<[f32; 3]>>,
 }
 
-#[derive(serde::Deserialize)]
-struct WalkableLoopsFileIn {
-    loops: Vec<Vec<[f32; 3]>>,
+#[derive(Serialize, Deserialize, Clone)]
+struct ShotConfig {
+    #[serde(alias = "screen_width")]
+    render_width: u32,
+    #[serde(alias = "screen_height")]
+    render_height: u32,
+    #[serde(default = "default_shot_fov")]
+    fov_y_rad: f32,
+    base_ratio_px_per_wu: f32,
+    density_multiplier: f32,
+    overlap_ratio: f32,
+    polyline_buffer_world: f32,
+    y_neighbor_k: usize,
+    y_lift: f32,
+    wait_load_ms: u64,
+    wait_shot_ms: u64,
+}
+
+fn default_shot_fov() -> f32 {
+    0.9
+}
+
+impl Default for ShotConfig {
+    fn default() -> Self {
+        Self {
+            render_width: 2560,
+            render_height: 1440,
+            fov_y_rad: default_shot_fov(),
+            base_ratio_px_per_wu: 32.0,
+            density_multiplier: 2.0,
+            overlap_ratio: 0.5,
+            polyline_buffer_world: 2.0,
+            y_neighbor_k: 5,
+            y_lift: 2.0,
+            wait_load_ms: 500,
+            wait_shot_ms: 1000,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct ShotPointsFile {
+    coord_space: String,
+    points: Vec<ShotPoint>,
+    #[serde(default)]
+    wait_load_ms: Option<u64>,
+    #[serde(default)]
+    wait_shot_ms: Option<u64>,
+    #[serde(default)]
+    fov_y_rad: Option<f32>,
+}
+
+#[derive(Deserialize)]
+struct ShotPoint {
+    x: f32,
+    y: f32,
+    z: f32,
 }
 
 pub(crate) struct Probe {
@@ -51,12 +115,21 @@ pub(crate) struct Probe {
     capture_status: String,
     show_ui: bool,
     show_inject_hint: bool,
-    auto_near_far_offset: f32,
-    auto_near_far_range: f32,
     reshade_hotkey_up_due_at: Option<Instant>,
     loop_recording: bool,
-    current_loop: Vec<[f32; 3]>,
+    current_path: Vec<[f32; 3]>,
     closed_loops: Vec<Vec<[f32; 3]>>,
+    polylines: Vec<Vec<[f32; 3]>>,
+    shot_config: ShotConfig,
+    show_shot_config_window: bool,
+    show_trajectory_window: bool,
+    shot_points: Vec<[f32; 3]>,
+    shot_trajectory_points: Vec<[f32; 3]>,
+    shot_idx: usize,
+    shot_running: bool,
+    shot_state: ShotRunnerState,
+    shot_state_due: Option<Instant>,
+    shot_advance_after_capture: bool,
 }
 
 impl Probe {
@@ -82,13 +155,30 @@ impl Probe {
             capture_status: String::new(),
             show_ui: false,
             show_inject_hint: true,
-            auto_near_far_offset: 0.0,
-            auto_near_far_range: 3.0,
             reshade_hotkey_up_due_at: None,
             loop_recording: false,
-            current_loop: Vec::new(),
+            current_path: Vec::new(),
             closed_loops: Vec::new(),
+            polylines: Vec::new(),
+            shot_config: ShotConfig::default(),
+            show_shot_config_window: false,
+            show_trajectory_window: false,
+            shot_points: Vec::new(),
+            shot_trajectory_points: Vec::new(),
+            shot_idx: 0,
+            shot_running: false,
+            shot_state: ShotRunnerState::Idle,
+            shot_state_due: None,
+            shot_advance_after_capture: true,
         }
+    }
+
+    fn output_dir(&self) -> Option<PathBuf> {
+        let subdir = self.capture_subdir.trim();
+        if subdir.is_empty() {
+            return None;
+        }
+        Some(self.capture_root.join(subdir))
     }
 
     fn set_ui_visibility(&mut self, show: bool) {
@@ -96,10 +186,25 @@ impl Probe {
         self.show_ui = show;
     }
 
+    fn infer_render_size_from_latest_capture(&self) -> Option<(usize, usize)> {
+        let exe_path = self.exe_path.as_deref()?;
+        let game_dir = PathBuf::from(exe_path).parent()?.to_path_buf();
+        let (_, depth_path) = find_latest_capture_pair(&game_dir)?;
+        let (_, w, h) = read_depth_exr_first_channel(&depth_path).ok()?;
+        Some((w, h))
+    }
+
+    fn refresh_shot_config_fov_from_memory(&mut self) {
+        if let Some(state) = self.camera_info.camera_render_state() {
+            self.shot_config.fov_y_rad = state.fov;
+        }
+    }
+
     fn reset_free_camera(&self) {
-        self.camera_info.set_camera_position_from_player_offset([0.0, 10.0, 0.0]);
-        // Top-down view: look toward Y-, with up set to Z- for stable roll.
+        self.camera_info
+            .set_camera_position_from_player_offset([0.0, 20.0, 0.0]);
         self.camera_info.set_camera_up_dir([0.0, 0.0, -1.0], [0.0, -1.0, 0.0]);
+        let _ = self.camera_info.set_near_far(10.0, 100.0);
     }
 
     fn process_capture_files(&mut self) {
@@ -107,17 +212,14 @@ impl Probe {
             self.capture_status = "Capture failed: EXE path unavailable.".to_string();
             return;
         };
-
+        let Some(output_dir) = self.output_dir() else {
+            self.capture_status = "Capture failed: subfolder name is empty.".to_string();
+            return;
+        };
         let game_dir = PathBuf::from(exe_path)
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| PathBuf::from("."));
-        let subdir = self.capture_subdir.trim();
-        if subdir.is_empty() {
-            self.capture_status = "Capture failed: subfolder name is empty.".to_string();
-            return;
-        }
-        let output_dir = self.capture_root.join(subdir);
 
         let ctx = CaptureContext {
             player_position: self.camera_info.player_position(),
@@ -134,10 +236,10 @@ impl Probe {
     fn toggle_loop_recording(&mut self) {
         self.loop_recording = !self.loop_recording;
         if self.loop_recording {
-            self.current_loop.clear();
-            self.capture_status = "Loop recording started (F1).".to_string();
+            self.current_path.clear();
+            self.capture_status = "Trajectory recording started (F1).".to_string();
         } else {
-            self.capture_status = "Loop recording stopped (F1).".to_string();
+            self.capture_status = "Trajectory recording stopped (F1).".to_string();
         }
     }
 
@@ -148,7 +250,7 @@ impl Probe {
         let Some(p) = self.camera_info.player_position() else {
             return;
         };
-        if let Some(last) = self.current_loop.last().copied() {
+        if let Some(last) = self.current_path.last().copied() {
             let dx = p[0] - last[0];
             let dy = p[1] - last[1];
             let dz = p[2] - last[2];
@@ -156,42 +258,25 @@ impl Probe {
                 return;
             }
         }
-        self.current_loop.push(p);
-
-        if self.current_loop.len() >= 3 {
-            let first = self.current_loop[0];
-            let last = *self.current_loop.last().unwrap_or(&first);
-            let dx = last[0] - first[0];
-            let dz = last[2] - first[2];
-            let d = (dx * dx + dz * dz).sqrt();
-            if d <= LOOP_CLOSE_DISTANCE {
-                self.capture_status = format!(
-                    "Loop can close now (dist {:.2} <= {:.2}). Use 'Close Loop'.",
-                    d, LOOP_CLOSE_DISTANCE
-                );
-            }
-        }
+        self.current_path.push(p);
     }
 
-    fn try_close_current_loop(&mut self) {
-        if self.current_loop.len() < 3 {
+    fn close_current_loop(&mut self) {
+        if self.current_path.len() < 3 {
             self.capture_status = "Close failed: need at least 3 points.".to_string();
             return;
         }
-        let first = self.current_loop[0];
-        let last = *self.current_loop.last().unwrap_or(&first);
+        let first = self.current_path[0];
+        let last = *self.current_path.last().unwrap_or(&first);
         let dx = last[0] - first[0];
         let dz = last[2] - first[2];
         let d = (dx * dx + dz * dz).sqrt();
         if d > LOOP_CLOSE_DISTANCE {
-            self.capture_status = format!(
-                "Close failed: start/end too far ({:.2} > {:.2}), keep recording.",
-                d, LOOP_CLOSE_DISTANCE
-            );
+            self.capture_status =
+                format!("Close failed: start/end too far ({:.2} > {:.2}).", d, LOOP_CLOSE_DISTANCE);
             return;
         }
-
-        let mut loop_pts = self.current_loop.clone();
+        let mut loop_pts = self.current_path.clone();
         if let Some(end) = loop_pts.last().copied() {
             let ex = end[0] - first[0];
             let ez = end[2] - first[2];
@@ -200,55 +285,298 @@ impl Probe {
             }
         }
         self.closed_loops.push(loop_pts);
-        self.current_loop.clear();
+        self.current_path.clear();
         self.loop_recording = false;
-        self.capture_status =
-            format!("Loop closed. total closed loops={}", self.closed_loops.len());
+        self.capture_status = format!("Loop closed. total={}", self.closed_loops.len());
     }
 
-    fn discard_current_loop(&mut self) {
-        self.current_loop.clear();
-        self.loop_recording = false;
-        self.capture_status = "Current loop discarded.".to_string();
-    }
-
-    fn export_walkable_loops(&mut self) {
-        let subdir = self.capture_subdir.trim();
-        if subdir.is_empty() {
-            self.capture_status = "Export failed: subfolder name is empty.".to_string();
+    fn append_current_polyline(&mut self) {
+        if self.current_path.len() < 2 {
+            self.capture_status = "Polyline needs at least 2 points.".to_string();
             return;
         }
-        let output_dir = self.capture_root.join(subdir);
+        self.polylines.push(self.current_path.clone());
+        self.current_path.clear();
+        self.loop_recording = false;
+        self.capture_status = format!("Polyline added. total={}", self.polylines.len());
+    }
+
+    fn discard_current_path(&mut self) {
+        self.current_path.clear();
+        self.loop_recording = false;
+        self.capture_status = "Current path discarded.".to_string();
+    }
+
+    fn export_trajectory(&mut self) {
+        let Some(output_dir) = self.output_dir() else {
+            self.capture_status = "Export failed: subfolder name is empty.".to_string();
+            return;
+        };
         if let Err(e) = fs::create_dir_all(&output_dir) {
             self.capture_status = format!("Export failed: create dir: {e}");
             return;
         }
-
-        let path = output_dir.join("walkable_loops.json");
-        let mut merged = read_existing_loops(&path).unwrap_or_default();
-        merged.extend(self.closed_loops.iter().cloned());
-        dedup_loops(&mut merged);
-
-        let payload =
-            WalkableLoopsFile { version: 1, close_distance: LOOP_CLOSE_DISTANCE, loops: merged };
+        let path = output_dir.join("trajectory.json");
+        let mut merged_loops = self.closed_loops.clone();
+        let mut merged_polylines = self.polylines.clone();
+        if path.is_file() {
+            if let Ok(bytes) = fs::read(&path) {
+                if let Ok(existing) = serde_json::from_slice::<TrajectoryFile>(&bytes) {
+                    merged_loops.extend(existing.loops);
+                    merged_polylines.extend(existing.polylines);
+                }
+            }
+        }
+        dedup_paths(&mut merged_loops);
+        dedup_paths(&mut merged_polylines);
+        let payload = TrajectoryFile {
+            coord_space: CoordSpace::Game.as_str().to_string(),
+            version: 1,
+            close_distance: LOOP_CLOSE_DISTANCE,
+            loops: merged_loops,
+            polylines: merged_polylines,
+        };
         match serde_json::to_vec_pretty(&payload)
             .map_err(|e| e.to_string())
             .and_then(|v| fs::write(&path, v).map_err(|e| e.to_string()))
         {
             Ok(_) => {
                 self.capture_status = format!(
-                    "Exported walkable loops (merged): {} ({} loop(s))",
+                    "Exported trajectory: {} (loops={}, polylines={})",
                     path.display(),
-                    payload.loops.len()
+                    payload.loops.len(),
+                    payload.polylines.len()
                 );
             },
             Err(e) => self.capture_status = format!("Export failed: {e}"),
         }
     }
 
-    fn clear_all_closed_loops(&mut self) {
+    fn clear_all_trajectories(&mut self) {
         self.closed_loops.clear();
-        self.capture_status = "All closed loops cleared.".to_string();
+        self.polylines.clear();
+        self.capture_status = "All trajectories cleared.".to_string();
+    }
+
+    fn save_shot_config(&mut self) {
+        let Some(output_dir) = self.output_dir() else {
+            self.capture_status = "Save config failed: subfolder name is empty.".to_string();
+            return;
+        };
+        if let Err(e) = fs::create_dir_all(&output_dir) {
+            self.capture_status = format!("Save config failed: {e}");
+            return;
+        }
+        self.refresh_shot_config_fov_from_memory();
+        if let Some((w, h)) = self.infer_render_size_from_latest_capture() {
+            self.shot_config.render_width = w as u32;
+            self.shot_config.render_height = h as u32;
+        }
+
+        let path = output_dir.join("shot_config.json");
+        match serde_json::to_vec_pretty(&self.shot_config)
+            .map_err(|e| e.to_string())
+            .and_then(|v| fs::write(&path, v).map_err(|e| e.to_string()))
+        {
+            Ok(_) => self.capture_status = format!("Saved shot config: {}", path.display()),
+            Err(e) => self.capture_status = format!("Save config failed: {e}"),
+        }
+    }
+
+    fn load_shot_config(&mut self) {
+        let Some(output_dir) = self.output_dir() else {
+            self.capture_status = "Load config failed: subfolder name is empty.".to_string();
+            return;
+        };
+        let path = output_dir.join("shot_config.json");
+        let bytes = match fs::read(&path) {
+            Ok(v) => v,
+            Err(e) => {
+                self.capture_status = format!("Load config failed: {e}");
+                return;
+            },
+        };
+        match serde_json::from_slice::<ShotConfig>(&bytes) {
+            Ok(v) => {
+                self.shot_config = v;
+                self.capture_status = format!("Loaded shot config: {}", path.display());
+            },
+            Err(e) => self.capture_status = format!("Load config failed: {e}"),
+        }
+    }
+
+    fn load_shot_points(&mut self) {
+        let Some(output_dir) = self.output_dir() else {
+            self.capture_status = "Load shot points failed: subfolder name is empty.".to_string();
+            return;
+        };
+        let path = output_dir.join("shot_points.json");
+        let bytes = match fs::read(&path) {
+            Ok(v) => v,
+            Err(e) => {
+                self.capture_status = format!("Load shot points failed: {e}");
+                return;
+            },
+        };
+        let parsed = match serde_json::from_slice::<ShotPointsFile>(&bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                self.capture_status = format!("Load shot points failed: {e}");
+                return;
+            },
+        };
+        let src_space = parse_coord_space(&parsed.coord_space);
+        self.shot_points = parsed
+            .points
+            .iter()
+            .map(|p| [p.x, p.y, convert_z(p.z, src_space, CoordSpace::Game)])
+            .collect();
+        self.shot_trajectory_points = load_trajectory_points(&output_dir.join("trajectory.json"));
+        if let Some(ms) = parsed.wait_load_ms {
+            self.shot_config.wait_load_ms = ms;
+        }
+        if let Some(ms) = parsed.wait_shot_ms {
+            self.shot_config.wait_shot_ms = ms;
+        }
+        // Keep fov from live camera memory; do not override from files.
+        let _ = parsed.fov_y_rad;
+        self.refresh_shot_config_fov_from_memory();
+        self.shot_idx = self.find_nearest_shot_index().unwrap_or(0);
+        self.shot_state = ShotRunnerState::Idle;
+        self.shot_running = false;
+        self.capture_status =
+            format!("Loaded shot points: {} (count={})", path.display(), self.shot_points.len());
+    }
+
+    fn find_nearest_shot_index(&self) -> Option<usize> {
+        let player = self.camera_info.player_position()?;
+        let mut best: Option<(usize, f32)> = None;
+        for (i, p) in self.shot_points.iter().enumerate() {
+            let dx = p[0] - player[0];
+            let dy = p[1] - player[1];
+            let dz = p[2] - player[2];
+            let d2 = dx * dx + dy * dy + dz * dz;
+            match best {
+                Some((_, bd2)) if bd2 <= d2 => {},
+                _ => best = Some((i, d2)),
+            }
+        }
+        best.map(|v| v.0)
+    }
+
+    fn jump_to_shot_index(&mut self, index: usize) {
+        if self.shot_points.is_empty() {
+            self.capture_status = "No shot points loaded.".to_string();
+            return;
+        }
+        self.shot_idx = index.min(self.shot_points.len().saturating_sub(1));
+        self.shot_running = true;
+        self.teleport_to_current_shot();
+    }
+
+    fn step_shot_index(&mut self, delta: i32) {
+        if self.shot_points.is_empty() {
+            self.capture_status = "No shot points loaded.".to_string();
+            return;
+        }
+        let cur = self.shot_idx as i32;
+        let max = self.shot_points.len().saturating_sub(1) as i32;
+        let next = (cur + delta).clamp(0, max) as usize;
+        self.shot_idx = next;
+        self.shot_running = true;
+        self.teleport_to_current_shot();
+    }
+
+    fn teleport_to_current_shot(&mut self) {
+        if self.shot_idx >= self.shot_points.len() {
+            self.shot_running = false;
+            self.shot_state = ShotRunnerState::Idle;
+            self.capture_status = "Shot run done.".to_string();
+            return;
+        }
+        let p = self.shot_points[self.shot_idx];
+        let player_target = nearest_point(p, &self.shot_trajectory_points).unwrap_or(p);
+        self.camera_info.set_player_position(player_target);
+        self.camera_info
+            .set_camera_position([p[0], p[1] + 20.0, p[2]]);
+        self.camera_info
+            .set_camera_up_dir([0.0, 0.0, -1.0], [0.0, -1.0, 0.0]);
+        self.camera_info.set_fovy_rad(self.shot_config.fov_y_rad);
+        self.shot_state = ShotRunnerState::WaitLoad;
+        self.shot_state_due =
+            Some(Instant::now() + Duration::from_millis(self.shot_config.wait_load_ms));
+        self.capture_status = format!(
+            "Shot {}/{} player=[{:.2}, {:.2}, {:.2}] camera=[{:.2}, {:.2}, {:.2}]",
+            self.shot_idx + 1,
+            self.shot_points.len(),
+            player_target[0],
+            player_target[1],
+            player_target[2],
+            p[0],
+            p[1] + 20.0,
+            p[2]
+        );
+    }
+
+    fn service_shot_runner(&mut self, ui: &imgui::Ui) {
+        if !self.shot_running {
+            return;
+        }
+        match self.shot_state {
+            ShotRunnerState::Idle => self.teleport_to_current_shot(),
+            ShotRunnerState::WaitLoad => {
+                if let Some(due) = self.shot_state_due {
+                    if Instant::now() >= due {
+                        self.shot_state = ShotRunnerState::WaitConfirm;
+                        self.shot_state_due = None;
+                        self.capture_status = format!(
+                            "Shot {}/{} ready. F2=capture+next, F3=capture+stay.",
+                            self.shot_idx + 1,
+                            self.shot_points.len()
+                        );
+                    }
+                }
+            },
+            ShotRunnerState::WaitConfirm => {
+                if ui.is_key_pressed(Key::F2) {
+                    self.shot_advance_after_capture = true;
+                    self.trigger_reshade_screenshot();
+                    self.shot_state = ShotRunnerState::WaitShot;
+                    self.shot_state_due =
+                        Some(Instant::now() + Duration::from_millis(self.shot_config.wait_shot_ms));
+                } else if ui.is_key_pressed(Key::F3) {
+                    self.shot_advance_after_capture = false;
+                    self.trigger_reshade_screenshot();
+                    self.shot_state = ShotRunnerState::WaitShot;
+                    self.shot_state_due =
+                        Some(Instant::now() + Duration::from_millis(self.shot_config.wait_shot_ms));
+                }
+            },
+            ShotRunnerState::WaitShot => {
+                if let Some(due) = self.shot_state_due {
+                    if Instant::now() >= due {
+                        self.process_capture_files();
+                        self.shot_state_due = None;
+                        if self.shot_advance_after_capture {
+                            self.shot_state = ShotRunnerState::Idle;
+                            if self.shot_idx + 1 < self.shot_points.len() {
+                                self.step_shot_index(1);
+                            } else {
+                                self.shot_running = false;
+                                self.capture_status = "Shot run completed.".to_string();
+                            }
+                        } else {
+                            self.shot_state = ShotRunnerState::WaitConfirm;
+                            self.capture_status = format!(
+                                "Shot {}/{} captured. Press F2 next or F3 stay.",
+                                self.shot_idx + 1,
+                                self.shot_points.len()
+                            );
+                        }
+                    }
+                }
+            },
+        }
     }
 
     fn trigger_reshade_screenshot(&mut self) {
@@ -263,11 +591,9 @@ impl Probe {
         let Some(up_due_at) = self.reshade_hotkey_up_due_at else {
             return;
         };
-
         if Instant::now() < up_due_at {
             return;
         }
-
         let (sent_vk_up, sent_scan_up, scan) = send_reshade_f10(true);
         self.capture_status =
             format!("ReShade F10 up: vk={sent_vk_up} scan={sent_scan_up} sc=0x{scan:X}");
@@ -284,40 +610,6 @@ impl Probe {
             let near = state.near + near_delta;
             let far = state.far + far_delta;
             let _ = self.camera_info.set_near_far(near, far);
-        }
-    }
-
-    fn set_near_far_around_player_depth(&mut self) {
-        let Some(player) = self.camera_info.player_position() else {
-            self.capture_status = "Auto near/far failed: player position unavailable.".to_string();
-            return;
-        };
-        let Some(camera) = self.camera_info.camera_position() else {
-            self.capture_status = "Auto near/far failed: camera position unavailable.".to_string();
-            return;
-        };
-        let Some(state) = self.camera_info.camera_render_state() else {
-            self.capture_status =
-                "Auto near/far failed: camera render state unavailable.".to_string();
-            return;
-        };
-
-        let dir = normalize3(state.camera_dir);
-        let to_player = [player[0] - camera[0], player[1] - camera[1], player[2] - camera[2]];
-        let player_depth = dot3(to_player, dir);
-
-        let offset = self.auto_near_far_offset.clamp(-2.0, 2.0);
-        let range = self.auto_near_far_range.clamp(0.0, 10.0);
-        let center = player_depth + offset;
-        let near = center - range;
-        let far = center + range;
-
-        if self.camera_info.set_near_far(near, far) {
-            self.capture_status.clear();
-        } else {
-            self.capture_status = format!(
-                "Auto near/far failed: near={near:.3}, far={far:.3} invalid (need 0.001 < near < far)."
-            );
         }
     }
 
@@ -385,13 +677,19 @@ impl ImguiRenderLoop for Probe {
     }
 
     fn render(&mut self, ui: &mut imgui::Ui) {
+        self.refresh_shot_config_fov_from_memory();
+
         if ui.is_key_pressed(Key::F9) {
             self.set_ui_visibility(!self.show_ui);
             self.show_inject_hint = false;
         }
 
         if ui.is_key_pressed(Key::F1) {
-            self.toggle_loop_recording();
+            if self.loop_recording {
+                self.close_current_loop();
+            } else {
+                self.toggle_loop_recording();
+            }
         }
 
         if ui.is_key_pressed(Key::F8) {
@@ -418,9 +716,6 @@ impl ImguiRenderLoop for Probe {
         if ui.is_key_pressed(Key::F12) {
             self.teleport_player_from_latest_depth_center();
         }
-        if ui.is_key_pressed(Key::F5) {
-            self.set_near_far_around_player_depth();
-        }
         if ui.is_key_pressed(Key::Minus) {
             self.nudge_near_far(-1.0, 0.0);
         }
@@ -445,27 +740,29 @@ impl ImguiRenderLoop for Probe {
                 });
         }
 
-        if !self.show_ui {
-            BLOCK_XINPUT.store(false, Ordering::SeqCst);
-            return;
-        }
         self.service_reshade_screenshot_trigger();
+        self.service_shot_runner(ui);
 
         let _style_tokens = [
             ui.push_style_var(StyleVar::WindowRounding(0.0)),
             ui.push_style_var(StyleVar::WindowBorderSize(0.0)),
         ];
 
-        ui.window("DS3 Map Data Collector")
-            .size([520.0, 330.0], Condition::FirstUseEver)
-            .position([20.0, 20.0], Condition::FirstUseEver)
-            .flags(WindowFlags::NO_COLLAPSE)
-            .build(|| {
+        if self.show_ui {
+            ui.window("DS3 Map Data Collector")
+                .size([560.0, 430.0], Condition::FirstUseEver)
+                .position([20.0, 20.0], Condition::FirstUseEver)
+                .flags(WindowFlags::NO_COLLAPSE)
+                .build(|| {
                 if ui.small_button("Eject") {
                     self.set_ui_visibility(false);
                     BLOCK_XINPUT.store(false, Ordering::SeqCst);
                     eject();
                 }
+                ui.same_line();
+                ui.checkbox("Shot Points Config", &mut self.show_shot_config_window);
+                ui.same_line();
+                ui.checkbox("Trajectory", &mut self.show_trajectory_window);
 
                 ui.separator();
                 ui.text_wrapped(format!("Capture Root: {}", self.capture_root.display()));
@@ -488,27 +785,35 @@ impl ImguiRenderLoop for Probe {
                 if !self.capture_status.is_empty() {
                     ui.text_wrapped(&self.capture_status);
                 }
-                ui.separator();
 
+                ui.separator();
                 ui.text(format!(
-                    "Walkable loop: {} (F1), current points={}, closed loops={}",
-                    if self.loop_recording { "Recording" } else { "Idle" },
-                    self.current_loop.len(),
-                    self.closed_loops.len()
+                    "Shot Runner: loaded={}, index={}/{}, running={} (F2 next / F3 stay)",
+                    self.shot_points.len(),
+                    self.shot_idx.saturating_add(1),
+                    self.shot_points.len(),
+                    self.shot_running
                 ));
-                if ui.button("Close Loop") {
-                    self.try_close_current_loop();
+                if ui.button("Load shot_points.json") {
+                    self.load_shot_points();
                 }
                 ui.same_line();
-                if ui.button("Discard Loop") {
-                    self.discard_current_loop();
-                }
-                if ui.button("Export Loops") {
-                    self.export_walkable_loops();
+                if ui.button("|<-") {
+                    self.jump_to_shot_index(0);
                 }
                 ui.same_line();
-                if ui.button("Clear Loops") {
-                    self.clear_all_closed_loops();
+                if ui.button("<-") {
+                    self.step_shot_index(-1);
+                }
+                ui.same_line();
+                ui.text(format!("{}/{}", self.shot_idx.saturating_add(1), self.shot_points.len()));
+                ui.same_line();
+                if ui.button("->") {
+                    self.step_shot_index(1);
+                }
+                ui.same_line();
+                if ui.button("->|") && !self.shot_points.is_empty() {
+                    self.jump_to_shot_index(self.shot_points.len() - 1);
                 }
 
                 ui.separator();
@@ -529,14 +834,16 @@ impl ImguiRenderLoop for Probe {
                 if ui.checkbox("AI Disable", &mut ai_disable) {
                     self.pointers.ai_disable.set(ai_disable);
                 }
+                ui.same_line();
 
                 let mut all_no_damage = self.pointers.all_no_damage.get().unwrap_or(false);
                 if ui.checkbox("All No Damage", &mut all_no_damage) {
                     self.pointers.all_no_damage.set(all_no_damage);
                 }
+                ui.same_line();
 
                 let mut render_chr = self.pointers.rend_chr.get().unwrap_or(false);
-                if ui.checkbox("Render Character", &mut render_chr) {
+                if ui.checkbox("Render Character (F6)", &mut render_chr) {
                     self.pointers.rend_chr.set(render_chr);
                 }
 
@@ -544,12 +851,10 @@ impl ImguiRenderLoop for Probe {
                     self.reset_free_camera();
                 }
                 ui.same_line();
-                if ui.button("Player Visible (F6)") {
-                    self.toggle_player_visibility_flag();
-                }
                 if ui.button("Teleport + Del Pair (F12)") {
                     self.teleport_player_from_latest_depth_center();
                 }
+                ui.same_line();
                 if ui.button("ReShade Shot (F10)") {
                     self.trigger_reshade_screenshot();
                 }
@@ -575,19 +880,102 @@ impl ImguiRenderLoop for Probe {
                         ui.text("Invalid range: require 0.001 < near < far < 100000.");
                     }
                     ui.text("Hotkeys: '-'/'=' nudge Near, '['/']' nudge Far");
-                    ui.text("F5: auto set Near/Far around player depth");
-                    ui.slider_config("Auto Offset", -2.0, 2.0)
-                        .build(&mut self.auto_near_far_offset);
-                    ui.slider_config("Auto Range", 0.0, 10.0).build(&mut self.auto_near_far_range);
                 }
 
                 match self.camera_info.player_position() {
-                    Some([x, y, z]) => {
-                        ui.text(format!("Player Position: {x:.3}, {y:.3}, {z:.3}"));
+                    Some([px, py, pz]) => {
+                        ui.text(format!("Player Position: {px:.3}, {py:.3}, {pz:.3}"));
+                        match self.camera_info.camera_position() {
+                            Some([cx, cy, cz]) => {
+                                ui.text(format!("Camera Position: {cx:.3}, {cy:.3}, {cz:.3}"));
+                                ui.text(format!("Camera-Player Height: {:.3}", cy - py));
+                            },
+                            None => {
+                                ui.text("Camera Position: N/A");
+                                ui.text("Camera-Player Height: N/A");
+                            },
+                        }
                     },
-                    None => ui.text("Player Position: N/A"),
+                    None => {
+                        ui.text("Player Position: N/A");
+                        match self.camera_info.camera_position() {
+                            Some([cx, cy, cz]) => {
+                                ui.text(format!("Camera Position: {cx:.3}, {cy:.3}, {cz:.3}"));
+                            },
+                            None => ui.text("Camera Position: N/A"),
+                        }
+                        ui.text("Camera-Player Height: N/A");
+                    },
                 }
             });
+        }
+
+        if self.show_ui && self.show_trajectory_window {
+            ui.window("Trajectory")
+                .size([420.0, 220.0], Condition::FirstUseEver)
+                .position([620.0, 400.0], Condition::FirstUseEver)
+                .flags(WindowFlags::NO_COLLAPSE)
+                .build(|| {
+                    ui.text(format!(
+                        "Trajectory: {} (F1), current={}, loops={}, polylines={}",
+                        if self.loop_recording { "Recording" } else { "Idle" },
+                        self.current_path.len(),
+                        self.closed_loops.len(),
+                        self.polylines.len()
+                    ));
+                    if ui.button("Close Loop") {
+                        self.close_current_loop();
+                    }
+                    ui.same_line();
+                    if ui.button("Add Polyline") {
+                        self.append_current_polyline();
+                    }
+                    if ui.button("Discard Path") {
+                        self.discard_current_path();
+                    }
+                    ui.same_line();
+                    if ui.button("Export trajectory.json") {
+                        self.export_trajectory();
+                    }
+                    ui.same_line();
+                    if ui.button("Clear Trajectory") {
+                        self.clear_all_trajectories();
+                    }
+                });
+        }
+
+        if self.show_ui && self.show_shot_config_window {
+            ui.window("Shot Points Config")
+                .size([420.0, 360.0], Condition::FirstUseEver)
+                .position([620.0, 20.0], Condition::FirstUseEver)
+                .flags(WindowFlags::NO_COLLAPSE)
+                .build(|| {
+                    ui.text(format!(
+                        "Auto Render Size: {} x {}",
+                        self.shot_config.render_width, self.shot_config.render_height
+                    ));
+                    ui.text(format!("Auto FovY(rad): {:.6}", self.shot_config.fov_y_rad));
+                    ui.input_float("Base Ratio px/wu", &mut self.shot_config.base_ratio_px_per_wu)
+                        .build();
+                    ui.input_float("Density Multiplier", &mut self.shot_config.density_multiplier)
+                        .build();
+                    ui.input_float("Overlap Ratio", &mut self.shot_config.overlap_ratio).build();
+                    ui.input_float("Polyline Buffer", &mut self.shot_config.polyline_buffer_world)
+                        .build();
+                    ui.input_scalar("Y Neighbor K", &mut self.shot_config.y_neighbor_k).build();
+                    ui.input_float("Y Lift", &mut self.shot_config.y_lift).build();
+                    ui.input_scalar("Wait Load ms", &mut self.shot_config.wait_load_ms).build();
+                    ui.input_scalar("Wait Shot ms", &mut self.shot_config.wait_shot_ms).build();
+
+                    if ui.button("Save Config") {
+                        self.save_shot_config();
+                    }
+                    ui.same_line();
+                    if ui.button("Load Config") {
+                        self.load_shot_config();
+                    }
+                });
+        }
 
         BLOCK_XINPUT
             .store(ui.io().want_capture_mouse || ui.io().want_capture_keyboard, Ordering::SeqCst);
@@ -598,11 +986,7 @@ fn send_reshade_f10(key_up: bool) -> (u32, u32, u16) {
     let vk = VIRTUAL_KEY(VK_F10.0);
     let scan = unsafe { MapVirtualKeyW(VK_F10.0 as u32, MAPVK_VK_TO_VSC) } as u16;
     let vk_flags = if key_up { KEYEVENTF_KEYUP } else { Default::default() };
-    let scan_flags = if key_up {
-        KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP
-    } else {
-        KEYEVENTF_SCANCODE
-    };
+    let scan_flags = if key_up { KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP } else { KEYEVENTF_SCANCODE };
 
     let vk_input = [INPUT {
         r#type: INPUT_KEYBOARD,
@@ -705,45 +1089,6 @@ fn sample_center_depth(depth: &[f32], w: usize, h: usize) -> Option<f32> {
     Some(vals[vals.len() / 2].clamp(0.0, 1.0))
 }
 
-fn read_existing_loops(path: &std::path::Path) -> Option<Vec<Vec<[f32; 3]>>> {
-    if !path.is_file() {
-        return None;
-    }
-    let bytes = fs::read(path).ok()?;
-    let parsed: WalkableLoopsFileIn = serde_json::from_slice(&bytes).ok()?;
-    Some(parsed.loops)
-}
-
-fn dedup_loops(loops: &mut Vec<Vec<[f32; 3]>>) {
-    let mut out: Vec<Vec<[f32; 3]>> = Vec::new();
-    for lp in loops.drain(..) {
-        if lp.len() < 3 {
-            continue;
-        }
-        let Some(first) = lp.first().copied() else {
-            continue;
-        };
-        let mut dup = false;
-        for ex in &out {
-            if ex.len() != lp.len() {
-                continue;
-            }
-            let ef = ex[0];
-            let dx = first[0] - ef[0];
-            let dy = first[1] - ef[1];
-            let dz = first[2] - ef[2];
-            if (dx * dx + dy * dy + dz * dz).sqrt() <= 0.05 {
-                dup = true;
-                break;
-            }
-        }
-        if !dup {
-            out.push(lp);
-        }
-    }
-    *loops = out;
-}
-
 fn parse_subdir_presets(raw: &str) -> Vec<String> {
     let mut items: Vec<String> = raw
         .lines()
@@ -757,4 +1102,69 @@ fn parse_subdir_presets(raw: &str) -> Vec<String> {
         items.insert(0, "default".to_string());
     }
     items
+}
+
+fn load_trajectory_points(path: &std::path::Path) -> Vec<[f32; 3]> {
+    if !path.is_file() {
+        return Vec::new();
+    }
+    let bytes = match fs::read(path) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let parsed: TrajectoryFile = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let mut pts = Vec::new();
+    let src_space = parse_coord_space(&parsed.coord_space);
+    for lp in parsed.loops {
+        pts.extend(lp);
+    }
+    for ln in parsed.polylines {
+        pts.extend(ln);
+    }
+    for p in &mut pts {
+        p[2] = convert_z(p[2], src_space, CoordSpace::Game);
+    }
+    pts
+}
+
+fn nearest_point(target: [f32; 3], candidates: &[[f32; 3]]) -> Option<[f32; 3]> {
+    let mut best: Option<([f32; 3], f32)> = None;
+    for &p in candidates {
+        let dx = p[0] - target[0];
+        let dy = p[1] - target[1];
+        let dz = p[2] - target[2];
+        let d2 = dx * dx + dy * dy + dz * dz;
+        match best {
+            Some((_, bd2)) if bd2 <= d2 => {},
+            _ => best = Some((p, d2)),
+        }
+    }
+    best.map(|v| v.0)
+}
+
+fn dedup_paths(paths: &mut Vec<Vec<[f32; 3]>>) {
+    let mut out: Vec<Vec<[f32; 3]>> = Vec::new();
+    for p in paths.drain(..) {
+        if p.is_empty() {
+            continue;
+        }
+        let first = p[0];
+        let dup = out.iter().any(|e| {
+            if e.len() != p.len() {
+                return false;
+            }
+            let ef = e[0];
+            let dx = first[0] - ef[0];
+            let dy = first[1] - ef[1];
+            let dz = first[2] - ef[2];
+            (dx * dx + dy * dy + dz * dz).sqrt() <= 0.05
+        });
+        if !dup {
+            out.push(p);
+        }
+    }
+    *paths = out;
 }

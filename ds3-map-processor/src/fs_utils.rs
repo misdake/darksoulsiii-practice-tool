@@ -6,14 +6,6 @@ use anyhow::{Context, Result};
 
 pub fn ensure_workdir_layout(work_dir: &Path) -> Result<()> {
     fs::create_dir_all(work_dir).with_context(|| format!("mkdir {}", work_dir.display()))?;
-    let gitignore_path = work_dir.join(".gitignore");
-    let content =
-        "# generated map workspace\n/tiles/\n/tile_pixel_index.json\n/alerts.csv\n*.tmp\n";
-    let existing = fs::read_to_string(&gitignore_path).unwrap_or_default();
-    if existing != content {
-        fs::write(&gitignore_path, content)
-            .with_context(|| format!("write {}", gitignore_path.display()))?;
-    }
     Ok(())
 }
 
