@@ -7,7 +7,6 @@ pub struct CameraInfo {
     camera_position_follow: PointerChain<[f32; 3]>,
     camera_position_global: PointerChain<[f32; 3]>,
     player_position: Option<[f32; 3]>,
-    camera_position: Option<[f32; 3]>,
     camera_follow_saved: [f32; 3],
     camera_global_saved: [f32; 3],
     in_game_saved: [bool; 5],
@@ -23,7 +22,6 @@ impl CameraInfo {
             camera_position_follow: pointers.camera.position_follow.clone(),
             camera_position_global: pointers.camera.position_global.clone(),
             player_position: None,
-            camera_position: None,
             camera_follow_saved: [0., 0., 0.],
             camera_global_saved: [0., 0., 0.],
             in_game_saved: [false; 5],
@@ -34,10 +32,6 @@ impl CameraInfo {
 
     pub fn player_position(&self) -> Option<[f32; 3]> {
         self.player_position
-    }
-
-    pub fn camera_position(&self) -> Option<[f32; 3]> {
-        self.camera_position
     }
 
     /// returns (visible, dir)
@@ -54,7 +48,6 @@ impl CameraInfo {
             self.camera_angle_follow.read(),
         ) {
             self.player_position = Some(player_position);
-            self.camera_position = Some(camera_global);
 
             let rot_y = if rot_y < 0. { rot_y + std::f32::consts::TAU } else { rot_y };
 
@@ -81,7 +74,6 @@ impl CameraInfo {
         } else {
             // bad memory => hide compass
             self.player_position = None;
-            self.camera_position = None;
             self.camera_follow_saved = [0., 0., 0.];
             self.camera_global_saved = [0., 0., 0.];
             self.in_game_saved = [false; 5];

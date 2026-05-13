@@ -67,10 +67,10 @@ impl Texture {
         list.add_image_quad(self.image_id.unwrap(), p1, p2, p3, p4).build();
     }
 
-    pub fn render_rotate(&self, ui: &imgui::Ui, center_position: [f32; 2], rotate: f32) {
+    pub fn render_rect(&self, ui: &imgui::Ui, rect: [f32; 4]) {
         let list = ui.get_foreground_draw_list();
-        let (p1, p2, p3, p4) = self.calc_quad(center_position, rotate);
-        list.add_image_quad(self.image_id.unwrap(), p1, p2, p3, p4).build();
+        list.add_image(self.image_id.unwrap(), [rect[0], rect[1]], [rect[2], rect[3]])
+            .build();
     }
 
     #[allow(unused)]

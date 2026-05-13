@@ -297,6 +297,7 @@ dependencies = [
  "libds3",
  "once_cell",
  "serde",
+ "serde_json",
  "toml 0.8.20",
  "tracing-subscriber",
  "windows",

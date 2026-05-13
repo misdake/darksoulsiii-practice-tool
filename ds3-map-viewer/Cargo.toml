@@ -16,6 +16,7 @@ name = "libds3_map_viewer"
 tracing-subscriber = "0.3.17"
 image = "0.24.9"
 toml = "0.8.20"
+serde_json = "1.0"
 
 libds3 = { path = "../lib/libds3" }
 

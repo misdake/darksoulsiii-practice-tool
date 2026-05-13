@@ -28,15 +28,25 @@ impl Viewer {
     }
 
     fn apply_map_config(map_config: MapConfig, map_viewer: &mut MapViewer) {
-        map_viewer.set_direction_offset_degrees(map_config.compass_direction_offset_degrees);
-        map_viewer.set_size_scale(map_config.compass_size_scale);
+        map_viewer.set_direction_offset_degrees(map_config.map_direction_offset_degrees);
+        map_viewer.set_size_scale(map_config.map_size_scale);
+        map_viewer.set_zoom_scale(map_config.map_zoom_scale);
+        map_viewer.set_mode(map_config.mode());
+        map_viewer.set_tiles_root(map_config.map_tiles_root);
     }
 
     fn save_map_config(&mut self) {
-        self.config_store.set_map(MapConfig {
-            compass_direction_offset_degrees: self.map_viewer.direction_offset_degrees(),
-            compass_size_scale: self.map_viewer.size_scale(),
-        });
+        let mut config = MapConfig {
+            map_direction_offset_degrees: self.map_viewer.direction_offset_degrees(),
+            map_size_scale: self.map_viewer.size_scale(),
+            map_zoom_scale: self.map_viewer.zoom_scale(),
+            map_mode: String::new(),
+            map_tiles_root: self.map_viewer.tiles_root(),
+            compass_direction_offset_degrees: None,
+            compass_size_scale: None,
+        };
+        config.set_mode(self.map_viewer.mode());
+        self.config_store.set_map(config);
         self.config_store.save();
     }
 
@@ -102,7 +112,7 @@ impl ImguiRenderLoop for Viewer {
             }
         }
 
-        let compass_top_offset = if self.show_panel { self.panel_occupied_height } else { 0.0 };
-        self.map_viewer.render(ui, compass_top_offset);
+        let map_top_offset = if self.show_panel { self.panel_occupied_height } else { 0.0 };
+        self.map_viewer.render(ui, map_top_offset);
     }
 }
