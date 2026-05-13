@@ -1,23 +1,20 @@
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
 use std::{collections::HashSet, fs};
 
 use anyhow::{Context, Result};
-use image::imageops::FilterType;
-use image::{DynamicImage, RgbaImage};
-use serde::Serialize;
-use crate::coord_space::CoordSpace;
 use crate::common::{
-    CloudPoint, LevelIndex, TileIndex, TileRenderResult,
+    CloudPoint, TileIndex, TileRenderResult,
     MAX_POINT_BYTES_IN_FLIGHT, SCALE_WORLD_UNITS_PER_PIXEL, TILE_SIZE_PX,
 };
 use crate::fs_utils::encode_coord;
+use crate::tile_pyramid::{add_tile_to_index, build_coarse_png_from_children};
 use crate::stage1_pointcloud::{
     iter_points_in_aabb_for_tile, parse_tile_key, read_tile_pixel_index,
 };
 use crate::task_budget::run_with_budget;
+use serde::Serialize;
 #[path = "stage2/cache.rs"]
 mod cache;
 #[path = "stage2/walkable.rs"]
@@ -74,22 +71,6 @@ struct FinestTileOutput {
     z_range: TileZRange,
 }
 
-#[derive(Serialize)]
-struct Stage2ShotPoint {
-    id: usize,
-    x: f32,
-    y: f32,
-    z: f32,
-}
-
-#[derive(Serialize)]
-struct Stage2ShotPointsFile {
-    coord_space: String,
-    version: u32,
-    source: String,
-    points: Vec<Stage2ShotPoint>,
-}
-
 pub fn render_tiles_to_pyramid(
     capture_dir: &Path,
     tile_pixel_index_path: &Path,
@@ -100,8 +81,6 @@ pub fn render_tiles_to_pyramid(
     reset_stage2_profile_counters();
     let mask = load_walkable_mask(capture_dir)?;
     write_merged_walkable_file(tiles_root, &mask)?;
-    let stage2_group_root = tiles_root.parent().unwrap_or(tiles_root);
-    write_shot_points_from_capture_tomls(capture_dir, stage2_group_root)?;
     let capture_cache = Arc::new(Mutex::new(new_capture_lru()));
 
     let mut alerts = String::from("z,tile_x,tile_y,hole_pixels_after_fill,coverage\n");
@@ -221,7 +200,8 @@ pub fn render_tiles_to_pyramid(
             {
                 let built_coords = Arc::clone(&built_coords);
                 move |(tx, ty), _| {
-                    if build_coarse_tile_from_children(&level_tiles_root, child_z, z, tx, ty)? {
+                    if build_coarse_png_from_children(&level_tiles_root, child_z, z, tx, ty, false)?
+                    {
                         built_coords.lock().expect("built_coords poisoned").push((tx, ty));
                     }
                     Ok(())
@@ -257,72 +237,6 @@ pub fn render_tiles_to_pyramid(
         capture_cache_peak_bytes: capture_peak,
     })
 }
-
-fn write_shot_points_from_capture_tomls(capture_dir: &Path, stage2_group_root: &Path) -> Result<()> {
-    let mut tomls = Vec::new();
-    for e in fs::read_dir(capture_dir).with_context(|| format!("read_dir {}", capture_dir.display()))? {
-        let e = e?;
-        let p = e.path();
-        if p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("toml") {
-            tomls.push(p);
-        }
-    }
-    tomls.sort_by(|a, b| {
-        let am = fs::metadata(a).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
-        let bm = fs::metadata(b).and_then(|m| m.modified()).unwrap_or(SystemTime::UNIX_EPOCH);
-        am.cmp(&bm)
-    });
-
-    let mut points = Vec::<Stage2ShotPoint>::new();
-    for p in tomls {
-        let content = match fs::read_to_string(&p) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let value: toml::Value = match toml::from_str(&content) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let Some(arr) = value.get("camera_position").and_then(|v| v.as_array()) else {
-            continue;
-        };
-        if arr.len() != 3 {
-            continue;
-        }
-        let Some(x) = arr[0].as_float() else { continue };
-        let Some(y) = arr[1].as_float() else { continue };
-        let Some(z) = arr[2].as_float() else { continue };
-        let p3 = [x as f32, y as f32, -(z as f32)];
-        let is_dup = points.last().map(|q| {
-            let dx = q.x - p3[0];
-            let dy = q.y - p3[1];
-            let dz = q.z - p3[2];
-            dx * dx + dy * dy + dz * dz < 1.0e-6
-        }).unwrap_or(false);
-        if !is_dup {
-            points.push(Stage2ShotPoint {
-                id: points.len(),
-                x: p3[0],
-                y: p3[1],
-                z: p3[2],
-            });
-        }
-    }
-    if points.is_empty() {
-        return Ok(());
-    }
-    let out = Stage2ShotPointsFile {
-        coord_space: CoordSpace::Processor.as_str().to_string(),
-        version: 1,
-        source: "stage2_capture_camera_positions".to_string(),
-        points,
-    };
-    let dst = stage2_group_root.join("shot_points.json");
-    let bytes = serde_json::to_vec_pretty(&out).context("serialize stage2 shot points")?;
-    fs::write(&dst, bytes).with_context(|| format!("write {}", dst.display()))?;
-    Ok(())
-}
-
 
 fn render_one_finest_tile(
     refs: &[crate::common::TilePixelRef],
@@ -423,69 +337,4 @@ fn estimate_tile_refs_bytes(refs: &[crate::common::TilePixelRef]) -> usize {
     (px.saturating_mul(24)).max(1)
 }
 
-fn add_tile_to_index(index: &mut TileIndex, z: usize, tx: i32, ty: i32) {
-    let z_name = z.to_string();
-    let tile_world_size = TILE_SIZE_PX as f32 * SCALE_WORLD_UNITS_PER_PIXEL[z];
-    let level = index
-        .levels
-        .entry(z_name)
-        .or_insert_with(|| LevelIndex { tile_world_size, x: std::collections::BTreeMap::new() });
-    let x_name = encode_coord(tx);
-    let y_name = encode_coord(ty);
-    let ys = level.x.entry(x_name).or_default();
-    if !ys.iter().any(|v| v == &y_name) {
-        ys.push(y_name);
-        ys.sort();
-    }
-}
-
-fn build_coarse_tile_from_children(
-    tiles_root: &Path,
-    child_z: usize,
-    z: usize,
-    tx: i32,
-    ty: i32,
-) -> Result<bool> {
-    let child_coords =
-        [(tx * 2, ty * 2), (tx * 2 + 1, ty * 2), (tx * 2, ty * 2 + 1), (tx * 2 + 1, ty * 2 + 1)];
-
-    let mut canvas = RgbaImage::new(TILE_SIZE_PX * 2, TILE_SIZE_PX * 2);
-    let mut has_any = false;
-
-    for (i, (cx, cy)) in child_coords.iter().enumerate() {
-        let x_name = encode_coord(*cx);
-        let y_name = encode_coord(*cy);
-        let child_path =
-            tiles_root.join(child_z.to_string()).join(&x_name).join(format!("{}.png", y_name));
-        if !child_path.is_file() {
-            continue;
-        }
-
-        let child_img = image::open(&child_path)
-            .with_context(|| format!("open {}", child_path.display()))?
-            .to_rgba8();
-        let ox = if i % 2 == 0 { 0 } else { TILE_SIZE_PX };
-        let oy = if i < 2 { 0 } else { TILE_SIZE_PX };
-        for y in 0..TILE_SIZE_PX {
-            for x in 0..TILE_SIZE_PX {
-                canvas.put_pixel(ox + x, oy + y, *child_img.get_pixel(x, y));
-            }
-        }
-        has_any = true;
-    }
-
-    if !has_any {
-        return Ok(false);
-    }
-
-    let out = image::imageops::resize(&canvas, TILE_SIZE_PX, TILE_SIZE_PX, FilterType::CatmullRom);
-
-    let out_dir = tiles_root.join(z.to_string()).join(encode_coord(tx));
-    fs::create_dir_all(&out_dir).with_context(|| format!("mkdir {}", out_dir.display()))?;
-    let path = out_dir.join(format!("{}.png", encode_coord(ty)));
-    DynamicImage::ImageRgba8(out)
-        .save(&path)
-        .with_context(|| format!("save png {}", path.display()))?;
-    Ok(true)
-}
 

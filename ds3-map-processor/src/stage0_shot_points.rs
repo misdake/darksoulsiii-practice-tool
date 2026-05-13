@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::coord_space::{convert_z, parse_coord_space, CoordSpace};
+use crate::geom::{dist2_point_seg, point_in_polygon};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TrajectoryFile {
@@ -113,17 +114,19 @@ pub fn run_shot_points_stage(
                 continue;
             }
         }
-        let traj_path = subdir.join("trajectory.json");
-        let cfg_path = subdir.join("shot_config.json");
+        let traj_path = subdir.join("trajectory.toml");
+        let cfg_path = subdir.join("shot_config.toml");
         if !traj_path.is_file() || !cfg_path.is_file() {
             continue;
         }
-        let traj: TrajectoryFile = serde_json::from_slice(
-            &fs::read(&traj_path).with_context(|| format!("read {}", traj_path.display()))?,
+        let traj: TrajectoryFile = toml::from_str(
+            &fs::read_to_string(&traj_path)
+                .with_context(|| format!("read {}", traj_path.display()))?,
         )
         .with_context(|| format!("parse {}", traj_path.display()))?;
-        let cfg: ShotConfig = serde_json::from_slice(
-            &fs::read(&cfg_path).with_context(|| format!("read {}", cfg_path.display()))?,
+        let cfg: ShotConfig = toml::from_str(
+            &fs::read_to_string(&cfg_path)
+                .with_context(|| format!("read {}", cfg_path.display()))?,
         )
         .with_context(|| format!("parse {}", cfg_path.display()))?;
         let out = build_shot_points(&traj, &cfg)?;
@@ -134,7 +137,7 @@ pub fn run_shot_points_stage(
         written += 1;
     }
     if written == 0 {
-        anyhow::bail!("No trajectory.json + shot_config.json pairs found under capture/.");
+        anyhow::bail!("No trajectory.toml + shot_config.toml pairs found under capture/.");
     }
     Ok(written)
 }
@@ -318,41 +321,6 @@ fn point_in_region_conservative(
         }
     }
     false
-}
-
-fn point_in_polygon(x: f32, z: f32, poly: &[[f32; 2]]) -> bool {
-    let mut inside = false;
-    let mut j = poly.len() - 1;
-    for i in 0..poly.len() {
-        let xi = poly[i][0];
-        let zi = poly[i][1];
-        let xj = poly[j][0];
-        let zj = poly[j][1];
-        let intersect =
-            ((zi > z) != (zj > z)) && (x < (xj - xi) * (z - zi) / (zj - zi + 1.0e-12) + xi);
-        if intersect {
-            inside = !inside;
-        }
-        j = i;
-    }
-    inside
-}
-
-fn dist2_point_seg(px: f32, pz: f32, ax: f32, az: f32, bx: f32, bz: f32) -> f32 {
-    let abx = bx - ax;
-    let abz = bz - az;
-    let apx = px - ax;
-    let apz = pz - az;
-    let d = abx * abx + abz * abz;
-    if d <= 1.0e-12 {
-        return apx * apx + apz * apz;
-    }
-    let t = ((apx * abx + apz * abz) / d).clamp(0.0, 1.0);
-    let qx = ax + t * abx;
-    let qz = az + t * abz;
-    let dx = px - qx;
-    let dz = pz - qz;
-    dx * dx + dz * dz
 }
 
 fn estimate_y(x: f32, z: f32, pts: &[[f32; 3]], k: usize) -> f32 {

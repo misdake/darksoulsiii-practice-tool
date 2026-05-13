@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::coord_space::{convert_z, parse_coord_space, CoordSpace};
 use crate::fs_utils::find_all_toml_in_capture;
+use crate::geom::dist2_point_seg;
 
 pub(super) const MASK_EXPAND_WORLD: f32 = 2.0;
 const LOOP_MIN_EDGE_WORLD: f32 = 0.01;
@@ -45,13 +46,14 @@ pub(super) fn load_walkable_mask(capture_dir: &Path) -> Result<WalkableMask> {
         if !seen_dirs.insert(dir.to_path_buf()) {
             continue;
         }
-        let p = dir.join("trajectory.json");
+        let p = dir.join("trajectory.toml");
         if !p.is_file() {
             continue;
         }
-        let bytes = std::fs::read(&p).with_context(|| format!("read {}", p.display()))?;
-        let parsed: TrajectoryFile =
-            serde_json::from_slice(&bytes).with_context(|| format!("parse {}", p.display()))?;
+        let parsed: TrajectoryFile = toml::from_str(
+            &std::fs::read_to_string(&p).with_context(|| format!("read {}", p.display()))?,
+        )
+        .with_context(|| format!("parse {}", p.display()))?;
         let src_space = parse_coord_space(&parsed.coord_space);
         for lp in parsed.loops {
             if lp.len() < 3 {
@@ -115,23 +117,6 @@ fn nearest_y_on_xz(x: f32, z_proc: f32, src: &[[f32; 3]], src_space: CoordSpace)
         }
     }
     best.map(|v| v.0)
-}
-
-fn dist2_point_seg(px: f32, pz: f32, ax: f32, az: f32, bx: f32, bz: f32) -> f32 {
-    let abx = bx - ax;
-    let abz = bz - az;
-    let apx = px - ax;
-    let apz = pz - az;
-    let d = abx * abx + abz * abz;
-    if d <= 1.0e-12 {
-        return apx * apx + apz * apz;
-    }
-    let t = ((apx * abx + apz * abz) / d).clamp(0.0, 1.0);
-    let qx = ax + t * abx;
-    let qz = az + t * abz;
-    let dx = px - qx;
-    let dz = pz - qz;
-    dx * dx + dz * dz
 }
 
 fn simplify_loop_xz(points: &[[f32; 2]]) -> Vec<[f32; 2]> {

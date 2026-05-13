@@ -1,11 +1,14 @@
 mod common;
 mod coord_space;
 mod fs_utils;
+mod geom;
 mod stage0_shot_points;
 mod stage1_pointcloud;
 mod stage2_tile_pipeline;
+mod stage2_shot_points;
 mod stage3_merge;
 mod task_budget;
+mod tile_pyramid;
 
 use anyhow::{Context, Result};
 use std::fs;
@@ -26,6 +29,7 @@ use crate::stage1_pointcloud::{
     make_tile_pixel_ref, preprocess_capture_tile_spans, tile_key, write_tile_pixel_index,
 };
 use crate::stage2_tile_pipeline::render_tiles_to_pyramid;
+use crate::stage2_shot_points::write_shot_points_from_capture_tomls;
 use crate::stage3_merge::merge_stage2_outputs;
 use crate::task_budget::run_with_budget;
 
@@ -75,7 +79,10 @@ fn main() -> Result<()> {
 
         fs::create_dir_all(&stage2_root)
             .with_context(|| format!("mkdir {}", stage2_root.display()))?;
-        clear_directory(&stage2_root)?;
+        let clear_all_stage2 = selected_filter.is_none();
+        if clear_all_stage2 {
+            clear_directory(&stage2_root)?;
+        }
 
         for (group_name, selected) in picked {
             println!("=== Subfolder: {} ({} capture(s)) ===", group_name, selected.len());
@@ -83,6 +90,9 @@ fn main() -> Result<()> {
             let group_root = stage2_root.join(&group_name);
             fs::create_dir_all(&group_root)
                 .with_context(|| format!("mkdir {}", group_root.display()))?;
+            if !clear_all_stage2 {
+                clear_directory(&group_root)?;
+            }
             let tile_index_path = group_root.join("tile_pixel_index.json");
             let finest_z = SCALE_WORLD_UNITS_PER_PIXEL.len() - 1;
             let tile_world_size = TILE_SIZE_PX as f32 * SCALE_WORLD_UNITS_PER_PIXEL[finest_z];
@@ -140,6 +150,7 @@ fn main() -> Result<()> {
             let alerts_path = group_root.join("alerts.csv");
             let index_path = tiles_root.join("index.json");
             let group_capture_dir = capture_dir.join(&group_name);
+            write_shot_points_from_capture_tomls(&group_capture_dir, &group_root)?;
             let stage2_stats = render_tiles_to_pyramid(
                 &group_capture_dir,
                 &tile_index_path,
@@ -236,7 +247,7 @@ fn parse_args(args: Vec<String>) -> Result<(RunMode, Option<Vec<String>>)> {
                 "stage3" => RunMode::Stage3,
                 "stage123" => RunMode::Stage123,
                 other => anyhow::bail!(
-                    "Invalid --run value: {} (expected all|shotpoints|stage12|stage3)",
+                    "Invalid --run value: {} (expected shotpoints|stage12|stage3|stage123)",
                     other
                 ),
             };
