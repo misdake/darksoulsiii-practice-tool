@@ -1,6 +1,5 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClipMode {
-    CircleNorthUp,
     SquareRotateWithPlayer,
 }
 
@@ -71,16 +70,6 @@ impl MapViewParams {
             return Visibility::Hidden;
         }
 
-        if matches!(self.clip_mode, ClipMode::CircleNorthUp) {
-            let closest_x = self.center_screen_px[0].clamp(min_x, max_x);
-            let closest_y = self.center_screen_px[1].clamp(min_y, max_y);
-            let dx = closest_x - self.center_screen_px[0];
-            let dy = closest_y - self.center_screen_px[1];
-            if (dx * dx + dy * dy) > self.half_extent_px * self.half_extent_px {
-                return Visibility::Hidden;
-            }
-        }
-
         Visibility::Partial
     }
 
@@ -106,14 +95,8 @@ impl MapViewParams {
     pub fn screen_inside(&self, p: [f32; 2]) -> bool {
         let dx = p[0] - self.center_screen_px[0];
         let dy = p[1] - self.center_screen_px[1];
-        match self.clip_mode {
-            ClipMode::SquareRotateWithPlayer => {
-                dx.abs() <= self.half_extent_px && dy.abs() <= self.half_extent_px
-            },
-            ClipMode::CircleNorthUp => {
-                (dx * dx + dy * dy) <= self.half_extent_px * self.half_extent_px
-            },
-        }
+        let _ = self.clip_mode;
+        dx.abs() <= self.half_extent_px && dy.abs() <= self.half_extent_px
     }
 }
 
@@ -149,14 +132,14 @@ mod tests {
     }
 
     #[test]
-    fn circle_marker_visibility() {
+    fn marker_visibility() {
         let view = MapViewParams {
             center_world_xz: [0.0, 0.0],
             center_screen_px: [0.0, 0.0],
             world_units_per_px: 1.0,
             half_extent_px: 20.0,
             rotation_rad: 0.0,
-            clip_mode: ClipMode::CircleNorthUp,
+            clip_mode: ClipMode::SquareRotateWithPlayer,
         };
         assert!(view.marker_visibility([10.0, 0.0], [8.0, 8.0], [0.5, 0.5]).is_some());
         assert!(view.marker_visibility([30.0, 0.0], [8.0, 8.0], [0.5, 0.5]).is_none());

@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use hudhook::tracing::{debug, warn};
+use hudhook::tracing::{debug, info, warn};
 use hudhook::RenderContext;
 use image::EncodableLayout;
 use imgui::TextureId;
 use serde::Deserialize;
+use crate::util;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TileIndex {
@@ -63,6 +64,12 @@ impl TileManager {
     pub fn set_root(&mut self, root: impl Into<PathBuf>) {
         let root = root.into();
         if self.root != root {
+            info!("Tile root changed: {} -> {}", self.root.display(), root.display());
+            util::append_log_line(&format!(
+                "tile root changed: {} -> {}",
+                self.root.display(),
+                root.display()
+            ));
             self.root = root;
             self.index = None;
             self.index_load_attempted = false;
@@ -79,44 +86,82 @@ impl TileManager {
         if self.index.is_none() && !self.index_load_attempted {
             self.index_load_attempted = true;
             let path = self.root.join("index.json");
+            info!("Loading tile index: {}", path.display());
+            util::append_log_line(&format!("loading tile index: {}", path.display()));
             match std::fs::read_to_string(&path) {
                 Ok(s) => match serde_json::from_str::<TileIndex>(&s) {
-                    Ok(idx) => self.index = Some(idx),
-                    Err(e) => warn!("bad tile index {}: {}", path.display(), e),
+                    Ok(idx) => {
+                        info!(
+                            "Loaded tile index: levels={} tile_size_px={} root={}",
+                            idx.levels.len(),
+                            idx.tile_size_px,
+                            self.root.display()
+                        );
+                        util::append_log_line(&format!(
+                            "tile index loaded: levels={} tile_size_px={} root={}",
+                            idx.levels.len(),
+                            idx.tile_size_px,
+                            self.root.display()
+                        ));
+                        self.index = Some(idx);
+                    },
+                    Err(e) => {
+                        warn!("bad tile index {}: {}", path.display(), e);
+                        util::append_log_line(&format!("bad tile index {}: {}", path.display(), e));
+                    },
                 },
-                Err(e) => warn!("tile index missing {}: {}", path.display(), e),
+                Err(e) => {
+                    warn!("tile index missing {}: {}", path.display(), e);
+                    util::append_log_line(&format!("tile index missing {}: {}", path.display(), e));
+                },
             }
         }
         self.index.as_ref()
-    }
-
-    pub fn pick_level_auto(&self, target_world_units_per_px: f32) -> Option<i32> {
-        let idx = self.index.as_ref()?;
-        let mut best: Option<(i32, f32)> = None;
-        for z_name in idx.levels.keys() {
-            let Ok(z) = z_name.parse::<i32>() else { continue };
-            let Some(s) = idx.scales_world_units_per_pixel.get(z as usize).copied() else {
-                continue;
-            };
-            if s <= 0.0 || target_world_units_per_px <= 0.0 {
-                continue;
-            }
-            let err = (target_world_units_per_px / s).log2().abs();
-            match best {
-                None => best = Some((z, err)),
-                Some((_, best_err)) if err < best_err => best = Some((z, err)),
-                _ => {},
-            }
-        }
-        best.map(|x| x.0)
     }
 
     pub fn level_tile_world_size(&self, z: i32) -> Option<f32> {
         self.index.as_ref()?.levels.get(&z.to_string()).map(|x| x.tile_world_size)
     }
 
+    pub fn level_world_units_per_px(&self, z: i32) -> Option<f32> {
+        let idx = self.index.as_ref()?;
+        idx.scales_world_units_per_pixel.get(z as usize).copied()
+    }
+
+    pub fn available_levels(&self) -> Vec<(i32, f32)> {
+        let Some(idx) = self.index.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for z_name in idx.levels.keys() {
+            let Ok(z) = z_name.parse::<i32>() else { continue };
+            let Some(s) = idx.scales_world_units_per_pixel.get(z as usize).copied() else {
+                continue;
+            };
+            out.push((z, s));
+        }
+        out.sort_by_key(|(z, _)| *z);
+        out
+    }
+
     pub fn tile_size_px(&self) -> Option<u32> {
         self.index.as_ref().map(|x| x.tile_size_px)
+    }
+
+    pub fn has_index_loaded(&self) -> bool {
+        self.index.is_some()
+    }
+
+    pub fn index_attempted(&self) -> bool {
+        self.index_load_attempted
+    }
+
+    pub fn resident_tiles(&self) -> usize {
+        self.slots.len()
+    }
+
+    pub fn max_resident_tiles(&self) -> usize {
+        self.max_slots
     }
 
     pub fn has_tile(&self, key: TileKey) -> bool {

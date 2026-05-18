@@ -20,7 +20,9 @@ mod util;
 mod viewer;
 
 use std::ffi::c_void;
+use std::panic;
 use std::sync::atomic::Ordering;
+use std::sync::Once;
 use std::time::{Duration, Instant};
 use std::{env, mem, ptr, thread};
 
@@ -78,6 +80,7 @@ unsafe extern "system" fn DirectInput8Create(
 
 type FXInputGetState =
     unsafe extern "system" fn(dw_user_index: u32, xinput_state: *mut XINPUT_STATE) -> u32;
+static INIT_PANIC_HOOK: Once = Once::new();
 
 static XINPUTGETSTATE: Lazy<FXInputGetState> = Lazy::new(|| unsafe {
     let mut path = [0u16; MAX_PATH as usize];
@@ -154,6 +157,13 @@ fn apply_no_logo() {
 }
 
 fn start_plugin(hmodule: HINSTANCE) {
+    INIT_PANIC_HOOK.call_once(|| {
+        panic::set_hook(Box::new(|info| {
+            util::append_log_line(&format!("panic: {}", info));
+        }));
+        util::append_log_line("panic hook installed");
+    });
+    util::append_log_line("start_plugin: begin");
     let practice_tool = Viewer::new();
 
     if let Err(e) = Hudhook::builder()
@@ -163,7 +173,10 @@ fn start_plugin(hmodule: HINSTANCE) {
         .apply()
     {
         error!("Couldn't apply hooks: {e:?}");
+        util::append_log_line(&format!("start_plugin: apply failed: {e:?}"));
         eject();
+    } else {
+        util::append_log_line("start_plugin: hooks applied");
     }
 }
 
@@ -213,22 +226,30 @@ fn env_start_requested() -> bool {
 pub unsafe extern "system" fn DllMain(hmodule: HINSTANCE, reason: u32, _: *mut c_void) {
     if reason == DLL_PROCESS_ATTACH {
         trace!("DllMain()");
+        util::append_log_line("DllMain: DLL_PROCESS_ATTACH");
         Lazy::force(&DIRECTINPUT8CREATE);
         Lazy::force(&XINPUTGETSTATE);
+        util::append_log_line("DllMain: lazy hooks initialized");
 
         let hmodule_ptr = hmodule.0 as usize;
         thread::spawn(move || {
             let hmodule = HINSTANCE(hmodule_ptr as *mut c_void);
+            util::append_log_line("start thread: spawned");
             if util::get_dll_path()
                 .and_then(|path| {
                     path.file_name().map(|s| s.to_string_lossy().to_lowercase() == "dinput8.dll")
                 })
                 .unwrap_or(false)
             {
+                util::append_log_line("start thread: dinput8 mode");
                 if env_start_requested() || await_rshift() {
+                    util::append_log_line("start thread: start condition met");
                     start_plugin(hmodule)
+                } else {
+                    util::append_log_line("start thread: start condition not met");
                 }
             } else {
+                util::append_log_line("start thread: direct mode");
                 start_plugin(hmodule)
             }
         });

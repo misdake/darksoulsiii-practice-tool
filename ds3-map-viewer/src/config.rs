@@ -23,8 +23,10 @@ pub struct MapConfig {
     pub map_direction_offset_degrees: f32,
     pub map_size_scale: f32,
     pub map_zoom_scale: f32,
+    pub map_level: i32,
     pub map_mode: String,
     pub map_tiles_root: String,
+    pub map_z_flip: bool,
 
     #[serde(skip_serializing, default)]
     pub compass_direction_offset_degrees: Option<f32>,
@@ -38,8 +40,10 @@ impl Default for MapConfig {
             map_direction_offset_degrees: 0.0,
             map_size_scale: 1.0,
             map_zoom_scale: 1.0,
+            map_level: -1,
             map_mode: "square_rotate_with_player".to_string(),
             map_tiles_root: "map-work/tiles".to_string(),
+            map_z_flip: true,
             compass_direction_offset_degrees: None,
             compass_size_scale: None,
         }
@@ -67,7 +71,8 @@ impl MapConfig {
 
     pub fn mode(&self) -> MapMode {
         match self.map_mode.as_str() {
-            "circle_north_up" => MapMode::CircleNorthUp,
+            "circle_north_up" => MapMode::SquareNorthUp,
+            "square_north_up" => MapMode::SquareNorthUp,
             _ => MapMode::SquareRotateWithPlayer,
         }
     }
@@ -93,17 +98,27 @@ impl ConfigStore {
         let mut config = AppConfig::default();
 
         if let Some(path) = path.as_ref() {
+            util::append_log_line(&format!("config path: {}", path.display()));
             if path.exists() {
                 match std::fs::read_to_string(path) {
                     Ok(content) => match toml::from_str::<AppConfig>(&content) {
                         Ok(mut loaded) => {
                             loaded.map.sanitize();
                             config = loaded;
+                            util::append_log_line("config loaded");
                         },
-                        Err(e) => error!("Couldn't parse {}: {}", CONFIG_FILE_NAME, e),
+                        Err(e) => {
+                            error!("Couldn't parse {}: {}", CONFIG_FILE_NAME, e);
+                            util::append_log_line(&format!("config parse error: {}", e));
+                        },
                     },
-                    Err(e) => error!("Couldn't read {}: {}", CONFIG_FILE_NAME, e),
+                    Err(e) => {
+                        error!("Couldn't read {}: {}", CONFIG_FILE_NAME, e);
+                        util::append_log_line(&format!("config read error: {}", e));
+                    },
                 }
+            } else {
+                util::append_log_line("config missing, using defaults");
             }
         }
 

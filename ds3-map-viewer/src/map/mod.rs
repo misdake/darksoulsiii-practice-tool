@@ -7,6 +7,7 @@ mod tile;
 use std::path::PathBuf;
 
 use geometry::{ClipMode, MapViewParams, Visibility};
+use hudhook::tracing::{info, warn};
 use hudhook::RenderContext;
 use imgui::{Condition, Context, ImColor32, WindowFlags};
 use libds3::pointers::PointerChains;
@@ -14,6 +15,7 @@ use tile::{TileKey, TileManager};
 
 use crate::map::camera_info::CameraInfo;
 use crate::map::texture::Texture;
+use crate::util;
 
 const REFERENCE_HEIGHT: f32 = 1080.0;
 const RIGHT: f32 = 23.0;
@@ -21,8 +23,10 @@ const TOP: f32 = 30.0;
 const MAP_SIZE: f32 = 192.0;
 const MAP_HSIZE: f32 = MAP_SIZE * 0.5;
 const POINTER_SIZE: f32 = 48.0;
+const CAMERA_FOV_SIZE_SCALE: f32 = 0.92;
 const PLAYER_ARROW_PIVOT: [f32; 2] = overlay::PLAYER_ARROW_PIVOT;
 const PANEL_BUTTON_OFFSET_X: f32 = 0.0;
+const PANEL_BUTTON_OFFSET_Y: f32 = 8.0;
 const PANEL_WINDOW_OFFSET_X: f32 = -4.0;
 const PANEL_WINDOW_OFFSET_Y: f32 = 2.0;
 pub(crate) const DIRECTION_OFFSET_MIN: f32 = -180.0;
@@ -34,22 +38,20 @@ pub(crate) const ZOOM_SCALE_MAX: f32 = 8.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MapMode {
-    CircleNorthUp,
+    SquareNorthUp,
     #[default]
     SquareRotateWithPlayer,
 }
 
 impl MapMode {
     pub fn as_clip_mode(self) -> ClipMode {
-        match self {
-            MapMode::CircleNorthUp => ClipMode::CircleNorthUp,
-            MapMode::SquareRotateWithPlayer => ClipMode::SquareRotateWithPlayer,
-        }
+        let _ = self;
+        ClipMode::SquareRotateWithPlayer
     }
 
     pub fn as_str(self) -> &'static str {
         match self {
-            MapMode::CircleNorthUp => "circle_north_up",
+            MapMode::SquareNorthUp => "square_north_up",
             MapMode::SquareRotateWithPlayer => "square_rotate_with_player",
         }
     }
@@ -57,6 +59,7 @@ impl MapMode {
 
 pub struct MapViewer {
     pointer: Texture,
+    camera_fov: Texture,
     marker_default: Texture,
     camera_info: CameraInfo,
     tile_manager: TileManager,
@@ -64,9 +67,12 @@ pub struct MapViewer {
     direction_offset_degrees: f32,
     size_scale: f32,
     zoom_scale: f32,
+    level: i32,
     mode: MapMode,
+    z_flip: bool,
 
-    dir: f32,
+    player_dir: f32,
+    camera_dir: f32,
     visible: bool,
     player_pos: Option<[f32; 3]>,
     status_text: String,
@@ -80,47 +86,26 @@ pub struct ConfigPanelResult {
 }
 
 impl MapViewer {
-    fn apply_circle_mask(
-        draw_list: &imgui::DrawListMut<'_>,
-        center: [f32; 2],
-        radius: f32,
-        color: ImColor32,
-    ) {
-        let min_x = center[0] - radius;
-        let max_x = center[0] + radius;
-        let min_y = center[1] - radius;
-        let max_y = center[1] + radius;
-        let steps = radius.max(32.0) as i32;
-        for i in 0..steps {
-            let t0 = i as f32 / steps as f32;
-            let t1 = (i + 1) as f32 / steps as f32;
-            let x0 = min_x + (max_x - min_x) * t0;
-            let x1 = min_x + (max_x - min_x) * t1;
-            let xm = (x0 + x1) * 0.5;
-            let dx = (xm - center[0]).abs();
-            let y = (radius * radius - dx * dx).max(0.0).sqrt();
-            let top = center[1] - y;
-            let bottom = center[1] + y;
-            draw_list.add_rect([x0, min_y], [x1, top], color).filled(true).build();
-            draw_list.add_rect([x0, bottom], [x1, max_y], color).filled(true).build();
-        }
-    }
-
     pub fn new(pointers: &PointerChains) -> Self {
         let pointer = Texture::new(include_bytes!("icons/player_arrow.png"), None);
+        let camera_fov = Texture::new(include_bytes!("icons/camera_fov_512.png"), None);
         let marker_default = Texture::new(include_bytes!("icons/marker_default.png"), None);
         let camera_info = CameraInfo::new(pointers);
 
         MapViewer {
             pointer,
+            camera_fov,
             marker_default,
             camera_info,
             tile_manager: TileManager::new(PathBuf::from("map-work/tiles"), 384, 4),
             direction_offset_degrees: 0.0,
             size_scale: 1.0,
             zoom_scale: 1.0,
+            level: -1,
             mode: MapMode::default(),
-            dir: 0.0,
+            z_flip: true,
+            player_dir: 0.0,
+            camera_dir: 0.0,
             visible: false,
             player_pos: None,
             status_text: String::new(),
@@ -144,6 +129,14 @@ impl MapViewer {
         self.mode
     }
 
+    pub fn level(&self) -> i32 {
+        self.level
+    }
+
+    pub fn z_flip(&self) -> bool {
+        self.z_flip
+    }
+
     pub fn tiles_root(&self) -> String {
         self.tile_manager.root().to_string_lossy().into_owned()
     }
@@ -164,10 +157,40 @@ impl MapViewer {
         self.mode = value;
     }
 
+    pub fn set_level(&mut self, value: i32) {
+        self.level = value;
+    }
+
+    pub fn set_z_flip(&mut self, value: bool) {
+        self.z_flip = value;
+    }
+
     pub fn set_tiles_root(&mut self, value: String) {
         let v = value.trim();
         if !v.is_empty() {
-            self.tile_manager.set_root(PathBuf::from(v));
+            let root = PathBuf::from(v);
+            if self.tile_manager.root() == root {
+                return;
+            }
+            match root.canonicalize() {
+                Ok(abs) => {
+                    info!("Map tiles root set: {} (resolved: {})", root.display(), abs.display());
+                    util::append_log_line(&format!(
+                        "map tiles root set: {} (resolved: {})",
+                        root.display(),
+                        abs.display()
+                    ));
+                },
+                Err(e) => {
+                    warn!("Map tiles root set: {} (resolve failed: {})", root.display(), e);
+                    util::append_log_line(&format!(
+                        "map tiles root set: {} (resolve failed: {})",
+                        root.display(),
+                        e
+                    ));
+                },
+            }
+            self.tile_manager.set_root(root);
         }
     }
 
@@ -187,7 +210,10 @@ impl MapViewer {
         let map_x = size[0] - RIGHT * base_scale - map_hsize;
         let map_y = TOP * base_scale + map_hsize + map_top_offset;
 
-        Some([map_x + map_hsize + PANEL_BUTTON_OFFSET_X * base_scale, map_y - map_hsize])
+        Some([
+            map_x + map_hsize + PANEL_BUTTON_OFFSET_X * base_scale,
+            map_y + map_hsize + PANEL_BUTTON_OFFSET_Y * base_scale,
+        ])
     }
 
     pub fn render_panel_open_button(&self, ui: &imgui::Ui, pos: [f32; 2]) -> bool {
@@ -236,6 +262,7 @@ impl MapViewer {
         let mut direction_offset = self.direction_offset_degrees;
         let mut size_scale = self.size_scale;
         let mut zoom_scale = self.zoom_scale;
+        let mut level = self.level;
         let mut mode = self.mode;
         let mut tiles_root = self.tiles_root();
         let mut eject_requested = false;
@@ -289,15 +316,38 @@ impl MapViewer {
                     .display_format("%.2f")
                     .build(&mut zoom_scale);
 
-                let mut circle = matches!(mode, MapMode::CircleNorthUp);
-                if ui.checkbox("Circle North-up", &mut circle) {
-                    mode = if circle {
-                        MapMode::CircleNorthUp
-                    } else {
-                        MapMode::SquareRotateWithPlayer
-                    };
+                let levels = self.tile_manager.available_levels();
+                if !levels.is_empty() {
+                    let mut selected_idx = levels
+                        .iter()
+                        .position(|(z, _)| *z == level)
+                        .unwrap_or(levels.len().saturating_sub(1));
+                    let level_labels: Vec<String> = levels
+                        .iter()
+                        .map(|(z, wu)| format!("z={} ({:.5} wu/px)", z, wu))
+                        .collect();
+                    let level_refs: Vec<&str> = level_labels.iter().map(|s| s.as_str()).collect();
+                    ui.set_next_item_width(MAP_HSIZE * base_scale * 1.2);
+                    if ui.combo_simple_string("Scale Level", &mut selected_idx, &level_refs) {
+                        level = levels[selected_idx].0;
+                    }
                 }
 
+                let mut mode_idx = match mode {
+                    MapMode::SquareNorthUp => 0,
+                    MapMode::SquareRotateWithPlayer => 1,
+                };
+                let mode_items = [
+                    "Square North-up",
+                    "Square Rotate (Camera North)",
+                ];
+                ui.set_next_item_width(MAP_HSIZE * base_scale * 1.2);
+                if ui.combo_simple_string("Map Mode", &mut mode_idx, &mode_items) {
+                    mode = match mode_idx {
+                        0 => MapMode::SquareNorthUp,
+                        _ => MapMode::SquareRotateWithPlayer,
+                    };
+                }
                 ui.set_next_item_width(MAP_HSIZE * base_scale * 1.4);
                 ui.input_text("Tiles Root", &mut tiles_root).build();
 
@@ -306,6 +356,20 @@ impl MapViewer {
                     ui.text(format!("Visible: {}", self.visible));
                     ui.text(format!("Mode: {}", self.mode.as_str()));
                     ui.text(format!("Status: {}", self.status_text));
+                    ui.text(format!("Tiles Root: {}", self.tile_manager.root().display()));
+                    ui.text(format!(
+                        "Index Loaded: {} (attempted={})",
+                        self.tile_manager.has_index_loaded(),
+                        self.tile_manager.index_attempted()
+                    ));
+                    ui.text(format!(
+                        "Resident Tiles: {}/{}",
+                        self.tile_manager.resident_tiles(),
+                        self.tile_manager.max_resident_tiles()
+                    ));
+                    ui.text(format!("Wanted Next Frame: {}", self.wanted_next_frame.len()));
+                    ui.text(format!("PlayerDir(rad): {:.3}", self.player_dir));
+                    ui.text(format!("CameraDir(rad): {:.3}", self.camera_dir));
                     if let Some([x, y, z]) = self.player_pos {
                         ui.text(format!("Player Pos: {:7.1} {:7.1} {:7.1}", x, y, z));
                     } else {
@@ -320,6 +384,7 @@ impl MapViewer {
             self.direction_offset_degrees,
             self.size_scale,
             self.zoom_scale,
+            self.level,
             self.mode,
             self.tiles_root(),
         );
@@ -328,6 +393,7 @@ impl MapViewer {
             direction_offset.clamp(DIRECTION_OFFSET_MIN, DIRECTION_OFFSET_MAX);
         self.size_scale = size_scale.clamp(SIZE_SCALE_MIN, SIZE_SCALE_MAX);
         self.zoom_scale = zoom_scale.clamp(ZOOM_SCALE_MIN, ZOOM_SCALE_MAX);
+        self.level = level;
         self.mode = mode;
         self.set_tiles_root(tiles_root);
 
@@ -337,6 +403,7 @@ impl MapViewer {
                     self.direction_offset_degrees,
                     self.size_scale,
                     self.zoom_scale,
+                    self.level,
                     self.mode,
                     self.tiles_root(),
                 ),
@@ -351,13 +418,15 @@ impl MapViewer {
         render_context: &'a mut dyn RenderContext,
     ) {
         self.pointer.prepare(render_context);
+        self.camera_fov.prepare(render_context);
         self.marker_default.prepare(render_context);
         self.tile_manager.begin_frame();
         self.tile_manager.prepare_needed(render_context, &self.wanted_next_frame);
 
-        let (visible, dir) = self.camera_info.update();
+        let (visible, player_dir, camera_dir) = self.camera_info.update();
         self.visible = visible;
-        self.dir = dir;
+        self.player_dir = player_dir;
+        self.camera_dir = camera_dir;
         self.player_pos = self.camera_info.player_position();
 
         let _ = self.tile_manager.index();
@@ -373,23 +442,46 @@ impl MapViewer {
         let map_hsize = MAP_HSIZE * scale;
         let map_x = size[0] - RIGHT * base_scale - map_hsize;
         let map_y = TOP * base_scale + map_hsize + top_offset;
+        let content_hsize = map_hsize;
 
         let pointer_size = POINTER_SIZE * scale;
         self.pointer.resize(pointer_size, pointer_size);
+        self.camera_fov.resize(
+            MAP_SIZE * scale * CAMERA_FOV_SIZE_SCALE,
+            MAP_SIZE * scale * CAMERA_FOV_SIZE_SCALE,
+        );
+
+        let draw_list = ui.get_foreground_draw_list();
+        let clip_min = [map_x - map_hsize, map_y - map_hsize];
+        let clip_max = [map_x + map_hsize, map_y + map_hsize];
+        draw_list
+            .add_rect(clip_min, clip_max, ImColor32::from_rgba_f32s(0.0, 0.0, 0.0, 1.0))
+            .filled(true)
+            .build();
 
         if self.tile_manager.index().is_none() {
             self.status_text =
                 format!("index missing: {}", self.tile_manager.root().join("index.json").display());
+            self.wanted_next_frame.clear();
             return;
         }
         let Some(player_pos) = self.player_pos else {
             self.status_text = "player unavailable".to_string();
+            self.wanted_next_frame.clear();
             return;
         };
 
-        let target_wu_per_px = (MAP_SIZE / 512.0) * self.zoom_scale;
-        let Some(level) = self.tile_manager.pick_level_auto(target_wu_per_px) else {
+        let levels = self.tile_manager.available_levels();
+        if levels.is_empty() {
             self.status_text = "invalid index levels".to_string();
+            return;
+        }
+        if !levels.iter().any(|(z, _)| *z == self.level) {
+            self.level = levels.last().map(|(z, _)| *z).unwrap_or(-1);
+        }
+        let level = self.level;
+        let Some(target_wu_per_px) = self.tile_manager.level_world_units_per_px(level) else {
+            self.status_text = "missing level scale".to_string();
             return;
         };
         let Some(tile_world_size) = self.tile_manager.level_tile_world_size(level) else {
@@ -398,28 +490,27 @@ impl MapViewer {
         };
 
         let rot = match self.mode {
-            MapMode::CircleNorthUp => 0.0,
+            MapMode::SquareNorthUp => 0.0,
             MapMode::SquareRotateWithPlayer => {
-                -(self.dir + self.direction_offset_degrees.to_radians())
+                -(self.camera_dir + self.direction_offset_degrees.to_radians())
             },
         };
+        let player_z_for_map = if self.z_flip { -player_pos[2] } else { player_pos[2] };
+        let center_x = (player_pos[0] / target_wu_per_px).round() * target_wu_per_px;
+        let center_z = (player_z_for_map / target_wu_per_px).round() * target_wu_per_px;
         let view = MapViewParams {
-            center_world_xz: [player_pos[0], player_pos[2]],
+            center_world_xz: [center_x, center_z],
             center_screen_px: [map_x, map_y],
             world_units_per_px: target_wu_per_px,
-            half_extent_px: map_hsize,
+            half_extent_px: content_hsize,
             rotation_rad: rot,
             clip_mode: self.mode.as_clip_mode(),
         };
 
-        let draw_list = ui.get_foreground_draw_list();
-        let clip_min = [map_x - map_hsize, map_y - map_hsize];
-        let clip_max = [map_x + map_hsize, map_y + map_hsize];
-
-        let min_x = player_pos[0] - map_hsize * target_wu_per_px;
-        let max_x = player_pos[0] + map_hsize * target_wu_per_px;
-        let min_z = player_pos[2] - map_hsize * target_wu_per_px;
-        let max_z = player_pos[2] + map_hsize * target_wu_per_px;
+        let min_x = center_x - content_hsize * target_wu_per_px;
+        let max_x = center_x + content_hsize * target_wu_per_px;
+        let min_z = center_z - content_hsize * target_wu_per_px;
+        let max_z = center_z + content_hsize * target_wu_per_px;
         let tx0 = (min_x / tile_world_size).floor() as i32;
         let tx1 = (max_x / tile_world_size).ceil() as i32;
         let ty0 = (min_z / tile_world_size).floor() as i32;
@@ -433,10 +524,10 @@ impl MapViewer {
                     continue;
                 }
                 let world_aabb = [
-                    tx as f32 * tile_world_size,
-                    (tx + 1) as f32 * tile_world_size,
-                    ty as f32 * tile_world_size,
-                    (ty + 1) as f32 * tile_world_size,
+                    tx as f32 * tile_world_size - target_wu_per_px * 0.5,
+                    (tx + 1) as f32 * tile_world_size + target_wu_per_px * 0.5,
+                    ty as f32 * tile_world_size - target_wu_per_px * 0.5,
+                    (ty + 1) as f32 * tile_world_size + target_wu_per_px * 0.5,
                 ];
                 if !matches!(view.tile_visibility(world_aabb), Visibility::Hidden) {
                     wanted.push(key);
@@ -446,12 +537,13 @@ impl MapViewer {
         self.wanted_next_frame = wanted.clone();
 
         draw_list.with_clip_rect(clip_min, clip_max, || {
+            let tile_overlap_wu = target_wu_per_px * 0.5;
             for key in &wanted {
                 let Some(tex_id) = self.tile_manager.texture_for(*key) else { continue };
-                let x0 = key.tx as f32 * tile_world_size;
-                let x1 = (key.tx + 1) as f32 * tile_world_size;
-                let z0 = key.ty as f32 * tile_world_size;
-                let z1 = (key.ty + 1) as f32 * tile_world_size;
+                let x0 = key.tx as f32 * tile_world_size - tile_overlap_wu;
+                let x1 = (key.tx + 1) as f32 * tile_world_size + tile_overlap_wu;
+                let z0 = key.ty as f32 * tile_world_size - tile_overlap_wu;
+                let z1 = (key.ty + 1) as f32 * tile_world_size + tile_overlap_wu;
                 let p1 = view.world_to_screen([x0, z0]);
                 let p2 = view.world_to_screen([x1, z0]);
                 let p3 = view.world_to_screen([x1, z1]);
@@ -460,37 +552,37 @@ impl MapViewer {
             }
         });
 
-        if matches!(self.mode, MapMode::CircleNorthUp) {
-            Self::apply_circle_mask(
-                &draw_list,
-                [map_x, map_y],
-                map_hsize,
-                ImColor32::from_rgba_f32s(0.02, 0.02, 0.02, 1.0),
-            );
-            draw_list
-                .add_circle(
-                    [map_x, map_y],
-                    map_hsize,
-                    ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.9),
-                )
-                .thickness(2.0)
-                .build();
-        } else {
-            draw_list
-                .add_rect(clip_min, clip_max, ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.9))
-                .thickness(2.0)
-                .build();
-        }
+        draw_list
+            .add_rect(clip_min, clip_max, ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 0.9))
+            .thickness(2.0)
+            .build();
+
+        let camera_fov_rot = match self.mode {
+            MapMode::SquareNorthUp => {
+                self.camera_dir + self.direction_offset_degrees.to_radians()
+            },
+            MapMode::SquareRotateWithPlayer => {
+                self.direction_offset_degrees.to_radians()
+            },
+        };
+        self.camera_fov.render_rotate(&draw_list, [map_x, map_y], camera_fov_rot);
 
         // player_arrow.png is authored with center pivot.
         debug_assert_eq!(PLAYER_ARROW_PIVOT, [0.5, 0.5]);
-        self.pointer.render(ui, [map_x, map_y]);
+        let arrow_fix = std::f32::consts::PI;
+        let pointer_rot = match self.mode {
+            MapMode::SquareNorthUp => {
+                self.player_dir + self.direction_offset_degrees.to_radians() + arrow_fix
+            },
+            MapMode::SquareRotateWithPlayer => self.player_dir - self.camera_dir + arrow_fix,
+        };
+        self.pointer.render_rotate(&draw_list, [map_x, map_y], pointer_rot);
 
         for item in overlay::take_frame_items() {
             match item {
                 overlay::OverlayItem::Icon { world_xz, size_px, pivot, color: _ } => {
                     if let Some(v) = view.marker_visibility(world_xz, size_px, pivot) {
-                        self.marker_default.render_rect(ui, v.screen_rect);
+                        self.marker_default.render_rect(&draw_list, v.screen_rect);
                     }
                 },
                 overlay::OverlayItem::Text { world_xz, text, color, size_px, pivot } => {
@@ -516,7 +608,7 @@ impl MapViewer {
                         let cx = v.screen_anchor[0];
                         let top = v.screen_anchor[1] - total_h * 0.5;
                         self.marker_default.render_rect(
-                            ui,
+                            &draw_list,
                             [
                                 cx - icon_size_px[0] * 0.5,
                                 top,
@@ -535,7 +627,9 @@ impl MapViewer {
         }
 
         let tile_size_px = self.tile_manager.tile_size_px().unwrap_or(0);
-        self.status_text =
-            format!("level={} wanted_tiles={} tile_px={}", level, wanted.len(), tile_size_px);
+        self.status_text = format!(
+            "level={} wu_per_px={:.5} wanted_tiles={} tile_px={}",
+            level, target_wu_per_px, wanted.len(), tile_size_px
+        );
     }
 }
