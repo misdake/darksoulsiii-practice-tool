@@ -4,7 +4,6 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::coord_space::{convert_z, parse_coord_space, CoordSpace};
-use crate::fs_utils::find_all_toml_in_capture;
 use crate::geom::dist2_point_seg;
 
 pub(super) const MASK_EXPAND_WORLD: f32 = 2.0;
@@ -39,18 +38,17 @@ pub(super) fn load_walkable_mask(capture_dir: &Path) -> Result<WalkableMask> {
     let mut loops_simplified: Vec<Vec<[f32; 3]>> = Vec::new();
     let mut raw_points = 0usize;
     let mut simp_points = 0usize;
-    let tomls = find_all_toml_in_capture(capture_dir)?;
-    let mut seen_dirs = std::collections::HashSet::new();
-    for toml in tomls {
-        let Some(dir) = toml.parent() else { continue };
-        if !seen_dirs.insert(dir.to_path_buf()) {
-            continue;
-        }
-        let p = dir.join("trajectory.toml");
+    let mut dirs = Vec::new();
+    collect_dirs_recursive(capture_dir, &mut dirs)?;
+    dirs.push(capture_dir.to_path_buf());
+    dirs.sort();
+    dirs.dedup();
+    for dir in dirs {
+        let p = dir.join("trajectory.json");
         if !p.is_file() {
             continue;
         }
-        let parsed: TrajectoryFile = toml::from_str(
+        let parsed: TrajectoryFile = serde_json::from_str(
             &std::fs::read_to_string(&p).with_context(|| format!("read {}", p.display()))?,
         )
         .with_context(|| format!("parse {}", p.display()))?;
@@ -89,6 +87,20 @@ pub(super) fn load_walkable_mask(capture_dir: &Path) -> Result<WalkableMask> {
         );
     }
     Ok(WalkableMask { loops_simplified })
+}
+
+fn collect_dirs_recursive(root: &Path, out: &mut Vec<std::path::PathBuf>) -> Result<()> {
+    if !root.is_dir() {
+        return Ok(());
+    }
+    for e in std::fs::read_dir(root).with_context(|| format!("read_dir {}", root.display()))? {
+        let p = e?.path();
+        if p.is_dir() {
+            out.push(p.clone());
+            collect_dirs_recursive(&p, out)?;
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn write_merged_walkable_file(tiles_root: &Path, mask: &WalkableMask) -> Result<()> {

@@ -114,17 +114,17 @@ pub fn run_shot_points_stage(
                 continue;
             }
         }
-        let traj_path = subdir.join("trajectory.toml");
-        let cfg_path = subdir.join("shot_config.toml");
+        let traj_path = subdir.join("trajectory.json");
+        let cfg_path = subdir.join("shot_config.json");
         if !traj_path.is_file() || !cfg_path.is_file() {
             continue;
         }
-        let traj: TrajectoryFile = toml::from_str(
+        let traj: TrajectoryFile = serde_json::from_str(
             &fs::read_to_string(&traj_path)
                 .with_context(|| format!("read {}", traj_path.display()))?,
         )
         .with_context(|| format!("parse {}", traj_path.display()))?;
-        let cfg: ShotConfig = toml::from_str(
+        let cfg: ShotConfig = serde_json::from_str(
             &fs::read_to_string(&cfg_path)
                 .with_context(|| format!("read {}", cfg_path.display()))?,
         )
@@ -137,7 +137,7 @@ pub fn run_shot_points_stage(
         written += 1;
     }
     if written == 0 {
-        anyhow::bail!("No trajectory.toml + shot_config.toml pairs found under capture/.");
+        anyhow::bail!("No trajectory.json + shot_config.json pairs found under capture/.");
     }
     Ok(written)
 }
@@ -156,10 +156,12 @@ fn find_capture_subdirs(capture_dir: &Path) -> Result<Vec<PathBuf>> {
         Ok(())
     }
     if capture_dir.is_dir() {
+        out.push(capture_dir.to_path_buf());
         walk(capture_dir, &mut out)?;
     }
     Ok(out)
 }
+
 
 fn build_shot_points(traj: &TrajectoryFile, cfg: &ShotConfig) -> Result<ShotPointsFile> {
     let traj_space = parse_coord_space(&traj.coord_space);

@@ -323,8 +323,7 @@ async function loadIndex(root) {
   shotPoints = [];
   walkableCoordSpace = '';
   shotPointsCoordSpace = '';
-  // trajectory/shotpoints are stage2 artifacts; skip for stage3 merged root.
-  if (isStage2Source()) {
+  {
     try {
       const wr = await fetch(`${currentTilesRoot}/trajectory_simplified.json`);
       if (wr.ok) {
@@ -349,9 +348,6 @@ async function loadIndex(root) {
         }
       }
     } catch (e) { stat1.textContent = `shot points load error: ${e}`; }
-  } else {
-    walkableLoops = [];
-    shotPoints = [];
   }
   normalizeTrajectoryAndShotPoints(walkableCoordSpace, shotPointsCoordSpace);
   trajEditPanel.style.display = isTrajectoryEditEnabled() ? '' : 'none';
