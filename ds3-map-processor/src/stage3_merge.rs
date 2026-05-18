@@ -65,6 +65,14 @@ struct TrajectorySimplifiedFile {
     loops: Vec<Vec<[f32; 3]>>,
 }
 
+#[derive(Serialize)]
+struct TrajectorySimplifiedOutFile {
+    coord_space: String,
+    version: u32,
+    loops: Vec<Vec<[f32; 3]>>,
+    expand_world: f32,
+}
+
 pub fn merge_stage2_outputs(inputs: &[PathBuf], output_root: &Path) -> Result<()> {
     println!("Stage 3/3 merge: {} input(s)", inputs.len());
     let mut per_tile: BTreeMap<(i32, i32), Vec<Stage2TileSource>> = BTreeMap::new();
@@ -166,6 +174,7 @@ pub fn merge_stage2_outputs(inputs: &[PathBuf], output_root: &Path) -> Result<()
 
     let json = serde_json::to_vec_pretty(&index).context("serialize stage3 index")?;
     fs::write(output_root.join("index.json"), json).context("write stage3 index")?;
+    write_stage3_trajectory_file(output_root, &mask)?;
     write_sources_list(inputs, output_root)?;
     Ok(())
 }
@@ -207,6 +216,24 @@ fn load_stage2_trajectory_mask(inputs: &[PathBuf]) -> Result<TrajectoryMask> {
         bounds.push(LoopBounds { min_x, max_x, min_z, max_z });
     }
     Ok(TrajectoryMask { loops_xz, bounds })
+}
+
+fn write_stage3_trajectory_file(output_root: &Path, mask: &TrajectoryMask) -> Result<()> {
+    let loops = mask
+        .loops_xz
+        .iter()
+        .map(|lp| lp.iter().map(|p| [p[0], 0.0, p[1]]).collect::<Vec<[f32; 3]>>())
+        .collect::<Vec<Vec<[f32; 3]>>>();
+    let out = TrajectorySimplifiedOutFile {
+        coord_space: CoordSpace::Processor.as_str().to_string(),
+        version: 1,
+        loops,
+        expand_world: MASK_EXPAND_WORLD,
+    };
+    let data = serde_json::to_vec_pretty(&out).context("serialize stage3 trajectory_simplified")?;
+    fs::write(output_root.join("trajectory_simplified.json"), data)
+        .context("write stage3 trajectory_simplified")?;
+    Ok(())
 }
 
 fn apply_trajectory_mask(

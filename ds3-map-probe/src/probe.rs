@@ -37,6 +37,12 @@ enum ShotRunnerState {
     WaitShot,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ProbeUiPhase {
+    TrajectoryPlan,
+    Screenshot,
+}
+
 #[derive(Serialize, Deserialize)]
 struct TrajectoryFile {
     coord_space: String,
@@ -121,8 +127,7 @@ pub(crate) struct Probe {
     closed_loops: Vec<Vec<[f32; 3]>>,
     polylines: Vec<Vec<[f32; 3]>>,
     shot_config: ShotConfig,
-    show_shot_config_window: bool,
-    show_trajectory_window: bool,
+    ui_phase: ProbeUiPhase,
     shot_points: Vec<[f32; 3]>,
     shot_trajectory_points: Vec<[f32; 3]>,
     shot_idx: usize,
@@ -161,8 +166,7 @@ impl Probe {
             closed_loops: Vec::new(),
             polylines: Vec::new(),
             shot_config: ShotConfig::default(),
-            show_shot_config_window: false,
-            show_trajectory_window: false,
+            ui_phase: ProbeUiPhase::TrajectoryPlan,
             shot_points: Vec::new(),
             shot_trajectory_points: Vec::new(),
             shot_idx: 0,
@@ -759,12 +763,9 @@ impl ImguiRenderLoop for Probe {
                     BLOCK_XINPUT.store(false, Ordering::SeqCst);
                     eject();
                 }
-                ui.same_line();
-                ui.checkbox("Shot Points Config", &mut self.show_shot_config_window);
-                ui.same_line();
-                ui.checkbox("Trajectory", &mut self.show_trajectory_window);
 
                 ui.separator();
+                ui.text("Stage 0: Common");
                 ui.text_wrapped(format!("Capture Root: {}", self.capture_root.display()));
                 ui.text("Capture Subfolder:");
                 ui.input_text("##capture_subdir", &mut self.capture_subdir).build();
@@ -779,41 +780,8 @@ impl ImguiRenderLoop for Probe {
                         }
                     }
                 });
-                if ui.button("Process Pair (F11)") {
-                    self.process_capture_files();
-                }
                 if !self.capture_status.is_empty() {
                     ui.text_wrapped(&self.capture_status);
-                }
-
-                ui.separator();
-                ui.text(format!(
-                    "Shot Runner: loaded={}, index={}/{}, running={} (F2 next / F3 stay)",
-                    self.shot_points.len(),
-                    self.shot_idx.saturating_add(1),
-                    self.shot_points.len(),
-                    self.shot_running
-                ));
-                if ui.button("Load shot_points.json") {
-                    self.load_shot_points();
-                }
-                ui.same_line();
-                if ui.button("|<-") {
-                    self.jump_to_shot_index(0);
-                }
-                ui.same_line();
-                if ui.button("<-") {
-                    self.step_shot_index(-1);
-                }
-                ui.same_line();
-                ui.text(format!("{}/{}", self.shot_idx.saturating_add(1), self.shot_points.len()));
-                ui.same_line();
-                if ui.button("->") {
-                    self.step_shot_index(1);
-                }
-                ui.same_line();
-                if ui.button("->|") && !self.shot_points.is_empty() {
-                    self.jump_to_shot_index(self.shot_points.len() - 1);
                 }
 
                 ui.separator();
@@ -830,92 +798,21 @@ impl ImguiRenderLoop for Probe {
                     ui.text("Free Camera: Disabled (toggle with F8)");
                 }
 
-                let mut ai_disable = self.pointers.ai_disable.get().unwrap_or(false);
-                if ui.checkbox("AI Disable", &mut ai_disable) {
-                    self.pointers.ai_disable.set(ai_disable);
-                }
-                ui.same_line();
-
-                let mut all_no_damage = self.pointers.all_no_damage.get().unwrap_or(false);
-                if ui.checkbox("All No Damage", &mut all_no_damage) {
-                    self.pointers.all_no_damage.set(all_no_damage);
-                }
-                ui.same_line();
-
-                let mut render_chr = self.pointers.rend_chr.get().unwrap_or(false);
-                if ui.checkbox("Render Character (F6)", &mut render_chr) {
-                    self.pointers.rend_chr.set(render_chr);
-                }
-
-                if ui.button("Reset Camera (F7)") {
-                    self.reset_free_camera();
-                }
-                ui.same_line();
-                if ui.button("Teleport + Del Pair (F12)") {
-                    self.teleport_player_from_latest_depth_center();
-                }
-                ui.same_line();
-                if ui.button("ReShade Shot (F10)") {
-                    self.trigger_reshade_screenshot();
-                }
-
-                if !free_camera {
-                    return;
-                }
-
-                if let Some(render_state) = self.camera_info.camera_render_state() {
-                    let mut fovy_rad = render_state.fov;
-                    if ui.input_float("Fovy (rad)", &mut fovy_rad).build()
-                        && fovy_rad > 0.1
-                        && fovy_rad < 2.
-                    {
-                        self.camera_info.set_fovy_rad(fovy_rad);
-                    }
-
-                    let mut near = render_state.near;
-                    let mut far = render_state.far;
-                    let near_changed = ui.input_float("Near", &mut near).build();
-                    let far_changed = ui.input_float("Far", &mut far).build();
-                    if (near_changed || far_changed) && !self.camera_info.set_near_far(near, far) {
-                        ui.text("Invalid range: require 0.001 < near < far < 100000.");
-                    }
-                    ui.text("Hotkeys: '-'/'=' nudge Near, '['/']' nudge Far");
-                }
-
-                match self.camera_info.player_position() {
-                    Some([px, py, pz]) => {
-                        ui.text(format!("Player Position: {px:.3}, {py:.3}, {pz:.3}"));
-                        match self.camera_info.camera_position() {
-                            Some([cx, cy, cz]) => {
-                                ui.text(format!("Camera Position: {cx:.3}, {cy:.3}, {cz:.3}"));
-                                ui.text(format!("Camera-Player Height: {:.3}", cy - py));
-                            },
-                            None => {
-                                ui.text("Camera Position: N/A");
-                                ui.text("Camera-Player Height: N/A");
-                            },
+                ui.separator();
+                if let Some(_tabs) = ui.tab_bar("probe_stage_tabs") {
+                    if let Some(_tab) = ui.tab_item("Trajectory + Plan Config") {
+                        self.ui_phase = ProbeUiPhase::TrajectoryPlan;
+                        ui.text("Stage 1: Trajectory + Screenshot Plan Config");
+                        let mut ai_disable = self.pointers.ai_disable.get().unwrap_or(false);
+                        if ui.checkbox("AI Disable", &mut ai_disable) {
+                            self.pointers.ai_disable.set(ai_disable);
                         }
-                    },
-                    None => {
-                        ui.text("Player Position: N/A");
-                        match self.camera_info.camera_position() {
-                            Some([cx, cy, cz]) => {
-                                ui.text(format!("Camera Position: {cx:.3}, {cy:.3}, {cz:.3}"));
-                            },
-                            None => ui.text("Camera Position: N/A"),
+                        ui.same_line();
+                        let mut all_no_damage = self.pointers.all_no_damage.get().unwrap_or(false);
+                        if ui.checkbox("All No Damage", &mut all_no_damage) {
+                            self.pointers.all_no_damage.set(all_no_damage);
                         }
-                        ui.text("Camera-Player Height: N/A");
-                    },
-                }
-            });
-        }
-
-        if self.show_ui && self.show_trajectory_window {
-            ui.window("Trajectory")
-                .size([420.0, 220.0], Condition::FirstUseEver)
-                .position([620.0, 400.0], Condition::FirstUseEver)
-                .flags(WindowFlags::NO_COLLAPSE)
-                .build(|| {
+                        ui.separator();
                     ui.text(format!(
                         "Trajectory: {} (F1), current={}, loops={}, polylines={}",
                         if self.loop_recording { "Recording" } else { "Idle" },
@@ -941,15 +838,7 @@ impl ImguiRenderLoop for Probe {
                     if ui.button("Clear Trajectory") {
                         self.clear_all_trajectories();
                     }
-                });
-        }
-
-        if self.show_ui && self.show_shot_config_window {
-            ui.window("Shot Points Config")
-                .size([420.0, 360.0], Condition::FirstUseEver)
-                .position([620.0, 20.0], Condition::FirstUseEver)
-                .flags(WindowFlags::NO_COLLAPSE)
-                .build(|| {
+                    ui.separator();
                     ui.text(format!(
                         "Auto Render Size: {} x {}",
                         self.shot_config.render_width, self.shot_config.render_height
@@ -974,7 +863,124 @@ impl ImguiRenderLoop for Probe {
                     if ui.button("Load Config") {
                         self.load_shot_config();
                     }
-                });
+                    }
+                    if let Some(_tab) = ui.tab_item("Screenshot") {
+                        self.ui_phase = ProbeUiPhase::Screenshot;
+                        ui.text("Stage 2: Screenshot");
+                        if ui.button("Process Pair (F11)") {
+                            self.process_capture_files();
+                        }
+                        ui.separator();
+                    ui.text(format!(
+                        "Shot Runner: loaded={}, index={}/{}, running={} (F2 next / F3 stay)",
+                        self.shot_points.len(),
+                        self.shot_idx.saturating_add(1),
+                        self.shot_points.len(),
+                        self.shot_running
+                    ));
+                    if ui.button("Load shot_points.json") {
+                        self.load_shot_points();
+                    }
+                    ui.same_line();
+                    if ui.button("|<-") {
+                        self.jump_to_shot_index(0);
+                    }
+                    ui.same_line();
+                    if ui.button("<-") {
+                        self.step_shot_index(-1);
+                    }
+                    ui.same_line();
+                    ui.text(format!("{}/{}", self.shot_idx.saturating_add(1), self.shot_points.len()));
+                    ui.same_line();
+                    if ui.button("->") {
+                        self.step_shot_index(1);
+                    }
+                    ui.same_line();
+                    if ui.button("->|") && !self.shot_points.is_empty() {
+                        self.jump_to_shot_index(self.shot_points.len() - 1);
+                    }
+
+                    ui.separator();
+                    let mut ai_disable = self.pointers.ai_disable.get().unwrap_or(false);
+                    if ui.checkbox("AI Disable", &mut ai_disable) {
+                        self.pointers.ai_disable.set(ai_disable);
+                    }
+                    ui.same_line();
+
+                    let mut all_no_damage = self.pointers.all_no_damage.get().unwrap_or(false);
+                    if ui.checkbox("All No Damage", &mut all_no_damage) {
+                        self.pointers.all_no_damage.set(all_no_damage);
+                    }
+                    ui.same_line();
+
+                    let mut hide_character = !self.pointers.rend_chr.get().unwrap_or(false);
+                    if ui.checkbox("Hide Character (F6)", &mut hide_character) {
+                        self.pointers.rend_chr.set(!hide_character);
+                    }
+
+                    if ui.button("Reset Camera (F7)") {
+                        self.reset_free_camera();
+                    }
+                    ui.same_line();
+                    if ui.button("Teleport + Del Pair (F12)") {
+                        self.teleport_player_from_latest_depth_center();
+                    }
+                    ui.same_line();
+                    if ui.button("ReShade Shot (F10)") {
+                        self.trigger_reshade_screenshot();
+                    }
+
+                    if !free_camera {
+                        return;
+                    }
+
+                    if let Some(render_state) = self.camera_info.camera_render_state() {
+                        let mut fovy_rad = render_state.fov;
+                        if ui.input_float("Fovy (rad)", &mut fovy_rad).build()
+                            && fovy_rad > 0.1
+                            && fovy_rad < 2.
+                        {
+                            self.camera_info.set_fovy_rad(fovy_rad);
+                        }
+
+                        let mut near = render_state.near;
+                        let mut far = render_state.far;
+                        let near_changed = ui.input_float("Near", &mut near).build();
+                        let far_changed = ui.input_float("Far", &mut far).build();
+                        if (near_changed || far_changed) && !self.camera_info.set_near_far(near, far) {
+                            ui.text("Invalid range: require 0.001 < near < far < 100000.");
+                        }
+                        ui.text("Hotkeys: '-'/'=' nudge Near, '['/']' nudge Far");
+                    }
+
+                    match self.camera_info.player_position() {
+                        Some([px, py, pz]) => {
+                            ui.text(format!("Player Position: {px:.3}, {py:.3}, {pz:.3}"));
+                            match self.camera_info.camera_position() {
+                                Some([cx, cy, cz]) => {
+                                    ui.text(format!("Camera Position: {cx:.3}, {cy:.3}, {cz:.3}"));
+                                    ui.text(format!("Camera-Player Height: {:.3}", cy - py));
+                                },
+                                None => {
+                                    ui.text("Camera Position: N/A");
+                                    ui.text("Camera-Player Height: N/A");
+                                },
+                            }
+                        },
+                        None => {
+                            ui.text("Player Position: N/A");
+                            match self.camera_info.camera_position() {
+                                Some([cx, cy, cz]) => {
+                                    ui.text(format!("Camera Position: {cx:.3}, {cy:.3}, {cz:.3}"));
+                                },
+                                None => ui.text("Camera Position: N/A"),
+                            }
+                            ui.text("Camera-Player Height: N/A");
+                        },
+                    }
+                }
+                }
+            });
         }
 
         BLOCK_XINPUT
