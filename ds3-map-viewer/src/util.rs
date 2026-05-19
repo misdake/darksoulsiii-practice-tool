@@ -48,14 +48,14 @@ pub fn append_log_line(msg: &str) {
 
     let log_path = std::env::current_exe()
         .ok()
-        .and_then(|mut p| {
+        .map(|mut p| {
             p.pop();
-            Some(p.join("map-work").join("ds3_map_viewer.log"))
+            p.join("map-work").join("ds3_map_viewer.log")
         })
         .or_else(|| {
-            get_dll_path().and_then(|mut p| {
+            get_dll_path().map(|mut p| {
                 p.pop();
-                Some(p.join("map-work").join("ds3_map_viewer.log"))
+                p.join("map-work").join("ds3_map_viewer.log")
             })
         })
         .unwrap_or_else(|| PathBuf::from("ds3_map_viewer.log"));

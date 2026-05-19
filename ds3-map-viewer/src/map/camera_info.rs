@@ -83,7 +83,7 @@ impl CameraInfo {
 
             (visible, self.player_dir, self.camera_dir)
         } else {
-            // bad memory => hide compass
+            // bad memory => hide map
             self.player_position = None;
             self.player_dir = 0.0;
             self.camera_dir = 0.0;

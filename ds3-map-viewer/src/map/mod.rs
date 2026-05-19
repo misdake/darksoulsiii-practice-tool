@@ -22,19 +22,18 @@ const RIGHT: f32 = 23.0;
 const TOP: f32 = 30.0;
 const MAP_SIZE: f32 = 192.0;
 const MAP_HSIZE: f32 = MAP_SIZE * 0.5;
-const POINTER_SIZE: f32 = 48.0;
 const CAMERA_FOV_SIZE_SCALE: f32 = 0.92;
+const POINTER_WORLD_SIZE_WU: f32 = 1.5;
+const CAMERA_FOV_WORLD_SIZE_WU: f32 = 5.5;
 const PLAYER_ARROW_PIVOT: [f32; 2] = overlay::PLAYER_ARROW_PIVOT;
 const PANEL_BUTTON_OFFSET_X: f32 = 0.0;
 const PANEL_BUTTON_OFFSET_Y: f32 = 8.0;
 const PANEL_WINDOW_OFFSET_X: f32 = -4.0;
 const PANEL_WINDOW_OFFSET_Y: f32 = 2.0;
-pub(crate) const DIRECTION_OFFSET_MIN: f32 = -180.0;
-pub(crate) const DIRECTION_OFFSET_MAX: f32 = 180.0;
 pub(crate) const SIZE_SCALE_MIN: f32 = 0.5;
 pub(crate) const SIZE_SCALE_MAX: f32 = 3.0;
-pub(crate) const ZOOM_SCALE_MIN: f32 = 0.25;
-pub(crate) const ZOOM_SCALE_MAX: f32 = 8.0;
+pub(crate) const INDICATOR_SCALE_MIN: f32 = 0.25;
+pub(crate) const INDICATOR_SCALE_MAX: f32 = 4.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MapMode {
@@ -64,9 +63,8 @@ pub struct MapViewer {
     camera_info: CameraInfo,
     tile_manager: TileManager,
 
-    direction_offset_degrees: f32,
     size_scale: f32,
-    zoom_scale: f32,
+    indicator_scale: f32,
     level: i32,
     mode: MapMode,
     z_flip: bool,
@@ -98,9 +96,8 @@ impl MapViewer {
             marker_default,
             camera_info,
             tile_manager: TileManager::new(PathBuf::from("map-work/tiles"), 384, 4),
-            direction_offset_degrees: 0.0,
             size_scale: 1.0,
-            zoom_scale: 1.0,
+            indicator_scale: 1.0,
             level: -1,
             mode: MapMode::default(),
             z_flip: true,
@@ -113,20 +110,16 @@ impl MapViewer {
         }
     }
 
-    pub fn direction_offset_degrees(&self) -> f32 {
-        self.direction_offset_degrees
-    }
-
     pub fn size_scale(&self) -> f32 {
         self.size_scale
     }
 
-    pub fn zoom_scale(&self) -> f32 {
-        self.zoom_scale
-    }
-
     pub fn mode(&self) -> MapMode {
         self.mode
+    }
+
+    pub fn indicator_scale(&self) -> f32 {
+        self.indicator_scale
     }
 
     pub fn level(&self) -> i32 {
@@ -141,16 +134,12 @@ impl MapViewer {
         self.tile_manager.root().to_string_lossy().into_owned()
     }
 
-    pub fn set_direction_offset_degrees(&mut self, value: f32) {
-        self.direction_offset_degrees = value.clamp(DIRECTION_OFFSET_MIN, DIRECTION_OFFSET_MAX);
-    }
-
     pub fn set_size_scale(&mut self, value: f32) {
         self.size_scale = value.clamp(SIZE_SCALE_MIN, SIZE_SCALE_MAX);
     }
 
-    pub fn set_zoom_scale(&mut self, value: f32) {
-        self.zoom_scale = value.clamp(ZOOM_SCALE_MIN, ZOOM_SCALE_MAX);
+    pub fn set_indicator_scale(&mut self, value: f32) {
+        self.indicator_scale = value.clamp(INDICATOR_SCALE_MIN, INDICATOR_SCALE_MAX);
     }
 
     pub fn set_mode(&mut self, value: MapMode) {
@@ -259,9 +248,8 @@ impl MapViewer {
         ui: &imgui::Ui,
         panel_toggle_pos: [f32; 2],
     ) -> ConfigPanelResult {
-        let mut direction_offset = self.direction_offset_degrees;
         let mut size_scale = self.size_scale;
-        let mut zoom_scale = self.zoom_scale;
+        let mut indicator_scale = self.indicator_scale;
         let mut level = self.level;
         let mut mode = self.mode;
         let mut tiles_root = self.tiles_root();
@@ -290,21 +278,11 @@ impl MapViewer {
                 }
                 ui.same_line();
                 if ui.small_button("Reset") {
-                    direction_offset = 0.0;
                     size_scale = 1.0;
-                    zoom_scale = 1.0;
+                    indicator_scale = 1.0;
                     mode = MapMode::SquareRotateWithPlayer;
                 }
                 ui.separator();
-
-                ui.set_next_item_width(MAP_HSIZE * base_scale);
-                ui.slider_config(
-                    "Direction Offset (deg)",
-                    DIRECTION_OFFSET_MIN,
-                    DIRECTION_OFFSET_MAX,
-                )
-                .display_format("%.1f")
-                .build(&mut direction_offset);
 
                 ui.set_next_item_width(MAP_HSIZE * base_scale);
                 ui.slider_config("Size Scale", SIZE_SCALE_MIN, SIZE_SCALE_MAX)
@@ -312,9 +290,9 @@ impl MapViewer {
                     .build(&mut size_scale);
 
                 ui.set_next_item_width(MAP_HSIZE * base_scale);
-                ui.slider_config("Zoom Scale", ZOOM_SCALE_MIN, ZOOM_SCALE_MAX)
+                ui.slider_config("Indicator Scale", INDICATOR_SCALE_MIN, INDICATOR_SCALE_MAX)
                     .display_format("%.2f")
-                    .build(&mut zoom_scale);
+                    .build(&mut indicator_scale);
 
                 let levels = self.tile_manager.available_levels();
                 if !levels.is_empty() {
@@ -324,7 +302,15 @@ impl MapViewer {
                         .unwrap_or(levels.len().saturating_sub(1));
                     let level_labels: Vec<String> = levels
                         .iter()
-                        .map(|(z, wu)| format!("z={} ({:.5} wu/px)", z, wu))
+                        .map(|(z, wu)| {
+                            let mul = if *wu > 0.0 { 1.0 / *wu } else { 1.0 };
+                            let mul_text = if (mul - mul.round()).abs() < 0.0001 {
+                                format!("{:.0}x", mul.round())
+                            } else {
+                                format!("{:.2}x", mul)
+                            };
+                            format!("z={} ({})", z, mul_text)
+                        })
                         .collect();
                     let level_refs: Vec<&str> = level_labels.iter().map(|s| s.as_str()).collect();
                     ui.set_next_item_width(MAP_HSIZE * base_scale * 1.2);
@@ -381,18 +367,16 @@ impl MapViewer {
             });
 
         let old = (
-            self.direction_offset_degrees,
             self.size_scale,
-            self.zoom_scale,
+            self.indicator_scale,
             self.level,
             self.mode,
             self.tiles_root(),
         );
 
-        self.direction_offset_degrees =
-            direction_offset.clamp(DIRECTION_OFFSET_MIN, DIRECTION_OFFSET_MAX);
         self.size_scale = size_scale.clamp(SIZE_SCALE_MIN, SIZE_SCALE_MAX);
-        self.zoom_scale = zoom_scale.clamp(ZOOM_SCALE_MIN, ZOOM_SCALE_MAX);
+        self.indicator_scale =
+            indicator_scale.clamp(INDICATOR_SCALE_MIN, INDICATOR_SCALE_MAX);
         self.level = level;
         self.mode = mode;
         self.set_tiles_root(tiles_root);
@@ -400,9 +384,8 @@ impl MapViewer {
         ConfigPanelResult {
             changed: old
                 != (
-                    self.direction_offset_degrees,
                     self.size_scale,
-                    self.zoom_scale,
+                    self.indicator_scale,
                     self.level,
                     self.mode,
                     self.tiles_root(),
@@ -444,13 +427,6 @@ impl MapViewer {
         let map_y = TOP * base_scale + map_hsize + top_offset;
         let content_hsize = map_hsize;
 
-        let pointer_size = POINTER_SIZE * scale;
-        self.pointer.resize(pointer_size, pointer_size);
-        self.camera_fov.resize(
-            MAP_SIZE * scale * CAMERA_FOV_SIZE_SCALE,
-            MAP_SIZE * scale * CAMERA_FOV_SIZE_SCALE,
-        );
-
         let draw_list = ui.get_foreground_draw_list();
         let clip_min = [map_x - map_hsize, map_y - map_hsize];
         let clip_max = [map_x + map_hsize, map_y + map_hsize];
@@ -488,12 +464,20 @@ impl MapViewer {
             self.status_text = "missing level tile size".to_string();
             return;
         };
+        let pointer_size = (POINTER_WORLD_SIZE_WU / target_wu_per_px) * self.indicator_scale;
+        self.pointer.resize(pointer_size, pointer_size);
+        self.camera_fov.resize(
+            (CAMERA_FOV_WORLD_SIZE_WU / target_wu_per_px)
+                * self.indicator_scale
+                * CAMERA_FOV_SIZE_SCALE,
+            (CAMERA_FOV_WORLD_SIZE_WU / target_wu_per_px)
+                * self.indicator_scale
+                * CAMERA_FOV_SIZE_SCALE,
+        );
 
         let rot = match self.mode {
             MapMode::SquareNorthUp => 0.0,
-            MapMode::SquareRotateWithPlayer => {
-                -(self.camera_dir + self.direction_offset_degrees.to_radians())
-            },
+            MapMode::SquareRotateWithPlayer => -self.camera_dir,
         };
         let player_z_for_map = if self.z_flip { -player_pos[2] } else { player_pos[2] };
         let center_x = (player_pos[0] / target_wu_per_px).round() * target_wu_per_px;
@@ -507,10 +491,17 @@ impl MapViewer {
             clip_mode: self.mode.as_clip_mode(),
         };
 
-        let min_x = center_x - content_hsize * target_wu_per_px;
-        let max_x = center_x + content_hsize * target_wu_per_px;
-        let min_z = center_z - content_hsize * target_wu_per_px;
-        let max_z = center_z + content_hsize * target_wu_per_px;
+        // In rotating square mode, the visible square in screen space maps to a rotated square
+        // in world space. Query with sqrt(2) inflation so corner tiles are not missed.
+        let query_half_extent_px = if matches!(self.mode, MapMode::SquareRotateWithPlayer) {
+            content_hsize * std::f32::consts::SQRT_2
+        } else {
+            content_hsize
+        };
+        let min_x = center_x - query_half_extent_px * target_wu_per_px;
+        let max_x = center_x + query_half_extent_px * target_wu_per_px;
+        let min_z = center_z - query_half_extent_px * target_wu_per_px;
+        let max_z = center_z + query_half_extent_px * target_wu_per_px;
         let tx0 = (min_x / tile_world_size).floor() as i32;
         let tx1 = (max_x / tile_world_size).ceil() as i32;
         let ty0 = (min_z / tile_world_size).floor() as i32;
@@ -558,22 +549,18 @@ impl MapViewer {
             .build();
 
         let camera_fov_rot = match self.mode {
-            MapMode::SquareNorthUp => {
-                self.camera_dir + self.direction_offset_degrees.to_radians()
-            },
-            MapMode::SquareRotateWithPlayer => {
-                self.direction_offset_degrees.to_radians()
-            },
+            MapMode::SquareNorthUp => self.camera_dir,
+            MapMode::SquareRotateWithPlayer => 0.0,
         };
-        self.camera_fov.render_rotate(&draw_list, [map_x, map_y], camera_fov_rot);
+        draw_list.with_clip_rect(clip_min, clip_max, || {
+            self.camera_fov.render_rotate(&draw_list, [map_x, map_y], camera_fov_rot);
+        });
 
         // player_arrow.png is authored with center pivot.
         debug_assert_eq!(PLAYER_ARROW_PIVOT, [0.5, 0.5]);
         let arrow_fix = std::f32::consts::PI;
         let pointer_rot = match self.mode {
-            MapMode::SquareNorthUp => {
-                self.player_dir + self.direction_offset_degrees.to_radians() + arrow_fix
-            },
+            MapMode::SquareNorthUp => self.player_dir + arrow_fix,
             MapMode::SquareRotateWithPlayer => self.player_dir - self.camera_dir + arrow_fix,
         };
         self.pointer.render_rotate(&draw_list, [map_x, map_y], pointer_rot);

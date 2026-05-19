@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 
 use hudhook::{eject, ImguiRenderLoop, RenderContext};
 use imgui::{Context, StyleVar};
@@ -28,9 +28,8 @@ impl Viewer {
     }
 
     fn apply_map_config(map_config: MapConfig, map_viewer: &mut MapViewer) {
-        map_viewer.set_direction_offset_degrees(map_config.map_direction_offset_degrees);
         map_viewer.set_size_scale(map_config.map_size_scale);
-        map_viewer.set_zoom_scale(map_config.map_zoom_scale);
+        map_viewer.set_indicator_scale(map_config.map_indicator_scale);
         map_viewer.set_level(map_config.map_level);
         map_viewer.set_mode(map_config.mode());
         map_viewer.set_tiles_root(map_config.map_tiles_root);
@@ -39,15 +38,13 @@ impl Viewer {
 
     fn save_map_config(&mut self) {
         let mut config = MapConfig {
-            map_direction_offset_degrees: self.map_viewer.direction_offset_degrees(),
             map_size_scale: self.map_viewer.size_scale(),
-            map_zoom_scale: self.map_viewer.zoom_scale(),
+            map_indicator_scale: self.map_viewer.indicator_scale(),
             map_level: self.map_viewer.level(),
             map_mode: String::new(),
             map_tiles_root: self.map_viewer.tiles_root(),
             map_z_flip: self.map_viewer.z_flip(),
-            compass_direction_offset_degrees: None,
-            compass_size_scale: None,
+            map_zoom_scale: None,
         };
         config.set_mode(self.map_viewer.mode());
         self.config_store.set_map(config);
@@ -96,8 +93,6 @@ impl ImguiRenderLoop for Viewer {
                 self.set_panel_visibility(true);
             }
         }
-
-        BLOCK_XINPUT.store(self.show_panel, Ordering::SeqCst);
 
         if self.show_panel {
             let Some(pos) = panel_toggle_pos else {

@@ -3,10 +3,7 @@ use std::path::PathBuf;
 use hudhook::tracing::error;
 use serde::{Deserialize, Serialize};
 
-use crate::map::{
-    MapMode, DIRECTION_OFFSET_MAX, DIRECTION_OFFSET_MIN, SIZE_SCALE_MAX, SIZE_SCALE_MIN,
-    ZOOM_SCALE_MAX, ZOOM_SCALE_MIN,
-};
+use crate::map::{MapMode, SIZE_SCALE_MAX, SIZE_SCALE_MIN};
 use crate::util;
 
 const CONFIG_FILE_NAME: &str = "ds3_map_viewer.toml";
@@ -20,49 +17,37 @@ pub struct AppConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MapConfig {
-    pub map_direction_offset_degrees: f32,
     pub map_size_scale: f32,
-    pub map_zoom_scale: f32,
+    pub map_indicator_scale: f32,
     pub map_level: i32,
     pub map_mode: String,
     pub map_tiles_root: String,
     pub map_z_flip: bool,
 
+    #[allow(dead_code)]
     #[serde(skip_serializing, default)]
-    pub compass_direction_offset_degrees: Option<f32>,
-    #[serde(skip_serializing, default)]
-    pub compass_size_scale: Option<f32>,
+    pub map_zoom_scale: Option<f32>,
 }
 
 impl Default for MapConfig {
     fn default() -> Self {
         MapConfig {
-            map_direction_offset_degrees: 0.0,
             map_size_scale: 1.0,
-            map_zoom_scale: 1.0,
+            map_indicator_scale: 1.0,
             map_level: -1,
             map_mode: "square_rotate_with_player".to_string(),
             map_tiles_root: "map-work/tiles".to_string(),
             map_z_flip: true,
-            compass_direction_offset_degrees: None,
-            compass_size_scale: None,
+            map_zoom_scale: None,
         }
     }
 }
 
 impl MapConfig {
     fn sanitize(&mut self) {
-        if let Some(v) = self.compass_direction_offset_degrees {
-            self.map_direction_offset_degrees = v;
-        }
-        if let Some(v) = self.compass_size_scale {
-            self.map_size_scale = v;
-        }
-
-        self.map_direction_offset_degrees =
-            self.map_direction_offset_degrees.clamp(DIRECTION_OFFSET_MIN, DIRECTION_OFFSET_MAX);
         self.map_size_scale = self.map_size_scale.clamp(SIZE_SCALE_MIN, SIZE_SCALE_MAX);
-        self.map_zoom_scale = self.map_zoom_scale.clamp(ZOOM_SCALE_MIN, ZOOM_SCALE_MAX);
+        self.map_indicator_scale =
+            self.map_indicator_scale.clamp(crate::map::INDICATOR_SCALE_MIN, crate::map::INDICATOR_SCALE_MAX);
 
         if self.map_tiles_root.trim().is_empty() {
             self.map_tiles_root = "map-work/tiles".to_string();
