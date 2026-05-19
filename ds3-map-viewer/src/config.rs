@@ -23,10 +23,6 @@ pub struct MapConfig {
     pub map_mode: String,
     pub map_tiles_root: String,
     pub map_z_flip: bool,
-
-    #[allow(dead_code)]
-    #[serde(skip_serializing, default)]
-    pub map_zoom_scale: Option<f32>,
 }
 
 impl Default for MapConfig {
@@ -38,7 +34,6 @@ impl Default for MapConfig {
             map_mode: "square_rotate_with_player".to_string(),
             map_tiles_root: "map-work/tiles".to_string(),
             map_z_flip: true,
-            map_zoom_scale: None,
         }
     }
 }
@@ -56,7 +51,6 @@ impl MapConfig {
 
     pub fn mode(&self) -> MapMode {
         match self.map_mode.as_str() {
-            "circle_north_up" => MapMode::SquareNorthUp,
             "square_north_up" => MapMode::SquareNorthUp,
             _ => MapMode::SquareRotateWithPlayer,
         }

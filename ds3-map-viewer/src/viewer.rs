@@ -44,7 +44,6 @@ impl Viewer {
             map_mode: String::new(),
             map_tiles_root: self.map_viewer.tiles_root(),
             map_z_flip: self.map_viewer.z_flip(),
-            map_zoom_scale: None,
         };
         config.set_mode(self.map_viewer.mode());
         self.config_store.set_map(config);

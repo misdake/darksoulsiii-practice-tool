@@ -4,13 +4,17 @@ pub mod overlay;
 mod texture;
 mod tile;
 
+use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use geometry::{ClipMode, MapViewParams, Visibility};
 use hudhook::tracing::{info, warn};
 use hudhook::RenderContext;
 use imgui::{Condition, Context, ImColor32, WindowFlags};
 use libds3::pointers::PointerChains;
+use serde::Deserialize;
 use tile::{TileKey, TileManager};
 
 use crate::map::camera_info::CameraInfo;
@@ -25,6 +29,7 @@ const MAP_HSIZE: f32 = MAP_SIZE * 0.5;
 const CAMERA_FOV_SIZE_SCALE: f32 = 0.92;
 const POINTER_WORLD_SIZE_WU: f32 = 1.5;
 const CAMERA_FOV_WORLD_SIZE_WU: f32 = 5.5;
+const TREASURE_MARKER_SIZE_WU: [f32; 2] = [1.5, 1.5];
 const PLAYER_ARROW_PIVOT: [f32; 2] = overlay::PLAYER_ARROW_PIVOT;
 const PANEL_BUTTON_OFFSET_X: f32 = 0.0;
 const PANEL_BUTTON_OFFSET_Y: f32 = 8.0;
@@ -34,6 +39,7 @@ pub(crate) const SIZE_SCALE_MIN: f32 = 0.5;
 pub(crate) const SIZE_SCALE_MAX: f32 = 3.0;
 pub(crate) const INDICATOR_SCALE_MIN: f32 = 0.25;
 pub(crate) const INDICATOR_SCALE_MAX: f32 = 4.0;
+const TREASURE_FILE_REL_PATH: &str = "map-work/treasures.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum MapMode {
@@ -60,6 +66,7 @@ pub struct MapViewer {
     pointer: Texture,
     camera_fov: Texture,
     marker_default: Texture,
+    overlay_icons: HashMap<String, Texture>,
     camera_info: CameraInfo,
     tile_manager: TileManager,
 
@@ -75,6 +82,11 @@ pub struct MapViewer {
     player_pos: Option<[f32; 3]>,
     status_text: String,
     wanted_next_frame: Vec<TileKey>,
+    show_hardcoded_treasures: bool,
+    treasure_points: Vec<TreasurePoint>,
+    treasure_file_path: PathBuf,
+    treasure_file_mtime: Option<SystemTime>,
+    treasure_load_error_logged: bool,
 }
 
 pub struct ConfigPanelResult {
@@ -83,17 +95,285 @@ pub struct ConfigPanelResult {
     pub occupied_height: f32,
 }
 
+struct TileCollectInput<'a> {
+    view: &'a MapViewParams,
+    level: i32,
+    tile_world_size: f32,
+    target_wu_per_px: f32,
+    content_hsize: f32,
+    center_x: f32,
+    center_z: f32,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum TreasurePointRepr {
+    Object { x: f32, z: f32, icon: Option<String> },
+    Tuple([f32; 3]),
+}
+
+#[derive(Deserialize)]
+struct TreasureFile {
+    points: Vec<TreasurePointRepr>,
+}
+
+#[derive(Clone)]
+struct TreasurePoint {
+    x: f32,
+    z: f32,
+    icon: String,
+}
+
 impl MapViewer {
+    fn texture_for_overlay_icon(&self, icon: &str) -> &Texture {
+        self.overlay_icons.get(icon).unwrap_or(&self.marker_default)
+    }
+
+    fn enqueue_hardcoded_treasures(&self) {
+        let marker_size_wu = [
+            TREASURE_MARKER_SIZE_WU[0] * self.indicator_scale,
+            TREASURE_MARKER_SIZE_WU[1] * self.indicator_scale,
+        ];
+        for p in &self.treasure_points {
+            let world_z = if self.z_flip { -p.z } else { p.z };
+            let world_xz = [p.x, world_z];
+            overlay::add_icon(
+                &p.icon,
+                world_xz,
+                marker_size_wu,
+                overlay::MARKER_DEFAULT_PIVOT,
+                [1.0, 1.0, 1.0, 1.0],
+            );
+        }
+    }
+
+    fn default_treasure_file_path() -> PathBuf {
+        if let Ok(mut p) = std::env::current_exe() {
+            p.pop();
+            return p.join(TREASURE_FILE_REL_PATH);
+        }
+        if let Some(mut p) = util::get_dll_path() {
+            p.pop();
+            return p.join(TREASURE_FILE_REL_PATH);
+        }
+        PathBuf::from(TREASURE_FILE_REL_PATH)
+    }
+
+    fn refresh_treasures_if_needed(&mut self) {
+        let meta = fs::metadata(&self.treasure_file_path);
+        let Ok(meta) = meta else {
+            self.treasure_points.clear();
+            self.treasure_file_mtime = None;
+            if !self.treasure_load_error_logged {
+                util::append_log_line(&format!(
+                    "treasure file missing: {}",
+                    self.treasure_file_path.display()
+                ));
+                self.treasure_load_error_logged = true;
+            }
+            return;
+        };
+
+        let mtime = meta.modified().ok();
+        if self.treasure_file_mtime.is_some() && self.treasure_file_mtime == mtime {
+            return;
+        }
+
+        let content = match fs::read_to_string(&self.treasure_file_path) {
+            Ok(s) => s,
+            Err(e) => {
+                self.treasure_points.clear();
+                self.treasure_file_mtime = mtime;
+                if !self.treasure_load_error_logged {
+                    util::append_log_line(&format!(
+                        "treasure file read error: {} ({})",
+                        self.treasure_file_path.display(),
+                        e
+                    ));
+                    self.treasure_load_error_logged = true;
+                }
+                return;
+            },
+        };
+
+        let parsed = match serde_json::from_str::<TreasureFile>(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                self.treasure_points.clear();
+                self.treasure_file_mtime = mtime;
+                if !self.treasure_load_error_logged {
+                    util::append_log_line(&format!(
+                        "treasure file parse error: {} ({})",
+                        self.treasure_file_path.display(),
+                        e
+                    ));
+                    self.treasure_load_error_logged = true;
+                }
+                return;
+            },
+        };
+
+        self.treasure_points = parsed
+            .points
+            .into_iter()
+            .map(|p| match p {
+                TreasurePointRepr::Object { x, z, icon } => TreasurePoint {
+                    x,
+                    z,
+                    icon: icon.unwrap_or_else(|| "default".to_string()),
+                },
+                TreasurePointRepr::Tuple(v) => TreasurePoint {
+                    x: v[0],
+                    z: v[2],
+                    icon: "default".to_string(),
+                },
+            })
+            .collect();
+        self.treasure_file_mtime = mtime;
+        self.treasure_load_error_logged = false;
+        util::append_log_line(&format!(
+            "treasure file loaded: {} points={}",
+            self.treasure_file_path.display(),
+            self.treasure_points.len()
+        ));
+    }
+
+    fn collect_wanted_tiles(&mut self, input: TileCollectInput<'_>) -> Vec<TileKey> {
+        let query_half_extent_px = if matches!(self.mode, MapMode::SquareRotateWithPlayer) {
+            input.content_hsize * std::f32::consts::SQRT_2
+        } else {
+            input.content_hsize
+        };
+        let min_x = input.center_x - query_half_extent_px * input.target_wu_per_px;
+        let max_x = input.center_x + query_half_extent_px * input.target_wu_per_px;
+        let min_z = input.center_z - query_half_extent_px * input.target_wu_per_px;
+        let max_z = input.center_z + query_half_extent_px * input.target_wu_per_px;
+        let tx0 = (min_x / input.tile_world_size).floor() as i32;
+        let tx1 = (max_x / input.tile_world_size).ceil() as i32;
+        let ty0 = (min_z / input.tile_world_size).floor() as i32;
+        let ty1 = (max_z / input.tile_world_size).ceil() as i32;
+
+        let mut wanted = Vec::new();
+        for tx in tx0..=tx1 {
+            for ty in ty0..=ty1 {
+                let key = TileKey { z: input.level, tx, ty };
+                if !self.tile_manager.has_tile(key) {
+                    continue;
+                }
+                let world_aabb = [
+                    tx as f32 * input.tile_world_size - input.target_wu_per_px * 0.5,
+                    (tx + 1) as f32 * input.tile_world_size + input.target_wu_per_px * 0.5,
+                    ty as f32 * input.tile_world_size - input.target_wu_per_px * 0.5,
+                    (ty + 1) as f32 * input.tile_world_size + input.target_wu_per_px * 0.5,
+                ];
+                if !matches!(input.view.tile_visibility(world_aabb), Visibility::Hidden) {
+                    wanted.push(key);
+                }
+            }
+        }
+        wanted
+    }
+
+    fn render_overlays(
+        &self,
+        ui: &imgui::Ui,
+        draw_list: &imgui::DrawListMut<'_>,
+        clip_min: [f32; 2],
+        clip_max: [f32; 2],
+        view: &MapViewParams,
+        target_wu_per_px: f32,
+    ) {
+        draw_list.with_clip_rect(clip_min, clip_max, || {
+            for item in overlay::take_frame_items() {
+                match item {
+                    overlay::OverlayItem::Icon {
+                        icon,
+                        world_xz,
+                        size_wu,
+                        pivot,
+                        color: _,
+                    } => {
+                        let size_px = [
+                            size_wu[0] / target_wu_per_px,
+                            size_wu[1] / target_wu_per_px,
+                        ];
+                        if let Some(v) = view.marker_visibility(world_xz, size_px, pivot) {
+                            self.texture_for_overlay_icon(&icon).render_rect(draw_list, v.screen_rect);
+                        }
+                    },
+                    overlay::OverlayItem::Text { world_xz, text, color, size_wu, pivot } => {
+                        let size_px = [
+                            size_wu[0] / target_wu_per_px,
+                            size_wu[1] / target_wu_per_px,
+                        ];
+                        if let Some(v) = view.marker_visibility(world_xz, size_px, pivot) {
+                            draw_list.add_text(
+                                [v.screen_rect[0], v.screen_rect[1]],
+                                ImColor32::from_rgba_f32s(color[0], color[1], color[2], color[3]),
+                                text,
+                            );
+                        }
+                    },
+                    overlay::OverlayItem::IconText {
+                        icon,
+                        world_xz,
+                        text,
+                        color: _,
+                        icon_size_wu,
+                        spacing_px,
+                    } => {
+                        let icon_size_px = [
+                            icon_size_wu[0] / target_wu_per_px,
+                            icon_size_wu[1] / target_wu_per_px,
+                        ];
+                        let text_size = ui.calc_text_size(&text);
+                        let total_h = icon_size_px[1] + spacing_px + text_size[1];
+                        if let Some(v) =
+                            view.marker_visibility(world_xz, [icon_size_px[0], total_h], [0.5, 0.5])
+                        {
+                            let cx = v.screen_anchor[0];
+                            let top = v.screen_anchor[1] - total_h * 0.5;
+                            self.texture_for_overlay_icon(&icon).render_rect(
+                                draw_list,
+                                [
+                                    cx - icon_size_px[0] * 0.5,
+                                    top,
+                                    cx + icon_size_px[0] * 0.5,
+                                    top + icon_size_px[1],
+                                ],
+                            );
+                            draw_list.add_text(
+                                [cx - text_size[0] * 0.5, top + icon_size_px[1] + spacing_px],
+                                ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 1.0),
+                                text,
+                            );
+                        }
+                    },
+                }
+            }
+        });
+    }
+
     pub fn new(pointers: &PointerChains) -> Self {
         let pointer = Texture::new(include_bytes!("icons/player_arrow.png"), None);
         let camera_fov = Texture::new(include_bytes!("icons/camera_fov_512.png"), None);
         let marker_default = Texture::new(include_bytes!("icons/marker_default.png"), None);
+        let mut overlay_icons = HashMap::new();
+        overlay_icons.insert(
+            "default".to_string(),
+            Texture::new(include_bytes!("icons/marker_default.png"), None),
+        );
+        overlay_icons.insert(
+            "treasure".to_string(),
+            Texture::new(include_bytes!("icons/marker_default.png"), None),
+        );
         let camera_info = CameraInfo::new(pointers);
 
         MapViewer {
             pointer,
             camera_fov,
             marker_default,
+            overlay_icons,
             camera_info,
             tile_manager: TileManager::new(PathBuf::from("map-work/tiles"), 384, 4),
             size_scale: 1.0,
@@ -107,6 +387,11 @@ impl MapViewer {
             player_pos: None,
             status_text: String::new(),
             wanted_next_frame: Vec::new(),
+            show_hardcoded_treasures: true,
+            treasure_points: Vec::new(),
+            treasure_file_path: Self::default_treasure_file_path(),
+            treasure_file_mtime: None,
+            treasure_load_error_logged: false,
         }
     }
 
@@ -339,6 +624,9 @@ impl MapViewer {
 
                 ui.separator();
                 if let Some(_debug_token) = ui.tree_node("Debug") {
+                    ui.checkbox("Show Hardcoded Treasures", &mut self.show_hardcoded_treasures);
+                    ui.text(format!("Treasure File: {}", self.treasure_file_path.display()));
+                    ui.text(format!("Treasure Points: {}", self.treasure_points.len()));
                     ui.text(format!("Visible: {}", self.visible));
                     ui.text(format!("Mode: {}", self.mode.as_str()));
                     ui.text(format!("Status: {}", self.status_text));
@@ -403,6 +691,9 @@ impl MapViewer {
         self.pointer.prepare(render_context);
         self.camera_fov.prepare(render_context);
         self.marker_default.prepare(render_context);
+        for tex in self.overlay_icons.values_mut() {
+            tex.prepare(render_context);
+        }
         self.tile_manager.begin_frame();
         self.tile_manager.prepare_needed(render_context, &self.wanted_next_frame);
 
@@ -411,6 +702,7 @@ impl MapViewer {
         self.player_dir = player_dir;
         self.camera_dir = camera_dir;
         self.player_pos = self.camera_info.player_position();
+        self.refresh_treasures_if_needed();
 
         let _ = self.tile_manager.index();
     }
@@ -491,40 +783,15 @@ impl MapViewer {
             clip_mode: self.mode.as_clip_mode(),
         };
 
-        // In rotating square mode, the visible square in screen space maps to a rotated square
-        // in world space. Query with sqrt(2) inflation so corner tiles are not missed.
-        let query_half_extent_px = if matches!(self.mode, MapMode::SquareRotateWithPlayer) {
-            content_hsize * std::f32::consts::SQRT_2
-        } else {
-            content_hsize
-        };
-        let min_x = center_x - query_half_extent_px * target_wu_per_px;
-        let max_x = center_x + query_half_extent_px * target_wu_per_px;
-        let min_z = center_z - query_half_extent_px * target_wu_per_px;
-        let max_z = center_z + query_half_extent_px * target_wu_per_px;
-        let tx0 = (min_x / tile_world_size).floor() as i32;
-        let tx1 = (max_x / tile_world_size).ceil() as i32;
-        let ty0 = (min_z / tile_world_size).floor() as i32;
-        let ty1 = (max_z / tile_world_size).ceil() as i32;
-
-        let mut wanted = Vec::new();
-        for tx in tx0..=tx1 {
-            for ty in ty0..=ty1 {
-                let key = TileKey { z: level, tx, ty };
-                if !self.tile_manager.has_tile(key) {
-                    continue;
-                }
-                let world_aabb = [
-                    tx as f32 * tile_world_size - target_wu_per_px * 0.5,
-                    (tx + 1) as f32 * tile_world_size + target_wu_per_px * 0.5,
-                    ty as f32 * tile_world_size - target_wu_per_px * 0.5,
-                    (ty + 1) as f32 * tile_world_size + target_wu_per_px * 0.5,
-                ];
-                if !matches!(view.tile_visibility(world_aabb), Visibility::Hidden) {
-                    wanted.push(key);
-                }
-            }
-        }
+        let wanted = self.collect_wanted_tiles(TileCollectInput {
+            view: &view,
+            level,
+            tile_world_size,
+            target_wu_per_px,
+            content_hsize,
+            center_x,
+            center_z,
+        });
         self.wanted_next_frame = wanted.clone();
 
         draw_list.with_clip_rect(clip_min, clip_max, || {
@@ -565,53 +832,10 @@ impl MapViewer {
         };
         self.pointer.render_rotate(&draw_list, [map_x, map_y], pointer_rot);
 
-        for item in overlay::take_frame_items() {
-            match item {
-                overlay::OverlayItem::Icon { world_xz, size_px, pivot, color: _ } => {
-                    if let Some(v) = view.marker_visibility(world_xz, size_px, pivot) {
-                        self.marker_default.render_rect(&draw_list, v.screen_rect);
-                    }
-                },
-                overlay::OverlayItem::Text { world_xz, text, color, size_px, pivot } => {
-                    if let Some(v) = view.marker_visibility(world_xz, size_px, pivot) {
-                        draw_list.add_text(
-                            [v.screen_rect[0], v.screen_rect[1]],
-                            ImColor32::from_rgba_f32s(color[0], color[1], color[2], color[3]),
-                            text,
-                        );
-                    }
-                },
-                overlay::OverlayItem::IconText {
-                    world_xz,
-                    text,
-                    color: _,
-                    icon_size_px,
-                    spacing_px,
-                } => {
-                    let total_h = icon_size_px[1] + spacing_px + 14.0;
-                    if let Some(v) =
-                        view.marker_visibility(world_xz, [icon_size_px[0], total_h], [0.5, 0.5])
-                    {
-                        let cx = v.screen_anchor[0];
-                        let top = v.screen_anchor[1] - total_h * 0.5;
-                        self.marker_default.render_rect(
-                            &draw_list,
-                            [
-                                cx - icon_size_px[0] * 0.5,
-                                top,
-                                cx + icon_size_px[0] * 0.5,
-                                top + icon_size_px[1],
-                            ],
-                        );
-                        draw_list.add_text(
-                            [cx - (text.len() as f32 * 3.0), top + icon_size_px[1] + spacing_px],
-                            ImColor32::from_rgba_f32s(1.0, 1.0, 1.0, 1.0),
-                            text,
-                        );
-                    }
-                },
-            }
+        if self.show_hardcoded_treasures {
+            self.enqueue_hardcoded_treasures();
         }
+        self.render_overlays(ui, &draw_list, clip_min, clip_max, &view, target_wu_per_px);
 
         let tile_size_px = self.tile_manager.tile_size_px().unwrap_or(0);
         self.status_text = format!(
