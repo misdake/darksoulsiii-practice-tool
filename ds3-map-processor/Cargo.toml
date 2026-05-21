@@ -11,5 +11,6 @@ serde = { workspace = true }
 toml = "0.8.20"
 serde_json = "1.0"
 ds3-depthbuffer = { path = "../lib/ds3-depthbuffer" }
+rayon = "1.10"
 
 [dev-dependencies]

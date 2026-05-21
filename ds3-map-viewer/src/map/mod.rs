@@ -795,17 +795,28 @@ impl MapViewer {
         self.wanted_next_frame = wanted.clone();
 
         draw_list.with_clip_rect(clip_min, clip_max, || {
-            let tile_overlap_wu = target_wu_per_px * 0.5;
+            let mut corner_cache: HashMap<(i32, i32), [f32; 2]> =
+                HashMap::with_capacity(wanted.len().saturating_mul(4));
+            for key in &wanted {
+                for &(gx, gy) in &[
+                    (key.tx, key.ty),
+                    (key.tx + 1, key.ty),
+                    (key.tx + 1, key.ty + 1),
+                    (key.tx, key.ty + 1),
+                ] {
+                    corner_cache.entry((gx, gy)).or_insert_with(|| {
+                        let wx = gx as f32 * tile_world_size;
+                        let wz = gy as f32 * tile_world_size;
+                        view.world_to_screen([wx, wz])
+                    });
+                }
+            }
             for key in &wanted {
                 let Some(tex_id) = self.tile_manager.texture_for(*key) else { continue };
-                let x0 = key.tx as f32 * tile_world_size - tile_overlap_wu;
-                let x1 = (key.tx + 1) as f32 * tile_world_size + tile_overlap_wu;
-                let z0 = key.ty as f32 * tile_world_size - tile_overlap_wu;
-                let z1 = (key.ty + 1) as f32 * tile_world_size + tile_overlap_wu;
-                let p1 = view.world_to_screen([x0, z0]);
-                let p2 = view.world_to_screen([x1, z0]);
-                let p3 = view.world_to_screen([x1, z1]);
-                let p4 = view.world_to_screen([x0, z1]);
+                let Some(&p1) = corner_cache.get(&(key.tx, key.ty)) else { continue };
+                let Some(&p2) = corner_cache.get(&(key.tx + 1, key.ty)) else { continue };
+                let Some(&p3) = corner_cache.get(&(key.tx + 1, key.ty + 1)) else { continue };
+                let Some(&p4) = corner_cache.get(&(key.tx, key.ty + 1)) else { continue };
                 draw_list.add_image_quad(tex_id, p1, p2, p3, p4).build();
             }
         });

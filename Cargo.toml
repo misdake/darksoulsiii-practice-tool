@@ -18,6 +18,14 @@ members = [
 version = "1.7.1"
 authors = ["Andrea Venuta <venutawebdesign@gmail.com>"]
 
+[profile.dev.package."*"]
+# Set the default for dependencies in Development mode.
+opt-level = 3
+
+[profile.dev]
+# Turn on a small amount of optimization in Development mode.
+opt-level = 0
+
 [profile.release]
 opt-level = 3
 

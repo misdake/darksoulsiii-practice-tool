@@ -579,6 +579,17 @@ function render() {
 
   let drawn = 0;
   const ext = tileIndex.image_ext || 'jpg';
+  const cornerCache = new Map();
+  const cornerKey = (tx, ty) => `${tx},${ty}`;
+  const getCorner = (tx, ty) => {
+    const k = cornerKey(tx, ty);
+    let p = cornerCache.get(k);
+    if (!p) {
+      p = worldToScreen(tx * tw, ty * tw);
+      cornerCache.set(k, p);
+    }
+    return p;
+  };
 
   for (let tx = tx0; tx <= tx1; tx++) {
     const xName = encodeCoord(tx);
@@ -592,10 +603,8 @@ function render() {
       const url = `${currentTilesRoot}/${zName}/${xName}/${yName}.${ext}`;
       const state = ensureImage(url);
 
-      const x0 = tx * tw, x1 = x0 + tw;
-      const y0 = ty * tw, y1 = y0 + tw;
-      const [sx0, sy0] = worldToScreen(x0, y0);
-      const [sx1, sy1] = worldToScreen(x1, y1);
+      const [sx0, sy0] = getCorner(tx, ty);
+      const [sx1, sy1] = getCorner(tx + 1, ty + 1);
       const ix0 = Math.round(sx0);
       const iy0 = Math.round(sy0);
       const ix1 = Math.round(sx1);
