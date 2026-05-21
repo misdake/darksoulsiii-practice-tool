@@ -2,11 +2,14 @@ use libds3::memedit::PointerChain;
 use libds3::pointers::PointerChains;
 
 pub struct CameraInfo {
+    player_angle: PointerChain<f32>,
     position: PointerChain<[f32; 3]>,
     camera_angle_follow: PointerChain<[f32; 2]>,
     camera_position_follow: PointerChain<[f32; 3]>,
     camera_position_global: PointerChain<[f32; 3]>,
     player_position: Option<[f32; 3]>,
+    player_dir: f32,
+    camera_dir: f32,
     camera_follow_saved: [f32; 3],
     camera_global_saved: [f32; 3],
     in_game_saved: [bool; 5],
@@ -18,10 +21,13 @@ impl CameraInfo {
     pub fn new(pointers: &PointerChains) -> Self {
         CameraInfo {
             position: pointers.position.1.clone(),
+            player_angle: pointers.position.0.clone(),
             camera_angle_follow: pointers.camera.angle_follow.clone(),
             camera_position_follow: pointers.camera.position_follow.clone(),
             camera_position_global: pointers.camera.position_global.clone(),
             player_position: None,
+            player_dir: 0.0,
+            camera_dir: 0.0,
             camera_follow_saved: [0., 0., 0.],
             camera_global_saved: [0., 0., 0.],
             in_game_saved: [false; 5],
@@ -34,14 +40,16 @@ impl CameraInfo {
         self.player_position
     }
 
-    /// returns (visible, dir)
-    pub fn update(&mut self) -> (bool, f32) {
+    /// returns (visible, player_dir, camera_dir)
+    pub fn update(&mut self) -> (bool, f32, f32) {
         if let (
+            Some(player_dir),
             Some(player_position),
             Some(camera_follow),
             Some(camera_global),
             Some([_rot_x, rot_y]),
         ) = (
+            self.player_angle.read(),
             self.position.read(),
             self.camera_position_follow.read(),
             self.camera_position_global.read(),
@@ -49,7 +57,10 @@ impl CameraInfo {
         ) {
             self.player_position = Some(player_position);
 
+            let player_dir = if player_dir < 0. { player_dir + std::f32::consts::TAU } else { player_dir };
             let rot_y = if rot_y < 0. { rot_y + std::f32::consts::TAU } else { rot_y };
+            self.player_dir = player_dir;
+            self.camera_dir = rot_y;
 
             fn almost_same(a: [f32; 3], b: [f32; 3]) -> bool {
                 const E: f32 = 0.0001;
@@ -70,17 +81,19 @@ impl CameraInfo {
 
             let visible = self.in_game_saved.iter().take(self.in_game_saved_len).any(|i| *i);
 
-            (visible, rot_y)
+            (visible, self.player_dir, self.camera_dir)
         } else {
-            // bad memory => hide compass
+            // bad memory => hide map
             self.player_position = None;
+            self.player_dir = 0.0;
+            self.camera_dir = 0.0;
             self.camera_follow_saved = [0., 0., 0.];
             self.camera_global_saved = [0., 0., 0.];
             self.in_game_saved = [false; 5];
             self.in_game_saved_len = 0;
             self.in_game_saved_next = 0;
 
-            (false, 0.)
+            (false, 0.0, 0.0)
         }
     }
 }

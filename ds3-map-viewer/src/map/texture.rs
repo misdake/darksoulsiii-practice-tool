@@ -1,13 +1,16 @@
 use std::io::Cursor;
 
+use hudhook::tracing::warn;
 use hudhook::RenderContext;
 use image::io::Reader;
 use image::{EncodableLayout, RgbaImage};
 use imgui::TextureId;
+use crate::util;
 
 pub struct Texture {
     source: RgbaImage,
     image_id: Option<TextureId>,
+    upload_failed_logged: bool,
     // resized in render
     width: f32,
     height: f32,
@@ -28,14 +31,40 @@ impl Texture {
             [source.width(), source.height()]
         };
 
-        Texture { source, image_id: None, width: width as f32, height: height as f32 }
+        Texture {
+            source,
+            image_id: None,
+            upload_failed_logged: false,
+            width: width as f32,
+            height: height as f32,
+        }
     }
 
     pub fn prepare(&mut self, renderer: &mut dyn RenderContext) {
         if self.image_id.is_none() {
-            self.image_id = renderer
-                .load_texture(self.source.as_bytes(), self.source.width(), self.source.height())
-                .ok();
+            match renderer.load_texture(self.source.as_bytes(), self.source.width(), self.source.height()) {
+                Ok(id) => {
+                    self.image_id = Some(id);
+                    self.upload_failed_logged = false;
+                },
+                Err(e) => {
+                    if !self.upload_failed_logged {
+                        warn!(
+                            "Texture upload failed ({}x{}): {:?}",
+                            self.source.width(),
+                            self.source.height(),
+                            e
+                        );
+                        util::append_log_line(&format!(
+                            "texture upload failed: {}x{} err={:?}",
+                            self.source.width(),
+                            self.source.height(),
+                            e
+                        ));
+                        self.upload_failed_logged = true;
+                    }
+                },
+            }
         }
     }
 
@@ -61,43 +90,56 @@ impl Texture {
         (p1, p2, p3, p4)
     }
 
-    pub fn render(&self, ui: &imgui::Ui, center_position: [f32; 2]) {
-        let list = ui.get_foreground_draw_list();
-        let (p1, p2, p3, p4) = self.calc_quad(center_position, 0.);
-        list.add_image_quad(self.image_id.unwrap(), p1, p2, p3, p4).build();
+    pub fn render_rotate(
+        &self,
+        list: &imgui::DrawListMut<'_>,
+        center_position: [f32; 2],
+        rotate: f32,
+    ) {
+        let Some(image_id) = self.image_id else {
+            return;
+        };
+        let (p1, p2, p3, p4) = self.calc_quad(center_position, rotate);
+        list.add_image_quad(image_id, p1, p2, p3, p4).build();
     }
 
-    pub fn render_rect(&self, ui: &imgui::Ui, rect: [f32; 4]) {
-        let list = ui.get_foreground_draw_list();
-        list.add_image(self.image_id.unwrap(), [rect[0], rect[1]], [rect[2], rect[3]])
-            .build();
+    pub fn render_rect(&self, list: &imgui::DrawListMut<'_>, rect: [f32; 4]) {
+        let Some(image_id) = self.image_id else {
+            return;
+        };
+        list.add_image(image_id, [rect[0], rect[1]], [rect[2], rect[3]]).build();
     }
 
     #[allow(unused)]
     pub fn render_rotate_rect_clip(
         &self,
-        ui: &imgui::Ui,
+        _ui: &imgui::Ui,
+        list: &imgui::DrawListMut<'_>,
         center_position: [f32; 2],
         rect: [f32; 4],
         rotate: f32,
     ) {
-        let list = ui.get_foreground_draw_list();
+        let Some(image_id) = self.image_id else {
+            return;
+        };
         list.with_clip_rect([rect[0], rect[1]], [rect[2], rect[3]], || {
             let (p1, p2, p3, p4) = self.calc_quad(center_position, rotate);
-            list.add_image_quad(self.image_id.unwrap(), p1, p2, p3, p4).build();
+            list.add_image_quad(image_id, p1, p2, p3, p4).build();
         });
     }
 
     #[allow(unused)]
     pub fn render_circle_clip(
         &self,
-        ui: &imgui::Ui,
+        _ui: &imgui::Ui,
+        list_mut: &imgui::DrawListMut<'_>,
         center_position: [f32; 2],
         circle_position: [f32; 2],
         circle_radius: f32,
     ) {
-        let list_mut = ui.get_foreground_draw_list();
-
+        let Some(image_id) = self.image_id else {
+            return;
+        };
         let [circle_x, circle_y] = circle_position;
         let r = circle_radius;
         let circle_left = circle_x - r;
@@ -119,7 +161,7 @@ impl Texture {
 
         list_mut
             .add_image_rounded(
-                self.image_id.unwrap(),
+                image_id,
                 [circle_x - r, circle_y - r],
                 [circle_x + r, circle_y + r],
                 circle_radius,
