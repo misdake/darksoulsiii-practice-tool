@@ -25,10 +25,13 @@ pub fn parse_coord_space(raw: &str) -> CoordSpace {
 }
 
 pub fn z_sign(from: CoordSpace, to: CoordSpace) -> f32 {
-    if from == to { 1.0 } else { -1.0 }
+    if from == to {
+        1.0
+    } else {
+        -1.0
+    }
 }
 
 pub fn convert_z(z: f32, from: CoordSpace, to: CoordSpace) -> f32 {
     z * z_sign(from, to)
 }
-

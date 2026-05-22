@@ -45,13 +45,7 @@ pub fn add_icon(
     color: [f32; 4],
 ) {
     if let Ok(mut items) = OVERLAY_ITEMS.lock() {
-        items.push(OverlayItem::Icon {
-            icon: icon.into(),
-            world_xz,
-            size_wu,
-            pivot,
-            color,
-        });
+        items.push(OverlayItem::Icon { icon: icon.into(), world_xz, size_wu, pivot, color });
     }
 }
 

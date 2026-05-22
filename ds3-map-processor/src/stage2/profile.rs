@@ -32,10 +32,7 @@ pub(super) fn print_stage2_profile_summary() {
     let tiles = PROF_TILE_COUNT.load(Ordering::Relaxed);
     println!("Stage2 profile (aggregated across threads):");
     println!("  refs={} tiles={}", refs, tiles);
-    println!(
-        "  get_or_load_capture: {:.3} ms",
-        to_ms(PROF_GET_OR_LOAD_NS.load(Ordering::Relaxed))
-    );
+    println!("  get_or_load_capture: {:.3} ms", to_ms(PROF_GET_OR_LOAD_NS.load(Ordering::Relaxed)));
     println!(
         "  iter_points_in_aabb_for_tile: {:.3} ms",
         to_ms(PROF_ITER_POINTS_NS.load(Ordering::Relaxed))
@@ -44,10 +41,7 @@ pub(super) fn print_stage2_profile_summary() {
         "  accumulate_points_for_tile: {:.3} ms",
         to_ms(PROF_ACCUM_NS.load(Ordering::Relaxed))
     );
-    println!(
-        "  render_tile_from_accum: {:.3} ms",
-        to_ms(PROF_RENDER_NS.load(Ordering::Relaxed))
-    );
+    println!("  render_tile_from_accum: {:.3} ms", to_ms(PROF_RENDER_NS.load(Ordering::Relaxed)));
     println!("  apply_walkable_mask: {:.3} ms", to_ms(PROF_MASK_NS.load(Ordering::Relaxed)));
     println!("  save_jpeg: {:.3} ms", to_ms(PROF_JPEG_NS.load(Ordering::Relaxed)));
 }

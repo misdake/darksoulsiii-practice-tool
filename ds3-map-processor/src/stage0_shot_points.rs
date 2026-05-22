@@ -162,7 +162,6 @@ fn find_capture_subdirs(capture_dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-
 fn build_shot_points(traj: &TrajectoryFile, cfg: &ShotConfig) -> Result<ShotPointsFile> {
     let traj_space = parse_coord_space(&traj.coord_space);
     let density = (cfg.base_ratio_px_per_wu.max(1.0e-6)) * (cfg.density_multiplier.max(1.0e-6));
@@ -275,22 +274,15 @@ fn point_in_region_conservative(
     let hx = step_x * 0.5;
     let hz = step_z * 0.5;
     let half_diag = (hx * hx + hz * hz).sqrt();
-    let sample_pts = [
-        [x, z],
-        [x - hx, z - hz],
-        [x - hx, z + hz],
-        [x + hx, z - hz],
-        [x + hx, z + hz],
-    ];
+    let sample_pts =
+        [[x, z], [x - hx, z - hz], [x - hx, z + hz], [x + hx, z - hz], [x + hx, z + hz]];
 
     for lp in &traj.loops {
         if lp.len() < 3 {
             continue;
         }
-        let poly: Vec<[f32; 2]> = lp
-            .iter()
-            .map(|p| [p[0], -convert_z(p[2], traj_space, CoordSpace::Game)])
-            .collect();
+        let poly: Vec<[f32; 2]> =
+            lp.iter().map(|p| [p[0], -convert_z(p[2], traj_space, CoordSpace::Game)]).collect();
         for s in sample_pts {
             if point_in_polygon(s[0], s[1], &poly) {
                 return true;
@@ -313,10 +305,7 @@ fn point_in_region_conservative(
         }
         for i in 0..(ln.len() - 1) {
             let a = [ln[i][0], -convert_z(ln[i][2], traj_space, CoordSpace::Game)];
-            let b = [
-                ln[i + 1][0],
-                -convert_z(ln[i + 1][2], traj_space, CoordSpace::Game),
-            ];
+            let b = [ln[i + 1][0], -convert_z(ln[i + 1][2], traj_space, CoordSpace::Game)];
             if dist2_point_seg(x, z, a[0], a[1], b[0], b[1]) <= b2 {
                 return true;
             }

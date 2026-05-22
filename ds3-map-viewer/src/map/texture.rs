@@ -1,11 +1,11 @@
 use std::io::Cursor;
 
+use crate::util;
 use hudhook::tracing::warn;
 use hudhook::RenderContext;
 use image::io::Reader;
 use image::{EncodableLayout, RgbaImage};
 use imgui::TextureId;
-use crate::util;
 
 pub struct Texture {
     source: RgbaImage,
@@ -42,7 +42,11 @@ impl Texture {
 
     pub fn prepare(&mut self, renderer: &mut dyn RenderContext) {
         if self.image_id.is_none() {
-            match renderer.load_texture(self.source.as_bytes(), self.source.width(), self.source.height()) {
+            match renderer.load_texture(
+                self.source.as_bytes(),
+                self.source.width(),
+                self.source.height(),
+            ) {
                 Ok(id) => {
                     self.image_id = Some(id);
                     self.upload_failed_logged = false;

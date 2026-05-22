@@ -571,7 +571,10 @@ fn run_simulation(
     println!("  finalize: writing walkable_heights.csv");
     write_final_heights_csv(&out_root.join("walkable_heights.csv"), &state)?;
     println!("  finalize: writing capsule_aabb_fail_details.csv");
-    write_capsule_aabb_rows_csv(&out_root.join("capsule_aabb_fail_details.csv"), &capsule_aabb_rows)?;
+    write_capsule_aabb_rows_csv(
+        &out_root.join("capsule_aabb_fail_details.csv"),
+        &capsule_aabb_rows,
+    )?;
     println!("  finalize: writing capsule_aabb_fail_summary.txt");
     write_capsule_aabb_summary(
         &out_root.join("capsule_aabb_fail_summary.txt"),
@@ -1085,7 +1088,14 @@ fn write_capsule_aabb_summary(path: &Path, rows: &[CapsuleAabbRow]) -> Result<()
     let avg_sample = if total == 0 { 0.0 } else { sum_sample as f64 / total as f64 };
     let avg_occupied = if total == 0 { 0.0 } else { sum_occupied as f64 / total as f64 };
     let mut f = fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
-    writeln!(f, "aabb: x=[{:.3},{:.3}] z=[{:.3},{:.3}]", CAPSULE_DEBUG_AABB_MIN_X, CAPSULE_DEBUG_AABB_MAX_X, CAPSULE_DEBUG_AABB_MIN_Z, CAPSULE_DEBUG_AABB_MAX_Z)?;
+    writeln!(
+        f,
+        "aabb: x=[{:.3},{:.3}] z=[{:.3},{:.3}]",
+        CAPSULE_DEBUG_AABB_MIN_X,
+        CAPSULE_DEBUG_AABB_MAX_X,
+        CAPSULE_DEBUG_AABB_MIN_Z,
+        CAPSULE_DEBUG_AABB_MAX_Z
+    )?;
     writeln!(f, "total_rows: {}", total)?;
     writeln!(f, "center_upper_fail: {}", center_upper)?;
     writeln!(f, "occ_ratio_fail: {}", occ_ratio)?;
@@ -1113,10 +1123,7 @@ fn point_in_aabb(x: f32, z: f32) -> bool {
 }
 
 fn cell_center_world(cell: (i32, i32)) -> (f32, f32) {
-    (
-        (cell.0 as f32 + 0.5) * GRID_RES_WORLD,
-        (cell.1 as f32 + 0.5) * GRID_RES_WORLD,
-    )
+    ((cell.0 as f32 + 0.5) * GRID_RES_WORLD, (cell.1 as f32 + 0.5) * GRID_RES_WORLD)
 }
 
 fn expand_from_frontier(
@@ -1565,8 +1572,7 @@ fn capsule_check_detail(
             occupied += 1;
             if dist <= CAPSULE_CENTER_RADIUS_WORLD {
                 let upper_body_points =
-                    n.ys
-                        .iter()
+                    n.ys.iter()
                         .filter(|&&y| y >= ground + CAPSULE_CENTER_UPPER_FLOOR && y <= high)
                         .count() as u32;
                 center_upper_hits += upper_body_points;

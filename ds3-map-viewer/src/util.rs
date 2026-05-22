@@ -40,10 +40,7 @@ pub fn get_dll_path() -> Option<PathBuf> {
 }
 
 pub fn append_log_line(msg: &str) {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
     let line = format!("[{}] {}\n", now_ms, msg);
 
     let log_path = std::env::current_exe()

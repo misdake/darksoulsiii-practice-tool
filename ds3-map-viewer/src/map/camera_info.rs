@@ -57,7 +57,8 @@ impl CameraInfo {
         ) {
             self.player_position = Some(player_position);
 
-            let player_dir = if player_dir < 0. { player_dir + std::f32::consts::TAU } else { player_dir };
+            let player_dir =
+                if player_dir < 0. { player_dir + std::f32::consts::TAU } else { player_dir };
             let rot_y = if rot_y < 0. { rot_y + std::f32::consts::TAU } else { rot_y };
             self.player_dir = player_dir;
             self.camera_dir = rot_y;

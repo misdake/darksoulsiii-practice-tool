@@ -1,6 +1,6 @@
+use std::fs;
 use std::path::Path;
 use std::time::SystemTime;
-use std::fs;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -28,7 +28,9 @@ pub fn write_shot_points_from_capture_tomls(
     stage2_group_root: &Path,
 ) -> Result<()> {
     let mut tomls = Vec::new();
-    for e in fs::read_dir(capture_dir).with_context(|| format!("read_dir {}", capture_dir.display()))? {
+    for e in
+        fs::read_dir(capture_dir).with_context(|| format!("read_dir {}", capture_dir.display()))?
+    {
         let e = e?;
         let p = e.path();
         if p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("toml") {
@@ -71,12 +73,7 @@ pub fn write_shot_points_from_capture_tomls(
             })
             .unwrap_or(false);
         if !is_dup {
-            points.push(Stage2ShotPoint {
-                id: points.len(),
-                x: p3[0],
-                y: p3[1],
-                z: p3[2],
-            });
+            points.push(Stage2ShotPoint { id: points.len(), x: p3[0], y: p3[1], z: p3[2] });
         }
     }
     if points.is_empty() {

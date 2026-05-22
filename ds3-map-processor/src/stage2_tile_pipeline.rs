@@ -3,39 +3,37 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{collections::HashSet, fs};
 
-use anyhow::{Context, Result};
 use crate::common::{
-    CloudPoint, TileIndex, TileRenderResult,
-    MAX_POINT_BYTES_IN_FLIGHT, SCALE_WORLD_UNITS_PER_PIXEL, TILE_SIZE_PX,
+    CloudPoint, TileIndex, TileRenderResult, MAX_POINT_BYTES_IN_FLIGHT,
+    SCALE_WORLD_UNITS_PER_PIXEL, TILE_SIZE_PX,
 };
 use crate::fs_utils::encode_coord;
-use crate::tile_pyramid::{add_tile_to_index, build_coarse_png_from_children};
 use crate::stage1_pointcloud::{
     iter_points_in_aabb_for_tile, parse_tile_key, read_tile_pixel_index,
 };
 use crate::task_budget::run_with_budget;
+use crate::tile_pyramid::{add_tile_to_index, build_coarse_png_from_children};
+use anyhow::{Context, Result};
 use serde::Serialize;
 #[path = "stage2/cache.rs"]
 mod cache;
-#[path = "stage2/walkable.rs"]
-mod walkable;
 #[path = "stage2/profile.rs"]
 mod profile;
 #[path = "stage2/render.rs"]
 mod render;
+#[path = "stage2/walkable.rs"]
+mod walkable;
 use cache::{get_or_load_capture, new_capture_lru, CaptureLru};
 use profile::{
     add_prof_ns, print_stage2_profile_summary, reset_stage2_profile_counters, PROF_ACCUM_NS,
-    PROF_GET_OR_LOAD_NS, PROF_ITER_POINTS_NS, PROF_JPEG_NS, PROF_REF_COUNT,
-    PROF_RENDER_NS, PROF_TILE_COUNT,
-};
-use walkable::{
-    load_walkable_mask, write_merged_walkable_file,
+    PROF_GET_OR_LOAD_NS, PROF_ITER_POINTS_NS, PROF_JPEG_NS, PROF_REF_COUNT, PROF_RENDER_NS,
+    PROF_TILE_COUNT,
 };
 use render::{
     accumulate_points_for_tile, is_all_black, new_tile_render_accum, render_tile_from_accum,
     srgb_u8_to_linear_f32,
 };
+use walkable::{load_walkable_mask, write_merged_walkable_file};
 
 const STAGE2_IMAGE_EXT: &str = "png";
 
@@ -244,11 +242,7 @@ fn render_one_finest_tile(
     ty: i32,
     env: FinestRenderEnv<'_>,
 ) -> Result<Option<FinestTileOutput>> {
-    let FinestRenderEnv {
-        tiles_root,
-        z_max,
-        capture_cache,
-    } = env;
+    let FinestRenderEnv { tiles_root, z_max, capture_cache } = env;
     let units_per_px = SCALE_WORLD_UNITS_PER_PIXEL[z_max];
     let mut accum = new_tile_render_accum();
     let mut has_any_points = false;
@@ -311,22 +305,11 @@ fn render_one_finest_tile(
     fs::create_dir_all(&z_dir).with_context(|| format!("mkdir {}", z_dir.display()))?;
     let tile_path = z_dir.join(format!("{}.png", y_name));
     let t_jpeg = std::time::Instant::now();
-    tile.image
-        .save(&tile_path)
-        .with_context(|| format!("save png {}", tile_path.display()))?;
+    tile.image.save(&tile_path).with_context(|| format!("save png {}", tile_path.display()))?;
     add_prof_ns(&PROF_JPEG_NS, t_jpeg.elapsed().as_nanos());
 
-    Ok(Some(FinestTileOutput {
-        tile,
-        z_range: TileZRange {
-            tx,
-            ty,
-            z_min,
-            z_max: z_max_world,
-        },
-    }))
+    Ok(Some(FinestTileOutput { tile, z_range: TileZRange { tx, ty, z_min, z_max: z_max_world } }))
 }
-
 
 fn estimate_tile_refs_bytes(refs: &[crate::common::TilePixelRef]) -> usize {
     let mut px = 0usize;
@@ -336,5 +319,3 @@ fn estimate_tile_refs_bytes(refs: &[crate::common::TilePixelRef]) -> usize {
     // rough upper bound for decoded/color+depth working-set contribution
     (px.saturating_mul(24)).max(1)
 }
-
-

@@ -41,8 +41,9 @@ impl Default for MapConfig {
 impl MapConfig {
     fn sanitize(&mut self) {
         self.map_size_scale = self.map_size_scale.clamp(SIZE_SCALE_MIN, SIZE_SCALE_MAX);
-        self.map_indicator_scale =
-            self.map_indicator_scale.clamp(crate::map::INDICATOR_SCALE_MIN, crate::map::INDICATOR_SCALE_MAX);
+        self.map_indicator_scale = self
+            .map_indicator_scale
+            .clamp(crate::map::INDICATOR_SCALE_MIN, crate::map::INDICATOR_SCALE_MAX);
 
         if self.map_tiles_root.trim().is_empty() {
             self.map_tiles_root = "map-work/tiles".to_string();

@@ -25,6 +25,9 @@ pub fn parse_coord_space(raw: &str) -> CoordSpace {
 }
 
 pub fn convert_z(z: f32, from: CoordSpace, to: CoordSpace) -> f32 {
-    if from == to { z } else { -z }
+    if from == to {
+        z
+    } else {
+        -z
+    }
 }
-

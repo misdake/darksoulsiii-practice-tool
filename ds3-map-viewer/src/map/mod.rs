@@ -217,15 +217,11 @@ impl MapViewer {
             .points
             .into_iter()
             .map(|p| match p {
-                TreasurePointRepr::Object { x, z, icon } => TreasurePoint {
-                    x,
-                    z,
-                    icon: icon.unwrap_or_else(|| "default".to_string()),
+                TreasurePointRepr::Object { x, z, icon } => {
+                    TreasurePoint { x, z, icon: icon.unwrap_or_else(|| "default".to_string()) }
                 },
-                TreasurePointRepr::Tuple(v) => TreasurePoint {
-                    x: v[0],
-                    z: v[2],
-                    icon: "default".to_string(),
+                TreasurePointRepr::Tuple(v) => {
+                    TreasurePoint { x: v[0], z: v[2], icon: "default".to_string() }
                 },
             })
             .collect();
@@ -286,26 +282,17 @@ impl MapViewer {
         draw_list.with_clip_rect(clip_min, clip_max, || {
             for item in overlay::take_frame_items() {
                 match item {
-                    overlay::OverlayItem::Icon {
-                        icon,
-                        world_xz,
-                        size_wu,
-                        pivot,
-                        color: _,
-                    } => {
-                        let size_px = [
-                            size_wu[0] / target_wu_per_px,
-                            size_wu[1] / target_wu_per_px,
-                        ];
+                    overlay::OverlayItem::Icon { icon, world_xz, size_wu, pivot, color: _ } => {
+                        let size_px =
+                            [size_wu[0] / target_wu_per_px, size_wu[1] / target_wu_per_px];
                         if let Some(v) = view.marker_visibility(world_xz, size_px, pivot) {
-                            self.texture_for_overlay_icon(&icon).render_rect(draw_list, v.screen_rect);
+                            self.texture_for_overlay_icon(&icon)
+                                .render_rect(draw_list, v.screen_rect);
                         }
                     },
                     overlay::OverlayItem::Text { world_xz, text, color, size_wu, pivot } => {
-                        let size_px = [
-                            size_wu[0] / target_wu_per_px,
-                            size_wu[1] / target_wu_per_px,
-                        ];
+                        let size_px =
+                            [size_wu[0] / target_wu_per_px, size_wu[1] / target_wu_per_px];
                         if let Some(v) = view.marker_visibility(world_xz, size_px, pivot) {
                             draw_list.add_text(
                                 [v.screen_rect[0], v.screen_rect[1]],
@@ -608,10 +595,7 @@ impl MapViewer {
                     MapMode::SquareNorthUp => 0,
                     MapMode::SquareRotateWithPlayer => 1,
                 };
-                let mode_items = [
-                    "Square North-up",
-                    "Square Rotate (Camera North)",
-                ];
+                let mode_items = ["Square North-up", "Square Rotate (Camera North)"];
                 ui.set_next_item_width(MAP_HSIZE * base_scale * 1.2);
                 if ui.combo_simple_string("Map Mode", &mut mode_idx, &mode_items) {
                     mode = match mode_idx {
@@ -654,17 +638,10 @@ impl MapViewer {
                 panel_height = ui.window_size()[1];
             });
 
-        let old = (
-            self.size_scale,
-            self.indicator_scale,
-            self.level,
-            self.mode,
-            self.tiles_root(),
-        );
+        let old = (self.size_scale, self.indicator_scale, self.level, self.mode, self.tiles_root());
 
         self.size_scale = size_scale.clamp(SIZE_SCALE_MIN, SIZE_SCALE_MAX);
-        self.indicator_scale =
-            indicator_scale.clamp(INDICATOR_SCALE_MIN, INDICATOR_SCALE_MAX);
+        self.indicator_scale = indicator_scale.clamp(INDICATOR_SCALE_MIN, INDICATOR_SCALE_MAX);
         self.level = level;
         self.mode = mode;
         self.set_tiles_root(tiles_root);
@@ -851,7 +828,10 @@ impl MapViewer {
         let tile_size_px = self.tile_manager.tile_size_px().unwrap_or(0);
         self.status_text = format!(
             "level={} wu_per_px={:.5} wanted_tiles={} tile_px={}",
-            level, target_wu_per_px, wanted.len(), tile_size_px
+            level,
+            target_wu_per_px,
+            wanted.len(),
+            tile_size_px
         );
     }
 }

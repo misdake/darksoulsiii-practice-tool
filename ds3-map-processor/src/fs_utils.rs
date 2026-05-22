@@ -73,7 +73,10 @@ pub fn find_all_toml_in_capture(capture_dir: &Path) -> Result<Vec<PathBuf>> {
     Ok(all)
 }
 
-pub fn group_tomls_by_first_subdir(capture_dir: &Path, tomls: &[PathBuf]) -> Result<Vec<(String, Vec<PathBuf>)>> {
+pub fn group_tomls_by_first_subdir(
+    capture_dir: &Path,
+    tomls: &[PathBuf],
+) -> Result<Vec<(String, Vec<PathBuf>)>> {
     use std::collections::BTreeMap;
     let mut groups: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
     for p in tomls {
