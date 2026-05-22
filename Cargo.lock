@@ -305,6 +305,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ds3-walk-surface"
+version = "1.7.1"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "either"
 version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

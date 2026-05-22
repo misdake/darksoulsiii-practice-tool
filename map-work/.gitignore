@@ -4,5 +4,6 @@
 /tile_pixel_index.json
 /alerts.csv
 /walkable-exp/
+/walk-surface-m40/
 *.tmp
 ds3_map_viewer.log

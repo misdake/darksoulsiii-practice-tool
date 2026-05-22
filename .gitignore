@@ -1,6 +1,9 @@
 /target
 /ignore
-jdsd_dsiii_practice_tool.zip
-savefiles.db
-.env
 /capture
+/ds3map
+
+# ds3 walk-surface generated outputs
+/ds3-walk-surface/tools/**/bin/
+/ds3-walk-surface/tools/**/obj/
+/map-work/walk-surface-*/

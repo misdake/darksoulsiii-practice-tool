@@ -12,6 +12,7 @@ members = [
     "lib/param-mod",
     "lib/scripts",
     "xtask",
+    "ds3-walk-surface",
 ]
 
 [workspace.package]
