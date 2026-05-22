@@ -1,158 +1,294 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DS3 Walk Surface Viewer</title>
-  <style>
-    :root {
-      --bg: #0f1115;
-      --panel: #171b22;
-      --line: #2a3342;
-      --text: #e7edf7;
-      --muted: #9fb0c9;
-      --accent: #6ee7ff;
-      --ok: #87f5b1;
-      --warn: #ffd27d;
-    }
-    html, body {
-      width: 100%;
-      height: 100%;
-      margin: 0;
-      background: radial-gradient(circle at 20% 20%, #1a2432 0%, var(--bg) 50%);
-      color: var(--text);
-      font-family: "Segoe UI", "Noto Sans", sans-serif;
-    }
-    #app {
-      position: fixed;
-      inset: 0;
-    }
-    #panel {
-      position: fixed;
-      top: 16px;
-      left: 16px;
-      width: min(600px, calc(100vw - 32px));
-      background: color-mix(in srgb, var(--panel) 92%, black);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 12px;
-      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
-      backdrop-filter: blur(6px);
-      z-index: 10;
-    }
-    .row {
-      display: grid;
-      grid-template-columns: 88px 1fr;
-      gap: 8px;
-      align-items: center;
-      margin: 8px 0;
-    }
-    .row label {
-      color: var(--muted);
-      font-size: 12px;
-    }
-    input[type="text"] {
-      width: 100%;
-      background: #0d1117;
-      border: 1px solid var(--line);
-      color: var(--text);
-      border-radius: 6px;
-      padding: 8px;
-      font-size: 12px;
-      box-sizing: border-box;
-    }
-    .toggles {
-      display: flex;
-      gap: 14px;
-      margin: 10px 0;
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .actions {
-      display: flex;
-      gap: 8px;
-      margin-top: 8px;
-    }
-    button {
-      border: 1px solid var(--line);
-      background: #111723;
-      color: var(--text);
-      border-radius: 6px;
-      padding: 8px 10px;
-      cursor: pointer;
-      font-size: 12px;
-    }
-    button:hover {
-      border-color: var(--accent);
-    }
-    #status {
-      margin-top: 10px;
-      font-size: 12px;
-      color: var(--ok);
-      white-space: pre-wrap;
-    }
-    #hint {
-      margin-top: 8px;
-      font-size: 11px;
-      color: var(--warn);
-    }
-    #objectMenu {
-      margin-top: 10px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 8px;
-      background: #0d1117;
-      max-height: 220px;
-      overflow: auto;
-    }
-    #objectMenuTitle {
-      font-size: 12px;
-      color: var(--muted);
-      margin-bottom: 6px;
-    }
-    .obj-item {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      margin: 4px 0;
-    }
-  </style>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>DS3 Walk Surface Viewer</title>
+    <style>
+        :root {
+            --bg: #0f1115;
+            --panel: #171b22;
+            --line: #2a3342;
+            --text: #e7edf7;
+            --muted: #9fb0c9;
+            --accent: #6ee7ff;
+            --ok: #87f5b1;
+            --warn: #ffd27d;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            background: radial-gradient(circle at 20% 20%, #1a2432 0%, var(--bg) 50%);
+            color: var(--text);
+            font-family: "Segoe UI", "Noto Sans", sans-serif;
+        }
+
+        #app {
+            position: fixed;
+            inset: 0;
+        }
+
+        #panel {
+            position: fixed;
+            top: 16px;
+            left: 16px;
+            width: min(600px, calc(100vw - 32px));
+            background: color-mix(in srgb, var(--panel) 92%, black);
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 12px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+            backdrop-filter: blur(6px);
+            z-index: 10;
+        }
+
+        .row {
+            display: grid;
+            grid-template-columns: 88px 1fr;
+            gap: 8px;
+            align-items: center;
+            margin: 8px 0;
+        }
+
+        .row label {
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            background: #0d1117;
+            border: 1px solid var(--line);
+            color: var(--text);
+            border-radius: 6px;
+            padding: 8px;
+            font-size: 12px;
+            box-sizing: border-box;
+        }
+
+        .toggles {
+            display: flex;
+            gap: 14px;
+            margin: 10px 0;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        button {
+            border: 1px solid var(--line);
+            background: #111723;
+            color: var(--text);
+            border-radius: 6px;
+            padding: 8px 10px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        button:hover {
+            border-color: var(--accent);
+        }
+
+        #status {
+            margin-top: 10px;
+            font-size: 12px;
+            color: var(--ok);
+            white-space: pre-wrap;
+        }
+
+        #hint {
+            margin-top: 8px;
+            font-size: 11px;
+            color: var(--warn);
+        }
+
+        #objectMenu {
+            margin-top: 10px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 8px;
+            background: #0d1117;
+            max-height: 220px;
+            overflow: auto;
+        }
+
+        #objectMenuTitle {
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 6px;
+        }
+
+        details > summary {
+            cursor: pointer;
+            list-style: none;
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 6px;
+            user-select: none;
+        }
+
+        details > summary::-webkit-details-marker {
+            display: none;
+        }
+
+        details > summary::before {
+            content: "▸ ";
+        }
+
+        details[open] > summary::before {
+            content: "▾ ";
+        }
+
+        .obj-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            margin: 4px 0;
+        }
+
+        .display-grid {
+            display: grid;
+            grid-template-columns: 160px 1fr 64px;
+            gap: 8px;
+            align-items: center;
+            margin: 6px 0;
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .display-grid input[type="range"] {
+            width: 100%;
+        }
+
+        .effect-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .reset-btn {
+            padding: 2px 6px;
+            font-size: 11px;
+        }
+    </style>
 </head>
 <body>
-  <div id="app"></div>
-  <div id="panel">
+<div id="app"></div>
+<div id="panel">
     <div class="row">
-      <label>Import List</label>
-      <input id="importListPath" type="text" value="./import-list.json" />
+        <label>Collision JSON</label>
+        <input id="collisionJsonPath" type="text" value="/map-work/walk-surface-m40/collision_h40_world.json"/>
     </div>
     <div class="toggles">
-      <label><input id="showCollision" type="checkbox" checked /> show collision</label>
-      <label><input id="showWalkable" type="checkbox" checked /> show walkable</label>
-      <label><input id="wireframe" type="checkbox" /> wireframe</label>
+        <label><input id="showCollision" type="checkbox" checked/> show collision</label>
+        <label><input id="showWalkable" type="checkbox" checked/> show walkable</label>
     </div>
     <div class="actions">
-      <button id="loadBtn">Load</button>
-      <button id="fitBtn">Fit Camera</button>
-      <button id="exportEnabledBtn">Export Enabled</button>
+        <button id="loadBtn">Load</button>
+        <button id="fitBtn">Fit Camera</button>
+        <button id="exportEnabledBtn">Export Enabled</button>
     </div>
     <div id="status">ready</div>
-    <div id="objectMenu">
-      <div id="objectMenuTitle">Objects</div>
-      <div id="objectList"></div>
-    </div>
-    <div id="hint">Serve from repo root (example: `python -m http.server 8080`), then open `/ds3-walk-surface/web/`.</div>
-  </div>
+    <details id="objectMenu">
+        <summary id="objectMenuTitle">Objects</summary>
+        <div id="objectList"></div>
+    </details>
+    <details id="objectMenu" open style="margin-top: 8px;">
+        <summary id="objectMenuTitle">Hit Filters</summary>
+        <div id="hitFilterList"></div>
+    </details>
+    <details id="objectMenu" open style="margin-top: 8px;">
+        <summary id="objectMenuTitle">Display</summary>
+        <div class="display-grid">
+            <div class="effect-head">
+                <label><input id="csmEnabled" type="checkbox" checked/> CSM Shadow</label>
+                <button id="resetCsmBtn" class="reset-btn" type="button">Reset</button>
+            </div>
+            <span></span>
+            <span></span>
+            <label for="csmMaxFar">CSM MaxFar</label>
+            <input id="csmMaxFar" type="range" min="300" max="2500" step="50" value="1500"/>
+            <span id="csmMaxFarVal">1500</span>
+            <label for="csmIntensity">CSM Intensity</label>
+            <input id="csmIntensity" type="range" min="0" max="2.5" step="0.05" value="1.0"/>
+            <span id="csmIntensityVal">1.0</span>
+            <label for="csmShadowBias">CSM Shadow Bias</label>
+            <input id="csmShadowBias" type="range" min="-0.005" max="0.005" step="0.00005" value="-0.0002"/>
+            <span id="csmShadowBiasVal">-0.0002</span>
+            <label for="csmNormalBias">CSM Normal Bias</label>
+            <input id="csmNormalBias" type="range" min="0" max="3" step="0.02" value="0.9"/>
+            <span id="csmNormalBiasVal">0.9</span>
+            <label for="csmShadowRadius">CSM Shadow Radius</label>
+            <input id="csmShadowRadius" type="range" min="0" max="6" step="0.1" value="2.0"/>
+            <span id="csmShadowRadiusVal">2.0</span>
 
-  <script type="importmap">
+            <div class="effect-head">
+                <label><input id="ssaoEnabled" type="checkbox"/> SSAO</label>
+                <button id="resetSsaoBtn" class="reset-btn" type="button">Reset</button>
+            </div>
+            <span></span>
+            <span></span>
+            <label for="ssaoKernel">SSAO Kernel</label>
+            <input id="ssaoKernel" type="range" min="2" max="24" step="1" value="2"/>
+            <span id="ssaoKernelVal">2</span>
+            <label for="ssaoMinDist">SSAO MinDist</label>
+            <input id="ssaoMinDist" type="range" min="0.0001" max="0.01" step="0.0001" value="0.0001"/>
+            <span id="ssaoMinDistVal">0.0001</span>
+            <label for="ssaoMaxDist">SSAO MaxDist</label>
+            <input id="ssaoMaxDist" type="range" min="0.001" max="0.025" step="0.0001" value="0.002"/>
+            <span id="ssaoMaxDistVal">0.002</span>
+
+            <div class="effect-head">
+                <label><input id="smaaEnabled" type="checkbox" checked/> SMAA</label>
+                <button id="resetSmaaBtn" class="reset-btn" type="button">Reset</button>
+            </div>
+            <span></span>
+            <span></span>
+
+            <div class="effect-head">
+                <label><input id="toneMappingEnabled" type="checkbox" checked/> ToneMapping</label>
+                <button id="resetToneBtn" class="reset-btn" type="button">Reset</button>
+            </div>
+            <span></span>
+            <span></span>
+            <label for="toneExposure">Exposure</label>
+            <input id="toneExposure" type="range" min="0.5" max="2.0" step="0.01" value="1.1"/>
+            <span id="toneExposureVal">1.1</span>
+
+            <div class="effect-head">
+                <label><input id="outlineEnabled" type="checkbox" checked/> Outline</label>
+                <button id="resetOutlineBtn" class="reset-btn" type="button">Reset</button>
+            </div>
+            <span></span>
+            <span></span>
+            <label for="outlineStrength">Outline Strength</label>
+            <input id="outlineStrength" type="range" min="0" max="10" step="0.1" value="4.0"/>
+            <span id="outlineStrengthVal">4.0</span>
+            <label for="outlineThickness">Outline Thickness</label>
+            <input id="outlineThickness" type="range" min="0.5" max="4" step="0.1" value="1.8"/>
+            <span id="outlineThicknessVal">1.8</span>
+        </div>
+    </details>
+    <div id="hint">Serve from repo root (example: `python -m http.server 8080`), then open `/ds3-walk-surface/web/`.</div>
+</div>
+
+<script type="importmap">
     {
       "imports": {
         "three": "https://unpkg.com/three@0.162.0/build/three.module.js",
         "three/addons/": "https://unpkg.com/three@0.162.0/examples/jsm/"
       }
     }
-  </script>
+</script>
 
-  <script type="module" src="./app.js"></script>
+<script type="module" src="./app.js"></script>
 </body>
 </html>
