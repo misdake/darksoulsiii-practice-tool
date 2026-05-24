@@ -1,0 +1,51 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DS3 Map Planner Stage1</title>
+  <style>
+    :root { --bg:#0f1115; --panel:#171b22; --line:#2a3342; --text:#e7edf7; --muted:#9fb0c9; --accent:#6ee7ff; --ok:#87f5b1; }
+    html,body{width:100%;height:100%;margin:0;background:radial-gradient(circle at 20% 20%, #1a2432 0%, var(--bg) 50%);color:var(--text);font-family:"Segoe UI","Noto Sans",sans-serif;}
+    #app{position:fixed;inset:0;} #panel{position:fixed;top:16px;left:16px;width:min(620px,calc(100vw - 32px));background:color-mix(in srgb,var(--panel) 92%,black);border:1px solid var(--line);border-radius:10px;padding:12px;z-index:10}
+    .row{display:grid;grid-template-columns:88px 1fr;gap:8px;align-items:center;margin:8px 0;} .row label{color:var(--muted);font-size:12px}
+    select,input[type="text"]{width:100%;background:#0d1117;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:8px;font-size:12px;box-sizing:border-box}
+    .toggles,.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px} button{border:1px solid var(--line);background:#111723;color:var(--text);border-radius:6px;padding:8px 10px;cursor:pointer;font-size:12px}
+    button:hover{border-color:var(--accent)} #status{margin-top:8px;font-size:12px;color:var(--ok);white-space:pre-wrap}
+    details{margin-top:8px;border:1px solid var(--line);border-radius:8px;padding:8px;background:#0d1117;max-height:240px;overflow:auto}
+    summary{cursor:pointer;font-size:12px;color:var(--muted)} .obj-item{display:flex;align-items:center;gap:6px;font-size:12px;margin:4px 0;border-radius:4px;padding:2px 4px}
+    .obj-item-selected{background:rgba(110,231,255,0.22)}
+    #boxSelectOverlay{position:fixed;left:0;top:0;border:1px solid #6ee7ff;background:rgba(110,231,255,0.14);pointer-events:none;z-index:20;display:none}
+  </style>
+</head>
+<body>
+<div id="app"></div>
+<div id="boxSelectOverlay"></div>
+<div id="panel">
+  <div class="row"><label>Map</label><select id="mapSelect"></select></div>
+  <div class="toggles">
+    <label><input id="showCollision" type="checkbox" checked/> show collision</label>
+    <label>
+      collision opacity
+      <input id="collisionOpacity" type="range" min="0" max="1" step="0.05" value="0.7"/>
+      <span id="collisionOpacityValue">0.70</span>
+    </label>
+    <label><input id="showNavmesh" type="checkbox" checked/> show navmesh</label>
+  </div>
+  <div class="actions">
+    <button id="loadBtn">Load</button>
+    <button id="fitBtn">Fit Camera</button>
+    <button id="resetDefaultBtn">Apply Default Filter</button>
+    <button id="triCullModeBtn">Triangle Cull: Off</button>
+    <button id="saveBtn">Save Filter</button>
+  </div>
+  <details><summary>Collision Objects</summary><div id="collisionList"></div></details>
+  <details><summary>Navmesh Objects</summary><div id="navmeshList"></div></details>
+  <div id="status">ready</div>
+</div>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.162.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.162.0/examples/jsm/" } }
+</script>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

@@ -51,6 +51,11 @@ self.onmessage = async (ev) => {
     const res = await fetch(path, { cache: "no-store" });
     if (!res.ok) throw new Error(`fetch failed ${res.status}: ${path}`);
     const text = await res.text();
+    const contentLengthHeader = res.headers.get("content-length");
+    const contentLength = contentLengthHeader ? Number(contentLengthHeader) : 0;
+    const downloadBytes = Number.isFinite(contentLength) && contentLength > 0
+      ? contentLength
+      : new TextEncoder().encode(text).length;
     const parsed = parseObjText(text);
     self.postMessage(
       {
@@ -58,6 +63,7 @@ self.onmessage = async (ev) => {
         ok: true,
         positions: parsed.positions.buffer,
         indices: parsed.indices.buffer,
+        downloadBytes,
       },
       [parsed.positions.buffer, parsed.indices.buffer]
     );

@@ -1,0 +1,49 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DS3 Terrain Adventure</title>
+  <style>
+    :root { --bg:#0f1115; --panel:#171b22; --line:#2a3342; --text:#e7edf7; --muted:#9fb0c9; --accent:#6ee7ff; --ok:#87f5b1; }
+    html,body{width:100%;height:100%;margin:0;background:radial-gradient(circle at 20% 20%, #1a2432 0%, var(--bg) 50%);color:var(--text);font-family:"Segoe UI","Noto Sans",sans-serif;}
+    #app{position:fixed;inset:0;}
+    #panel{position:fixed;top:16px;left:16px;width:min(520px,calc(100vw - 32px));background:color-mix(in srgb,var(--panel) 92%,black);border:1px solid var(--line);border-radius:10px;padding:12px;z-index:10}
+    .row{display:grid;grid-template-columns:100px 1fr;gap:8px;align-items:center;margin:8px 0;}
+    .row label{color:var(--muted);font-size:12px}
+    select{width:100%;background:#0d1117;border:1px solid var(--line);color:var(--text);border-radius:6px;padding:8px;font-size:12px;box-sizing:border-box}
+    .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+    button{border:1px solid var(--line);background:#111723;color:var(--text);border-radius:6px;padding:8px 10px;cursor:pointer;font-size:12px}
+    button:hover{border-color:var(--accent)}
+    #status{margin-top:8px;font-size:12px;color:var(--ok);white-space:pre-wrap}
+    #guide{margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:8px;background:#0d1117;color:var(--muted);font-size:12px;line-height:1.5}
+    #guide strong{color:var(--text)}
+  </style>
+</head>
+<body>
+<div id="app"></div>
+<div id="panel">
+  <div class="row"><label>Map</label><select id="mapSelect"></select></div>
+  <div class="actions">
+    <button id="loadBtn">Reload Map</button>
+    <button id="modeBtn">Enter Third-Person</button>
+  </div>
+  <div class="actions">
+    <label><input id="showHf22" type="checkbox"/> Show Hidden Collision (Advanced)</label>
+  </div>
+  <div id="guide">
+    <strong>How to Play</strong><br/>
+    1. Wait for map loading to finish.<br/>
+    2. In free camera, click the ground to place your character.<br/>
+    3. Click <strong>Enter Third-Person</strong> to start moving.<br/>
+    Controls: <strong>WASD</strong> move, <strong>Space</strong> jump, <strong>Shift</strong> sprint, <strong>F</strong> switch camera mode.
+  </div>
+  <div id="status">ready</div>
+</div>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.162.0/build/three.module.js", "three/addons/": "https://unpkg.com/three@0.162.0/examples/jsm/" } }
+</script>
+<script type="module" src="./player.js"></script>
+</body>
+</html>
+
