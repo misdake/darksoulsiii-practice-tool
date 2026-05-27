@@ -3,13 +3,11 @@ name = "ds3-map-planner"
 version.workspace = true
 authors.workspace = true
 edition = "2021"
+autobins = false
+
+[[bin]]
+name = "navmesh_split"
+path = "src/bin/navmesh_split.rs"
 
 [dependencies]
 anyhow = "1"
-axum = { version = "0.8", features = ["macros"] }
-chrono = { version = "0.4", features = ["serde"] }
-serde = { workspace = true }
-serde_json = { workspace = true }
-tokio = { version = "1", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors", "fs"] }
-webbrowser = "1"

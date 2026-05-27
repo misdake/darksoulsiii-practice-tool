@@ -5,7 +5,8 @@
 Current scope includes:
 
 - preparation pipeline docs
-- Stage 1 local server + web viewer (`collision`/`navmesh` import + filter + persist)
+- JS local server + web viewer (`collision`/`navmesh` import + filter + persist)
+- active web stages: `Stage 1` / `Stage 2` / `Stage 3 (Terrain Adventure)`
 
 ## Preparation Pipeline (m40_00_00_00)
 
@@ -68,32 +69,31 @@ Outputs:
 
 ## Next Planned Stages
 
-### Stage 1: Import + Filter + Persist
+### Active Stages
+
+1. `Stage 1` Collision filtering
+2. `Stage 2` Nav object filtering
+3. `Stage 3` Terrain Adventure (physics + third-person/free camera + nav split marking by ground probe)
+
+### Persisted Filter Profile
 
 Goal:
 
-- Web loads collision/navmesh OBJ manifests.
-- User manually filters collision/navmesh in viewer.
-- Rust service persists filter selections.
+- persist one profile file per map in `map-work/capture-planner/{map_id}/filter_profile.json`
+- saved fields:
+  - `visibility.collision_enabled_paths`
+  - `visibility.navmesh_enabled_paths`
+  - `selection.selected_nav_segments` (`{ nav_name, segment_index }`)
 
-Input:
-
-- `collision_world.json`
-- `navmesh_manifest.json`
-
-Output:
-
-- `filter_profile.json`
-  - enabled/disabled collision IDs
-  - enabled/disabled navmesh IDs
-  - optional manual tags/notes
-
-### Run Stage 1 Server
+### Run Stage 1 Server (JS)
 
 From workspace root:
 
 ```powershell
-cargo run -p ds3-map-planner
+node ds3-map-planner/server.js
+# or:
+# cd ds3-map-planner
+# npm start
 ```
 
 Behavior:
@@ -103,49 +103,53 @@ Behavior:
 - serves APIs under `/api/*`
 - opens `http://127.0.0.1:7878/` on startup
 
-### Stage 2: Layering + Edit + Persist
+Environment overrides:
 
-Goal:
+- `PLANNER_HOST` (default `127.0.0.1`)
+- `PLANNER_PORT` (default `7878`)
+- `PLANNER_OPEN_BROWSER=0` to disable auto-open
 
-- Rust service computes initial layer split from filtered data.
-- Web displays layer result and allows manual edits.
-- Rust service persists edited layer profile.
+### Web Dev (Vite + TypeScript)
 
-Input:
+Install frontend deps:
 
-- `filter_profile.json`
-- filtered collision/navmesh geometry
+```powershell
+cd ds3-map-planner/web
+npm install
+```
 
-Output:
+Run Vite dev server:
 
-- `layer_profile.json`
-  - `layer_id`
-  - layer bounds (`z` range + AABB)
-  - navmesh membership
-  - collision roof/occluder membership
-  - optional per-layer camera overrides
+```powershell
+npm run dev
+```
 
-### Stage 3: Screenshot Planning + Review + Export
+Then open:
 
-Goal:
+- `http://127.0.0.1:5173/`
 
-- Rust service computes layer-aware screenshot plan.
-- Web visualizes plan, supports review and optional edits.
-- Plan is exported for `probe`, with layer info preserved.
+Notes:
 
-Input:
+- Vite proxies `/api` and `/map-work` to `http://127.0.0.1:7878` by default.
+- Run backend server (`node ds3-map-planner/server.js`) in another terminal.
 
-- `layer_profile.json`
-- filtered geometry
+Build frontend:
 
-Output:
+```powershell
+cd ds3-map-planner/web
+npm run build
+```
 
-- `shot_plan.json`
-  - layer-aware waypoints/camera params
-  - constraints/score metadata
-  - downstream fields for `probe`
+After build, backend server auto-serves `ds3-map-planner/web/dist` (if present), otherwise falls back to source `web/`.
 
-### Downstream Integration
+### Navmesh Split Tool (Rust)
 
-1. `probe` consumes `capture_plan.json` for capture execution.
-2. `processor` consumes layer information for map processing steps.
+`navmesh_split` stays as Rust bin for CPU-heavy mesh split:
+
+```powershell
+cargo run -p ds3-map-planner --bin navmesh_split -- m40_00_00_00
+```
+
+### Future Planning
+
+Layering/screenshot-planning stages remain future work and are not implemented in current web UI.

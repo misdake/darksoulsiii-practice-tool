@@ -7,3 +7,7 @@
 /ds3-walk-surface/tools/**/bin/
 /ds3-walk-surface/tools/**/obj/
 /map-work/walk-surface-*/
+
+# ds3-map-planner web build/deps
+/ds3-map-planner/web/node_modules/
+/ds3-map-planner/web/dist/
