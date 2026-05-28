@@ -202,6 +202,16 @@ let dragLastX = 0;
 let dragLastY = 0;
 let renderQueued = false;
 
+async function fetchWithDefaults(url, init = {}) {
+  return await fetch(url, { cache: 'no-cache', ...init });
+}
+
+async function fetchJson(url) {
+  const res = await fetchWithDefaults(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
+  return await res.json();
+}
+
 function isStage2Source() {
   return typeof currentTilesRoot === 'string' && currentTilesRoot.includes('/stage2/');
 }
@@ -247,9 +257,7 @@ function alignCenterToPixelGridForLevel(level) {
 async function loadIndex(root) {
   previewActive = false;
   currentTilesRoot = (root || '/map-work/tiles').replace(/\/$/, '');
-  const res = await fetch(`${currentTilesRoot}/index.json`);
-  if (!res.ok) throw new Error(`index load failed: ${res.status}`);
-  tileIndex = await res.json();
+  tileIndex = await fetchJson(`${currentTilesRoot}/index.json`);
 
   levelList = Object.keys(tileIndex.levels).map(Number).sort((a,b)=>a-b);
   levelSel.innerHTML = '';
@@ -325,7 +333,7 @@ async function loadIndex(root) {
   shotPointsCoordSpace = '';
   {
     try {
-      const wr = await fetch(`${currentTilesRoot}/trajectory_simplified.json`);
+      const wr = await fetchWithDefaults(`${currentTilesRoot}/trajectory_simplified.json`);
       if (wr.ok) {
         const wj = await wr.json();
         if (Array.isArray(wj.loops)) {
@@ -339,7 +347,7 @@ async function loadIndex(root) {
       if (currentTilesRoot.endsWith('/tiles')) {
         shotUrl = `${currentTilesRoot.slice(0, -('/tiles'.length))}/shot_points.json`;
       }
-      const sr = await fetch(shotUrl);
+      const sr = await fetchWithDefaults(shotUrl);
       if (sr.ok) {
         const sj = await sr.json();
         if (sj && Array.isArray(sj.points)) {
@@ -363,7 +371,7 @@ async function loadCapturePreview(subdir) {
   shotPointsCoordSpace = '';
 
   try {
-    const tr = await fetch(`${base}/trajectory.json`);
+    const tr = await fetchWithDefaults(`${base}/trajectory.json`);
     if (tr.ok) {
       const tj = await tr.json();
       if (Array.isArray(tj.loops)) {
@@ -374,7 +382,7 @@ async function loadCapturePreview(subdir) {
   } catch (e) { stat1.textContent = `capture trajectory load error: ${e}`; }
 
   try {
-    const sr = await fetch(`${base}/shot_points.json`);
+    const sr = await fetchWithDefaults(`${base}/shot_points.json`);
     if (sr.ok) {
       const sj = await sr.json();
       if (sj && Array.isArray(sj.points)) {
@@ -386,7 +394,7 @@ async function loadCapturePreview(subdir) {
   normalizeTrajectoryAndShotPoints(walkableCoordSpace, shotPointsCoordSpace);
 
   try {
-    const cr = await fetch(`${base}/shot_config.json`);
+    const cr = await fetchWithDefaults(`${base}/shot_config.json`);
     if (cr.ok) {
       const cj = await cr.json();
       const tile = 512 * (1.0 / (cj.base_ratio_px_per_wu || 32.0));
@@ -754,7 +762,7 @@ async function loadSourceList() {
   const fallback = [{ name: 'stage3 merged', path: '/map-work/tiles' }];
   let items = fallback;
   try {
-    const r = await fetch('/map-work/tiles/sources.json');
+    const r = await fetchWithDefaults('/map-work/tiles/sources.json');
     if (r.ok) {
       const j = await r.json();
       if (j && Array.isArray(j.sources) && j.sources.length > 0) {

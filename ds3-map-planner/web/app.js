@@ -256,7 +256,8 @@ function highlightSelectedRow() {
 }
 
 async function fetchJson(url, opts) {
-  const res = await fetch(url, opts);
+  const reqOpts = { cache: "no-cache", ...(opts || {}) };
+  const res = await fetch(url, reqOpts);
   if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
   return await res.json();
 }
