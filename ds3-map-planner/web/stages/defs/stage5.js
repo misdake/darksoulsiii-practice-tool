@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { markNavSegmentByDownRaycast } from "../../systems/nav-probe-system.js";
 
 const CAMERA_FAR = { free: 10000, thirdPerson: 1000 };
 const FREE_CAMERA_SPEED = 32;
@@ -8,6 +9,10 @@ export function createStage5Definition() {
   let cameraMode = "thirdPerson";
   const freeKeys = new Set();
   const raycaster = new THREE.Raycaster();
+  let middlePickHeld = false;
+  let rightPickPending = false;
+  let rightDownX = 0;
+  let rightDownY = 0;
 
   function modeButtonText() {
     return cameraMode === "thirdPerson" ? "Switch To Free Camera (F)" : "Enter Third-Person (F)";
@@ -66,17 +71,73 @@ export function createStage5Definition() {
   }
 
   function placePlayerByGroundClick(ctx, event) {
-    if (cameraMode !== "free" || !ctx.collisionGroup) return false;
+    if (cameraMode !== "free") return false;
     const rect = ctx.renderer.domElement.getBoundingClientRect();
     const mouseNdc = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
     raycaster.far = Infinity;
     raycaster.setFromCamera(mouseNdc, ctx.camera);
-    const hits = raycaster.intersectObjects(ctx.collisionGroup.children, true);
-    const first = hits.find((h) => h?.object?.isMesh);
+    const visibleCollisionObjects = [];
+    if (ctx.collisionGroup?.visible) {
+      for (const col of ctx.collisionGroup.children) {
+        if (col.visible === false || col.userData?.manualEnabled === false) continue;
+        visibleCollisionObjects.push(col);
+      }
+    }
+    if (visibleCollisionObjects.length === 0) return false;
+    const hits = raycaster.intersectObjects(visibleCollisionObjects, true);
+    const first = hits.find((h) => h?.object?.isMesh && h.object.visible !== false);
     if (!first?.point) return false;
     const target = first.point.clone().add(new THREE.Vector3(0, 1.2, 0));
     ctx.systems.physics.setPlayerPosition(ctx, target);
     ctx.setStatus(`placed player: ${target.x.toFixed(1)}, ${target.y.toFixed(1)}, ${target.z.toFixed(1)}`, false, 1400);
+    return true;
+  }
+
+  function markNavByMiddlePick(ctx, event) {
+    if (cameraMode !== "free") return false;
+    const rect = ctx.renderer.domElement.getBoundingClientRect();
+    const mouseNdc = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.far = Infinity;
+    raycaster.setFromCamera(mouseNdc, ctx.camera);
+    const targets = [];
+    if (ctx.collisionGroup?.visible) {
+      for (const col of ctx.collisionGroup.children) {
+        if (col.userData?.manualEnabled === false || col.visible === false) continue;
+        targets.push(col);
+      }
+    }
+    if (targets.length === 0) return false;
+    const hits = raycaster.intersectObjects(targets, true);
+    const first = hits.find((h) => h?.object?.isMesh && h.object.visible !== false);
+    if (!first?.point) return false;
+    return markNavSegmentByDownRaycast(ctx, first.point, { far: 8.0, offsetY: 0.3 });
+  }
+
+  function unmarkNavByRightPick(ctx, event) {
+    if (cameraMode !== "free" || !ctx.navmeshGroup) return false;
+    const rect = ctx.renderer.domElement.getBoundingClientRect();
+    const mouseNdc = new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1);
+    raycaster.far = Infinity;
+    raycaster.setFromCamera(mouseNdc, ctx.camera);
+    const targets = [];
+    for (const navObj of ctx.navmeshGroup.children) {
+      if (navObj.userData.manualEnabled === false || navObj.visible === false) continue;
+      for (const seg of navObj.children) {
+        if (!seg.isMesh || seg.visible === false || seg.userData?.kind !== "nav-segment") continue;
+        targets.push(seg);
+      }
+    }
+    if (targets.length === 0) return false;
+    const hits = raycaster.intersectObjects(targets, false);
+    const first = hits[0];
+    if (!first?.object) return false;
+    const path = first.object.userData?.parentPath;
+    const segmentIndex = Number(first.object.userData?.segmentIndex);
+    if (!path || !Number.isFinite(segmentIndex)) return false;
+    const key = `${path}::${segmentIndex}`;
+    if (!ctx.navSegmentUsageStates.has(key)) return false;
+    ctx.navSegmentUsageStates.delete(key);
+    ctx.requestNavVisualRefresh?.();
     return true;
   }
 
@@ -107,6 +168,8 @@ export function createStage5Definition() {
       ctx.camera.far = CAMERA_FAR.free;
       ctx.camera.updateProjectionMatrix();
       freeKeys.clear();
+      middlePickHeld = false;
+      rightPickPending = false;
     },
     onSceneReload(ctx) {
       ctx.systems.physics.rebuildFromCollision(ctx);
@@ -120,6 +183,41 @@ export function createStage5Definition() {
     },
     onPointerClick(ctx, event) {
       return placePlayerByGroundClick(ctx, event);
+    },
+    onPointerDown(ctx, event) {
+      if (event.button === 1) {
+        middlePickHeld = true;
+        return markNavByMiddlePick(ctx, event);
+      }
+      if (event.button === 2) {
+        rightPickPending = true;
+        rightDownX = event.clientX;
+        rightDownY = event.clientY;
+        return true;
+      }
+      return false;
+    },
+    onPointerMove(ctx, event) {
+      if (rightPickPending) {
+        const dx = event.clientX - rightDownX;
+        const dy = event.clientY - rightDownY;
+        if (dx * dx + dy * dy > 16) rightPickPending = false;
+      }
+      if (!middlePickHeld) return false;
+      return markNavByMiddlePick(ctx, event);
+    },
+    onPointerUp(ctx, event) {
+      if (event.button === 1) {
+        middlePickHeld = false;
+        return false;
+      }
+      if (event.button === 2) {
+        const shouldPick = rightPickPending;
+        rightPickPending = false;
+        if (!shouldPick) return true;
+        return unmarkNavByRightPick(ctx, event);
+      }
+      return false;
     },
     onKeyDown(ctx, event) {
       freeKeys.add(event.code);

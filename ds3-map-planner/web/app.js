@@ -12,13 +12,13 @@ import { NavSystem } from "./systems/nav-system.js";
 const app = document.getElementById("app");
 const mapSelectEl = document.getElementById("mapSelect");
 const fitBtn = document.getElementById("fitBtn");
-const resetAllBtn = document.getElementById("resetAllBtn");
+const resetVisibleBtn = document.getElementById("resetVisibleBtn");
+const resetNavSegmentBtn = document.getElementById("resetNavSegmentBtn");
 const saveBtn = document.getElementById("saveBtn");
 const cameraModeBtn = document.getElementById("cameraModeBtn");
 const collisionListEl = document.getElementById("collisionList");
 const navmeshListEl = document.getElementById("navmeshList");
 const hitFilterListEl = document.getElementById("hitFilterList");
-const renderStatsEl = document.getElementById("renderStats");
 const statusEl = document.getElementById("status");
 const loadProgressTextEl = document.getElementById("loadProgressText");
 const loadProgressPctEl = document.getElementById("loadProgressPct");
@@ -74,6 +74,31 @@ const COLLISION_HIGHLIGHT_COLOR = 0xc7d2e2;
 const NAV_STATE_COLORS = { unset: 0xef5350, selected: 0xffffff };
 const HIGHLIGHT_COLOR = 0xc7d2e2;
 const HIDE_NAV_BY_COLLISION_HF = new Set([13, 14, 15]);
+const HIT_FILTER_TYPE_LABELS = new Map([
+  [0, "Standard: No High Collision - No Foot IK"],
+  [1, "Standard: No High Collision"],
+  [2, "Standard: No High Collision"],
+  [3, "Standard: No High Collision"],
+  [4, "Standard: No High Collision"],
+  [5, "Standard: No High Collision"],
+  [6, "Standard: No High Collision"],
+  [7, "Standard: No High Collision"],
+  [8, "Collide with all characters"],
+  [9, "Collide with camera only"],
+  [11, "Collide with non-player characters only"],
+  [13, "Trigger fall death camera in collision"],
+  [14, "Trigger fall death camera in collision"],
+  [15, "Trigger instant death on collision"],
+  [16, "Type 16"],
+  [17, "Type 17"],
+  [19, "Collide with non-player characters only"],
+  [20, "Type 20"],
+  [21, "Slide movement"],
+  [22, "Block all fall damage"],
+  [23, "Type 23"],
+  [24, "Type 24"],
+  [29, "Type 29"],
+]);
 
 let currentMapId = "";
 let currentStage = DEFAULT_STAGE_ID;
@@ -88,6 +113,7 @@ let statusResetTimer = null;
 let isReloading = false;
 let queuedReload = false;
 let currentDefaultHitFilterIds = [8];
+let hasAppliedInitialStage = false;
 const rowByKey = new Map();
 const navSegmentUsageStates = new Map();
 const runtime = {
@@ -471,7 +497,12 @@ function applySavedProfile(profile) {
 }
 
 function applyStage(stage) {
+  const prevStage = currentStage;
   const normalizedStage = stageManager.switchTo(stage, buildStageContext());
+  if (!hasAppliedInitialStage && normalizedStage === prevStage) {
+    stageManager.get(normalizedStage)?.enter?.(buildStageContext());
+  }
+  hasAppliedInitialStage = true;
   currentStage = normalizedStage;
   for (const r of stageRadioEls) r.checked = Number(r.value) === normalizedStage;
   clearSelection();
@@ -566,6 +597,13 @@ function applyCollisionVisibility() {
   collisionSystem.applyVisibility(true);
 }
 
+function getHitFilterTypeLabel(hf, sampleObj = null) {
+  if (HIT_FILTER_TYPE_LABELS.has(hf)) return HIT_FILTER_TYPE_LABELS.get(hf);
+  const fromMeta = String(sampleObj?.userData?.meta?.msbHitFilterType || "").trim();
+  if (fromMeta) return fromMeta;
+  return "Unknown";
+}
+
 function rebuildHitFilterMenu() {
   if (!hitFilterListEl) return;
   hitFilterListEl.innerHTML = "";
@@ -581,10 +619,11 @@ function rebuildHitFilterMenu() {
     const total = objs.length;
     const visibleCount = objs.reduce((acc, x) => acc + (x.userData.manualEnabled !== false ? 1 : 0), 0);
     const state = visibleCount === 0 ? "hidden" : (visibleCount === total ? "visible" : "partial");
+    const hfTypeLabel = getHitFilterTypeLabel(hf, objs[0]);
     const row = document.createElement("div");
     row.className = "hf-row";
     const text = document.createElement("span");
-    text.textContent = `hf:${hf} (${total})`;
+    text.textContent = `hf:${hf} ${hfTypeLabel} (${total})`;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "hf-btn";
@@ -710,15 +749,21 @@ function doHideSelectedObject() {
   }
 }
 
-function resetAllStatesInMemory() {
+function resetVisibleStatesInMemory() {
   applyDefaultVisibilityRules(currentDefaultHitFilterIds);
-  navSegmentUsageStates.clear();
   clearSelection();
   applyCollisionVisibility();
   applyNavVisuals();
   rebuildObjectMenu();
   rebuildHitFilterMenu();
-  setStatus("reset in memory; click Save Filter to persist", false, 2200);
+  setStatus("visible states reset in memory; click Save Filter to persist", false, 2200);
+}
+
+function resetNavSegmentStatesInMemory() {
+  navSegmentUsageStates.clear();
+  clearSelection();
+  applyNavVisuals();
+  setStatus("nav segment states reset in memory; click Save Filter to persist", false, 2200);
 }
 
 function ensureAnyVisible() {
@@ -729,31 +774,9 @@ function ensureAnyVisible() {
     ? navmeshGroup.children.some((x) => x.userData.manualEnabled !== false)
     : false;
   if (!anyCollisionVisible && !anyNavVisible) {
-    resetAllStatesInMemory();
+    resetVisibleStatesInMemory();
     setStatus("saved profile matched 0 objects, reset to defaults in memory", false, 2600);
   }
-}
-
-function updateRenderStats() {
-  if (!renderStatsEl) return;
-  let navObjCount = 0;
-  let navSegmentVisible = 0;
-  let navMergedVisible = 0;
-  if (navmeshGroup) {
-    navObjCount = navmeshGroup.children.length;
-    for (const navObj of navmeshGroup.children) {
-      for (const child of navObj.children) {
-        if (!child.isMesh || child.visible === false) continue;
-        if (child.userData?.kind === "nav-segment") navSegmentVisible++;
-        if (child.userData?.kind === "nav-merged") navMergedVisible++;
-      }
-    }
-  }
-  const totalCalls = renderer.info?.render?.calls ?? 0;
-  renderStatsEl.textContent =
-    `stage:${currentStage}  nav_obj:${navObjCount}\n` +
-    `nav_segment_drawcalls:${navSegmentVisible}  nav_merged_drawcalls:${navMergedVisible}\n` +
-    `total_drawcalls:${totalCalls}`;
 }
 
 async function reload() {
@@ -878,7 +901,8 @@ function registerUiHandlers() {
     camera.position.copy(center).add(new THREE.Vector3(radius, radius * 0.7, radius));
     controls.target.copy(center);
   });
-  resetAllBtn.addEventListener("click", resetAllStatesInMemory);
+  resetVisibleBtn.addEventListener("click", resetVisibleStatesInMemory);
+  resetNavSegmentBtn.addEventListener("click", resetNavSegmentStatesInMemory);
   saveBtn.addEventListener("click", saveProfile);
   if (cameraModeBtn) {
     cameraModeBtn.addEventListener("click", () => {
@@ -889,18 +913,30 @@ function registerUiHandlers() {
 
 function registerInputHandlers() {
   renderer.domElement.addEventListener("pointerdown", (event) => {
+    if (getStageConfig().onPointerDown?.(buildStageContext(), event)) {
+      event.preventDefault();
+      return;
+    }
     if (event.button === 1) return;
     pointerDown = true;
     pointerDownX = event.clientX;
     pointerDownY = event.clientY;
   });
   renderer.domElement.addEventListener("pointermove", (event) => {
+    if (getStageConfig().onPointerMove?.(buildStageContext(), event)) {
+      event.preventDefault();
+    }
     if (!pointerDown) return;
     const dx = event.clientX - pointerDownX;
     const dy = event.clientY - pointerDownY;
     if (dx * dx + dy * dy > 16) suppressNextClick = true;
   });
-  renderer.domElement.addEventListener("pointerup", () => { pointerDown = false; });
+  renderer.domElement.addEventListener("pointerup", (event) => {
+    if (getStageConfig().onPointerUp?.(buildStageContext(), event)) {
+      event.preventDefault();
+    }
+    pointerDown = false;
+  });
   renderer.domElement.addEventListener("click", (event) => {
     if (suppressNextClick) {
       suppressNextClick = false;
@@ -951,7 +987,6 @@ function animate() {
   controls.update();
   csm.update();
   renderer.render(scene, camera);
-  updateRenderStats();
   requestAnimationFrame(animate);
 }
 
