@@ -12,12 +12,12 @@ const HOST = process.env.PLANNER_HOST || "127.0.0.1";
 const PORT = Number(process.env.PLANNER_PORT || 7878);
 const DEFAULT_HIT_FILTER_IDS = [8];
 
-const cwd = process.cwd();
-const plannerRoot = path.join(cwd, "map-work", "capture-planner");
-const webSourceRoot = path.join(cwd, "ds3-map-planner", "web");
+const repoRoot = path.resolve(__dirname, "..");
+const plannerRoot = path.join(repoRoot, "map-work", "capture-planner");
+const webSourceRoot = path.join(__dirname, "web");
 const webDistRoot = path.join(webSourceRoot, "dist");
 const webRoot = fs.existsSync(webDistRoot) ? webDistRoot : webSourceRoot;
-const mapWorkRoot = path.join(cwd, "map-work");
+const mapWorkRoot = path.join(repoRoot, "map-work");
 
 const MAP_DISPLAY_NAMES = {
   m21_00_00_00: "Base",
@@ -180,9 +180,7 @@ async function getMapContent(mapId) {
   const navmeshManifest = await readJsonFile(path.join(mapDir, "navmesh_manifest.json"), "navmesh manifest");
   const navmeshes = Array.isArray(navmeshManifest.navmeshes) ? navmeshManifest.navmeshes : [];
   for (const nav of navmeshes) {
-    const original = String(nav.path || "");
-    nav.original_path = original;
-    let replaced = original;
+    let replaced = String(nav.path || "");
     if (replaced.includes("/navmesh_objs/")) {
       replaced = replaced.replace("/navmesh_objs/", "/navmesh_objs_split/");
     } else if (replaced.includes("\\navmesh_objs\\")) {

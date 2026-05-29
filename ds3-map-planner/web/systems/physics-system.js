@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import RAPIER from "https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.12.0/rapier.es.js";
+import { computeGeometryBoundsTree } from "../bvh.js";
 
 const PLAYER_RADIUS = 0.30;
 const PLAYER_SEGMENT = 0.96;
@@ -106,7 +107,7 @@ export class PhysicsSystem {
     }
     if (!this.playerDebugMesh) {
       this.playerDebugMesh = new THREE.Mesh(
-        new THREE.CapsuleGeometry(PLAYER_RADIUS, PLAYER_SEGMENT, 8, 16),
+        computeGeometryBoundsTree(new THREE.CapsuleGeometry(PLAYER_RADIUS, PLAYER_SEGMENT, 8, 16)),
         new THREE.MeshStandardMaterial({ color: 0x87f5b1, transparent: true, opacity: 0.6 })
       );
       this.playerDebugMesh.visible = false;

@@ -72,10 +72,7 @@ export class ThirdPersonControllerSystem {
     if (!this.active) return;
     const s = ctx.runtime.physicsState;
     s.verticalVelocity -= GRAVITY * dt;
-    if (s.grounded && this.keys.has("Space")) {
-      s.verticalVelocity = JUMP_SPEED;
-      s.grounded = false;
-    }
+    if (this.keys.has("Space")) s.verticalVelocity = JUMP_SPEED;
 
     const forward = new THREE.Vector3(
       Math.sin(this.mouseLook.yaw) * Math.cos(this.mouseLook.pitch),

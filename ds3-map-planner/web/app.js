@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSM } from "three/addons/csm/CSM.js";
+import { computeGeometryBoundsTree } from "./bvh.js";
 import { StageManager } from "./stages/stage-manager.js";
 import { DEFAULT_STAGE_ID, createPlannerStageDefinitions } from "./stages/stage-definitions.js";
 import { PhysicsSystem } from "./systems/physics-system.js";
@@ -347,6 +348,7 @@ async function loadCollisionObj(entryOrPath) {
   geom.setAttribute("position", new THREE.Float32BufferAttribute(meshData.positions, 3));
   geom.setIndex(new THREE.BufferAttribute(new Uint32Array(meshData.indices), 1));
   geom.computeVertexNormals();
+  computeGeometryBoundsTree(geom);
   const mesh = new THREE.Mesh(geom, makeNavMaterial(COLLISION_BASE_COLOR));
   const g = new THREE.Group();
   g.name = path;
@@ -360,14 +362,11 @@ async function loadCollisionObj(entryOrPath) {
 
 async function loadNavObj(entry) {
   const path = entry.path;
-  const sourcePath = entry.sourcePath || path;
   const parsed = await objWorkerPool.parse(path);
   const g = new THREE.Group();
-  g.name = sourcePath;
+  g.name = path;
   g.userData.manualEnabled = true;
   g.userData.kind = "navmesh";
-  g.userData.sourcePath = sourcePath;
-  g.userData.loadPath = path;
   const meshes = parsed.meshes || [];
   const mergedPositions = [];
   const mergedIndices = [];
@@ -377,10 +376,11 @@ async function loadNavObj(entry) {
     geom.setAttribute("position", new THREE.Float32BufferAttribute(m.positions, 3));
     geom.setIndex(new THREE.BufferAttribute(new Uint32Array(m.indices), 1));
     geom.computeVertexNormals();
+    computeGeometryBoundsTree(geom);
     const mesh = new THREE.Mesh(geom, makeNavMaterial(NAV_STATE_COLORS.unset));
     mesh.userData.kind = "nav-segment";
     mesh.userData.segmentIndex = i;
-    mesh.userData.parentPath = sourcePath;
+    mesh.userData.parentPath = path;
     g.add(mesh);
 
     const localPos = m.positions || [];
@@ -394,9 +394,10 @@ async function loadNavObj(entry) {
     mergedGeom.setAttribute("position", new THREE.Float32BufferAttribute(mergedPositions, 3));
     mergedGeom.setIndex(new THREE.BufferAttribute(new Uint32Array(mergedIndices), 1));
     mergedGeom.computeVertexNormals();
+    computeGeometryBoundsTree(mergedGeom);
     const mergedMesh = new THREE.Mesh(mergedGeom, makeNavMaterial(NAV_STATE_COLORS.unset));
     mergedMesh.userData.kind = "nav-merged";
-    mergedMesh.userData.parentPath = sourcePath;
+    mergedMesh.userData.parentPath = path;
     mergedMesh.visible = false;
     g.add(mergedMesh);
     g.userData.mergedMesh = mergedMesh;
@@ -810,7 +811,6 @@ async function reload() {
     }));
     const navmeshEntries = (payload.navmesh_manifest.navmeshes || []).map((x) => ({
       path: x.path,
-      sourcePath: x.original_path || x.path,
     }));
     const totalEntries = collisionEntries.length + navmeshEntries.length;
     if (totalEntries === 0) setLoadProgress(`loaded ${mapId}`, 1);

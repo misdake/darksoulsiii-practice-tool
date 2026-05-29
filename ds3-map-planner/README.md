@@ -83,7 +83,7 @@ Goal:
 - saved fields:
   - `visibility.collision_enabled_paths`
   - `visibility.navmesh_enabled_paths`
-  - `selection.selected_nav_segments` (`{ nav_name, segment_index }`)
+  - `selection.selected_nav_segments` (`{ nav_name, segment_index }`, where `nav_name` is the split OBJ path)
 
 ### Run Stage 1 Server (JS)
 
