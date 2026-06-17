@@ -5,6 +5,7 @@ const backend = process.env.VITE_BACKEND_ORIGIN || "http://127.0.0.1:7878";
 export default defineConfig({
   build: {
     target: "esnext",
+    chunkSizeWarningLimit: 1000,
   },
   server: {
     port: 5173,
