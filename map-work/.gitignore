@@ -1,7 +1,4 @@
-# generated map workspace
 /stage2/
 /tiles/
-/tile_pixel_index.json
-/alerts.csv
-*.tmp
+/capture-planner
 ds3_map_viewer.log

@@ -4,6 +4,7 @@ members = [
     "ds3-map-viewer",
     "ds3-map-probe",
     "ds3-map-processor",
+    "ds3-map-planner",
     "lib/ds3-depthbuffer",
     "lib/libds3",
     "lib/macro-param",
@@ -11,12 +12,20 @@ members = [
     "lib/no-logo",
     "lib/param-mod",
     "lib/scripts",
-    "xtask",
+    "xtask"
 ]
 
 [workspace.package]
 version = "1.7.1"
 authors = ["Andrea Venuta <venutawebdesign@gmail.com>"]
+
+[profile.dev.package."*"]
+# Set the default for dependencies in Development mode.
+opt-level = 3
+
+[profile.dev]
+# Turn on a small amount of optimization in Development mode.
+opt-level = 0
 
 [profile.release]
 opt-level = 3

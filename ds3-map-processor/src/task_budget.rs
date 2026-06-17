@@ -59,31 +59,31 @@ where
                     return;
                 }
                 let cur = inflight.load(Ordering::SeqCst);
-                    if (cur == 0 || cur.saturating_add(reserve) <= budget)
-                        && inflight
+                if (cur == 0 || cur.saturating_add(reserve) <= budget)
+                    && inflight
                         .compare_exchange(
                             cur,
                             cur.saturating_add(reserve),
                             Ordering::SeqCst,
                             Ordering::SeqCst,
-                            )
-                            .is_ok()
-                    {
-                        let now = cur.saturating_add(reserve);
-                        loop {
-                            let prev = max_inflight.load(Ordering::SeqCst);
-                            if now <= prev {
-                                break;
-                            }
-                            if max_inflight
-                                .compare_exchange(prev, now, Ordering::SeqCst, Ordering::SeqCst)
-                                .is_ok()
-                            {
-                                break;
-                            }
+                        )
+                        .is_ok()
+                {
+                    let now = cur.saturating_add(reserve);
+                    loop {
+                        let prev = max_inflight.load(Ordering::SeqCst);
+                        if now <= prev {
+                            break;
                         }
-                        break;
+                        if max_inflight
+                            .compare_exchange(prev, now, Ordering::SeqCst, Ordering::SeqCst)
+                            .is_ok()
+                        {
+                            break;
+                        }
                     }
+                    break;
+                }
                 thread::sleep(std::time::Duration::from_millis(2));
             }
 

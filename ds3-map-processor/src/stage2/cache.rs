@@ -118,7 +118,7 @@ pub(super) fn get_or_load_capture(
                 }
                 Ok(loaded)
             }
-        }
+        },
         Err(msg) => Err(msg),
     };
 

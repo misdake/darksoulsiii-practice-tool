@@ -1,0 +1,13 @@
+[package]
+name = "ds3-map-planner"
+version.workspace = true
+authors.workspace = true
+edition = "2021"
+autobins = false
+
+[[bin]]
+name = "navmesh_split"
+path = "src/bin/navmesh_split.rs"
+
+[dependencies]
+anyhow = "1"

@@ -124,7 +124,7 @@ fn nearest_y_on_xz(x: f32, z_proc: f32, src: &[[f32; 3]], src_space: CoordSpace)
         let dz = dz_proc - z_proc;
         let d2 = dx * dx + dz * dz;
         match best {
-            Some((_, bd2)) if bd2 <= d2 => {}
+            Some((_, bd2)) if bd2 <= d2 => {},
             _ => best = Some((p[1], d2)),
         }
     }

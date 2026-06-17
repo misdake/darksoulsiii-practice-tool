@@ -4,11 +4,12 @@ mod fs_utils;
 mod geom;
 mod stage0_shot_points;
 mod stage1_pointcloud;
-mod stage2_tile_pipeline;
 mod stage2_shot_points;
+mod stage2_tile_pipeline;
 mod stage3_merge;
 mod task_budget;
 mod tile_pyramid;
+mod walkable_exp;
 
 use anyhow::{Context, Result};
 use std::fs;
@@ -28,10 +29,11 @@ use crate::stage0_shot_points::run_shot_points_stage;
 use crate::stage1_pointcloud::{
     make_tile_pixel_ref, preprocess_capture_tile_spans, tile_key, write_tile_pixel_index,
 };
-use crate::stage2_tile_pipeline::render_tiles_to_pyramid;
 use crate::stage2_shot_points::write_shot_points_from_capture_tomls;
+use crate::stage2_tile_pipeline::render_tiles_to_pyramid;
 use crate::stage3_merge::merge_stage2_outputs;
 use crate::task_budget::run_with_budget;
+use crate::walkable_exp::run_walkable_experiment;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RunMode {
@@ -39,6 +41,7 @@ enum RunMode {
     Stage12,
     Stage3,
     Stage123,
+    WalkableExp,
 }
 
 fn main() -> Result<()> {
@@ -58,6 +61,10 @@ fn main() -> Result<()> {
     if run_mode == RunMode::ShotPoints {
         let n = run_shot_points_stage(&capture_dir, selected_filter.as_deref())?;
         println!("shot-points done. subfolders written: {}", n);
+        return Ok(());
+    }
+    if run_mode == RunMode::WalkableExp {
+        run_walkable_experiment(&capture_dir, &work_dir, selected_filter.as_deref())?;
         return Ok(());
     }
 
@@ -246,8 +253,9 @@ fn parse_args(args: Vec<String>) -> Result<(RunMode, Option<Vec<String>>)> {
                 "stage12" => RunMode::Stage12,
                 "stage3" => RunMode::Stage3,
                 "stage123" => RunMode::Stage123,
+                "walkable-exp" => RunMode::WalkableExp,
                 other => anyhow::bail!(
-                    "Invalid --run value: {} (expected shotpoints|stage12|stage3|stage123)",
+                    "Invalid --run value: {} (expected shotpoints|stage12|stage3|stage123|walkable-exp)",
                     other
                 ),
             };

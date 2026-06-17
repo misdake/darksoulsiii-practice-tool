@@ -80,9 +80,10 @@ pub fn merge_stage2_outputs(inputs: &[PathBuf], output_root: &Path) -> Result<()
 
     for (i, root) in inputs.iter().enumerate() {
         let manifest_path = root.join("finest_manifest.json");
-        let bytes = fs::read(&manifest_path).with_context(|| format!("read {}", manifest_path.display()))?;
-        let manifest: FinestManifest =
-            serde_json::from_slice(&bytes).with_context(|| format!("parse {}", manifest_path.display()))?;
+        let bytes = fs::read(&manifest_path)
+            .with_context(|| format!("read {}", manifest_path.display()))?;
+        let manifest: FinestManifest = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse {}", manifest_path.display()))?;
         let _ = manifest.version;
         let ext = manifest.image_ext.clone();
         finest_z = finest_z.max(manifest.finest_z);
@@ -105,36 +106,33 @@ pub fn merge_stage2_outputs(inputs: &[PathBuf], output_root: &Path) -> Result<()
     for (&(tx, ty), sources) in &per_tile {
         let mut sorted = sources.clone();
         sorted.sort_by(|a, b| {
-            a.2.z_max
-                .partial_cmp(&b.2.z_max)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| a.2.z_min.partial_cmp(&b.2.z_min).unwrap_or(std::cmp::Ordering::Equal))
+            a.2.z_max.partial_cmp(&b.2.z_max).unwrap_or(std::cmp::Ordering::Equal).then_with(|| {
+                a.2.z_min.partial_cmp(&b.2.z_min).unwrap_or(std::cmp::Ordering::Equal)
+            })
         });
 
         let mut canvas = RgbaImage::new(TILE_SIZE_PX, TILE_SIZE_PX);
         for (root, ext, zr) in &sorted {
             let x_name = encode_coord(zr.tx);
             let y_name = encode_coord(zr.ty);
-            let p = root.join(finest_z.to_string()).join(&x_name).join(format!("{}.{}", y_name, ext));
+            let p =
+                root.join(finest_z.to_string()).join(&x_name).join(format!("{}.{}", y_name, ext));
             if !p.is_file() {
                 continue;
             }
-            let layer = image::open(&p)
-                .with_context(|| format!("open {}", p.display()))?
-                .to_rgba8();
+            let layer =
+                image::open(&p).with_context(|| format!("open {}", p.display()))?.to_rgba8();
             alpha_over(&mut canvas, &layer);
         }
-        apply_trajectory_mask(
-            &mut canvas,
-            tx,
-            ty,
-            SCALE_WORLD_UNITS_PER_PIXEL[finest_z],
-            &mask,
-        );
+        apply_trajectory_mask(&mut canvas, tx, ty, SCALE_WORLD_UNITS_PER_PIXEL[finest_z], &mask);
         if is_all_black_rgba(&canvas) {
             let done = finest_done.fetch_add(1, Ordering::Relaxed) + 1;
             if done.is_multiple_of(16) || done == finest_total {
-                let pct = if finest_total == 0 { 100.0 } else { (done as f32 / finest_total as f32) * 100.0 };
+                let pct = if finest_total == 0 {
+                    100.0
+                } else {
+                    (done as f32 / finest_total as f32) * 100.0
+                };
                 println!("  finest {}/{} ({:.1}%)", done, finest_total, pct);
             }
             continue;
@@ -147,7 +145,8 @@ pub fn merge_stage2_outputs(inputs: &[PathBuf], output_root: &Path) -> Result<()
         add_tile_to_index(&mut index, finest_z, tx, ty);
         let done = finest_done.fetch_add(1, Ordering::Relaxed) + 1;
         if done.is_multiple_of(16) || done == finest_total {
-            let pct = if finest_total == 0 { 100.0 } else { (done as f32 / finest_total as f32) * 100.0 };
+            let pct =
+                if finest_total == 0 { 100.0 } else { (done as f32 / finest_total as f32) * 100.0 };
             println!("  finest {}/{} ({:.1}%)", done, finest_total, pct);
         }
     }
@@ -318,10 +317,8 @@ fn point_in_or_near_loops(
 fn write_sources_list(inputs: &[PathBuf], output_root: &Path) -> Result<()> {
     let map_work_root = output_root.parent().context("stage3 output root has no parent")?;
     let mut entries = Vec::with_capacity(inputs.len() + 1);
-    entries.push(TileSourceEntry {
-        name: "stage3 merged".to_string(),
-        path: "./tiles".to_string(),
-    });
+    entries
+        .push(TileSourceEntry { name: "stage3 merged".to_string(), path: "./tiles".to_string() });
 
     for root in inputs {
         let stage2_group_dir = root.parent().context("stage2 tiles root has no parent")?;
@@ -330,9 +327,9 @@ fn write_sources_list(inputs: &[PathBuf], output_root: &Path) -> Result<()> {
             .context("stage2 group dir has no name")?
             .to_string_lossy()
             .to_string();
-        let rel = stage2_group_dir
-            .strip_prefix(map_work_root)
-            .with_context(|| format!("{} not under {}", stage2_group_dir.display(), map_work_root.display()))?;
+        let rel = stage2_group_dir.strip_prefix(map_work_root).with_context(|| {
+            format!("{} not under {}", stage2_group_dir.display(), map_work_root.display())
+        })?;
         entries.push(TileSourceEntry {
             name: format!("stage2 {}", group_name),
             path: format!("./{}/tiles", rel.to_string_lossy().replace('\\', "/")),

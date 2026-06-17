@@ -260,6 +260,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ds3-map-planner"
+version = "1.7.1"
+dependencies = [
+ "anyhow",
+]
+
+[[package]]
 name = "ds3-map-probe"
 version = "1.7.1"
 dependencies = [
@@ -281,6 +288,7 @@ dependencies = [
  "anyhow",
  "ds3-depthbuffer",
  "image",
+ "rayon",
  "serde",
  "serde_json",
  "toml 0.8.20",
