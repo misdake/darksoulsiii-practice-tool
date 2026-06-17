@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::time::Instant;
@@ -29,6 +29,51 @@ const LOOP_SAMPLE_EPS: f32 = 1.0e-3;
 const RESHADE_HOTKEY_HOLD_MS: u64 = 110;
 const DEFAULT_SUBDIR_PRESETS: &str = include_str!("../data/probe_subfolder_presets.txt");
 
+fn resolve_capture_root(dll_path: Option<&Path>, exe_path: Option<&Path>) -> PathBuf {
+    if let Some(root) = std::env::var_os("DS3_MAP_CAPTURE_ROOT").filter(|v| !v.is_empty()) {
+        return PathBuf::from(root);
+    }
+    if let Some(root) = dll_path.and_then(workspace_capture_root_from_dll) {
+        return root;
+    }
+    exe_path
+        .and_then(Path::parent)
+        .map(|dir| dir.join("capture"))
+        .or_else(|| std::env::current_dir().ok().map(|dir| dir.join("capture")))
+        .unwrap_or_else(|| PathBuf::from(".").join("capture"))
+}
+
+fn workspace_capture_root_from_dll(dll_path: &Path) -> Option<PathBuf> {
+    workspace_root_from_path(dll_path).map(|root| root.join("capture"))
+}
+
+fn resolve_shot_plan_root(dll_path: Option<&Path>) -> Option<PathBuf> {
+    if let Some(root) = std::env::var_os("DS3_MAP_PLANNER_ROOT").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(root));
+    }
+    dll_path
+        .and_then(workspace_root_from_path)
+        .or_else(build_workspace_root)
+        .map(|root| root.join("map-work").join("capture-planner"))
+}
+
+fn workspace_root_from_path(path: &Path) -> Option<PathBuf> {
+    path.ancestors().find_map(|dir| {
+        if dir.join("ds3-map-planner").is_dir() && dir.join("ds3-map-probe").is_dir() {
+            Some(dir.to_path_buf())
+        } else {
+            None
+        }
+    })
+}
+
+fn build_workspace_root() -> Option<PathBuf> {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .filter(|root| root.join("ds3-map-planner").is_dir())
+        .map(Path::to_path_buf)
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ShotRunnerState {
     Idle,
@@ -52,40 +97,21 @@ struct TrajectoryFile {
     polylines: Vec<Vec<[f32; 3]>>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Clone)]
 struct ShotConfig {
-    #[serde(alias = "screen_width")]
-    render_width: u32,
-    #[serde(alias = "screen_height")]
-    render_height: u32,
-    #[serde(default = "default_shot_fov")]
     fov_y_rad: f32,
-    base_ratio_px_per_wu: f32,
-    density_multiplier: f32,
-    overlap_ratio: f32,
-    polyline_buffer_world: f32,
-    y_neighbor_k: usize,
-    y_lift: f32,
+    near: f32,
+    far: f32,
     wait_load_ms: u64,
     wait_shot_ms: u64,
-}
-
-fn default_shot_fov() -> f32 {
-    0.9
 }
 
 impl Default for ShotConfig {
     fn default() -> Self {
         Self {
-            render_width: 2560,
-            render_height: 1440,
-            fov_y_rad: default_shot_fov(),
-            base_ratio_px_per_wu: 32.0,
-            density_multiplier: 2.0,
-            overlap_ratio: 0.5,
-            polyline_buffer_world: 2.0,
-            y_neighbor_k: 5,
-            y_lift: 2.0,
+            fov_y_rad: 0.75049156,
+            near: 0.1,
+            far: 1000.0,
             wait_load_ms: 500,
             wait_shot_ms: 1000,
         }
@@ -102,6 +128,14 @@ struct ShotPointsFile {
     wait_shot_ms: Option<u64>,
     #[serde(default)]
     fov_y_rad: Option<f32>,
+    #[serde(default)]
+    camera: Option<ShotCamera>,
+}
+
+#[derive(Deserialize)]
+struct ShotCamera {
+    near: f32,
+    far: f32,
 }
 
 #[derive(Deserialize)]
@@ -116,6 +150,7 @@ pub(crate) struct Probe {
     camera_info: CameraInfo,
     exe_path: Option<String>,
     capture_root: PathBuf,
+    shot_plan_root: Option<PathBuf>,
     capture_subdir: String,
     capture_subdir_presets: Vec<String>,
     capture_status: String,
@@ -142,11 +177,10 @@ impl Probe {
         let pointers = PointerChains::new();
         let camera_info = CameraInfo::new(&pointers);
         let exe_path = util::get_exe_path().map(|p| p.to_string_lossy().into_owned());
-        let capture_root = exe_path
-            .as_deref()
-            .and_then(|p| PathBuf::from(p).parent().map(|dir| dir.join("capture")))
-            .or_else(|| std::env::current_dir().ok().map(|dir| dir.join("capture")))
-            .unwrap_or_else(|| PathBuf::from(".").join("capture"));
+        let dll_path = util::get_dll_path();
+        let capture_root =
+            resolve_capture_root(dll_path.as_deref(), exe_path.as_deref().map(Path::new));
+        let shot_plan_root = resolve_shot_plan_root(dll_path.as_deref());
         let _ = std::fs::create_dir_all(&capture_root);
         let capture_subdir_presets = parse_subdir_presets(DEFAULT_SUBDIR_PRESETS);
 
@@ -155,6 +189,7 @@ impl Probe {
             camera_info,
             exe_path,
             capture_root,
+            shot_plan_root,
             capture_subdir: "default".to_string(),
             capture_subdir_presets,
             capture_status: String::new(),
@@ -185,23 +220,20 @@ impl Probe {
         Some(self.capture_root.join(subdir))
     }
 
+    fn shot_plan_path(&self) -> Option<PathBuf> {
+        let subdir = self.capture_subdir.trim();
+        if subdir.is_empty() {
+            return None;
+        }
+        Some(match &self.shot_plan_root {
+            Some(root) => root.join(subdir).join("stage4_shot_plan.json"),
+            None => self.capture_root.join(subdir).join("shot_points.json"),
+        })
+    }
+
     fn set_ui_visibility(&mut self, show: bool) {
         self.pointers.cursor_show.set(show);
         self.show_ui = show;
-    }
-
-    fn infer_render_size_from_latest_capture(&self) -> Option<(usize, usize)> {
-        let exe_path = self.exe_path.as_deref()?;
-        let game_dir = PathBuf::from(exe_path).parent()?.to_path_buf();
-        let (_, depth_path) = find_latest_capture_pair(&game_dir)?;
-        let (_, w, h) = read_depth_exr_first_channel(&depth_path).ok()?;
-        Some((w, h))
-    }
-
-    fn refresh_shot_config_fov_from_memory(&mut self) {
-        if let Some(state) = self.camera_info.camera_render_state() {
-            self.shot_config.fov_y_rad = state.fov;
-        }
     }
 
     fn reset_free_camera(&self) {
@@ -361,59 +393,11 @@ impl Probe {
         self.capture_status = "All trajectories cleared.".to_string();
     }
 
-    fn save_shot_config(&mut self) {
-        let Some(output_dir) = self.output_dir() else {
-            self.capture_status = "Save config failed: subfolder name is empty.".to_string();
-            return;
-        };
-        if let Err(e) = fs::create_dir_all(&output_dir) {
-            self.capture_status = format!("Save config failed: {e}");
-            return;
-        }
-        self.refresh_shot_config_fov_from_memory();
-        if let Some((w, h)) = self.infer_render_size_from_latest_capture() {
-            self.shot_config.render_width = w as u32;
-            self.shot_config.render_height = h as u32;
-        }
-
-        let path = output_dir.join("shot_config.json");
-        match serde_json::to_vec_pretty(&self.shot_config)
-            .map_err(|e| e.to_string())
-            .and_then(|v| fs::write(&path, v).map_err(|e| e.to_string()))
-        {
-            Ok(_) => self.capture_status = format!("Saved shot config: {}", path.display()),
-            Err(e) => self.capture_status = format!("Save config failed: {e}"),
-        }
-    }
-
-    fn load_shot_config(&mut self) {
-        let Some(output_dir) = self.output_dir() else {
-            self.capture_status = "Load config failed: subfolder name is empty.".to_string();
-            return;
-        };
-        let path = output_dir.join("shot_config.json");
-        let bytes = match fs::read(&path) {
-            Ok(v) => v,
-            Err(e) => {
-                self.capture_status = format!("Load config failed: {e}");
-                return;
-            },
-        };
-        match serde_json::from_slice::<ShotConfig>(&bytes) {
-            Ok(v) => {
-                self.shot_config = v;
-                self.capture_status = format!("Loaded shot config: {}", path.display());
-            },
-            Err(e) => self.capture_status = format!("Load config failed: {e}"),
-        }
-    }
-
     fn load_shot_points(&mut self) {
-        let Some(output_dir) = self.output_dir() else {
+        let Some(path) = self.shot_plan_path() else {
             self.capture_status = "Load shot points failed: subfolder name is empty.".to_string();
             return;
         };
-        let path = output_dir.join("shot_points.json");
         let bytes = match fs::read(&path) {
             Ok(v) => v,
             Err(e) => {
@@ -434,16 +418,23 @@ impl Probe {
             .iter()
             .map(|p| [p.x, p.y, convert_z(p.z, src_space, CoordSpace::Game)])
             .collect();
-        self.shot_trajectory_points = load_trajectory_points(&output_dir.join("trajectory.json"));
+        self.shot_trajectory_points = self
+            .output_dir()
+            .map(|dir| load_trajectory_points(&dir.join("trajectory.json")))
+            .unwrap_or_default();
         if let Some(ms) = parsed.wait_load_ms {
             self.shot_config.wait_load_ms = ms;
         }
         if let Some(ms) = parsed.wait_shot_ms {
             self.shot_config.wait_shot_ms = ms;
         }
-        // Keep fov from live camera memory; do not override from files.
-        let _ = parsed.fov_y_rad;
-        self.refresh_shot_config_fov_from_memory();
+        if let Some(fov_y_rad) = parsed.fov_y_rad {
+            self.shot_config.fov_y_rad = fov_y_rad;
+        }
+        if let Some(camera) = parsed.camera {
+            self.shot_config.near = camera.near;
+            self.shot_config.far = camera.far;
+        }
         self.shot_idx = self.find_nearest_shot_index().unwrap_or(0);
         self.shot_state = ShotRunnerState::Idle;
         self.shot_running = false;
@@ -500,9 +491,10 @@ impl Probe {
         let p = self.shot_points[self.shot_idx];
         let player_target = nearest_point(p, &self.shot_trajectory_points).unwrap_or(p);
         self.camera_info.set_player_position(player_target);
-        self.camera_info.set_camera_position([p[0], p[1] + 20.0, p[2]]);
+        self.camera_info.set_camera_position(p);
         self.camera_info.set_camera_up_dir([0.0, 0.0, -1.0], [0.0, -1.0, 0.0]);
         self.camera_info.set_fovy_rad(self.shot_config.fov_y_rad);
+        let _ = self.camera_info.set_near_far(self.shot_config.near, self.shot_config.far);
         self.shot_state = ShotRunnerState::WaitLoad;
         self.shot_state_due =
             Some(Instant::now() + Duration::from_millis(self.shot_config.wait_load_ms));
@@ -514,7 +506,7 @@ impl Probe {
             player_target[1],
             player_target[2],
             p[0],
-            p[1] + 20.0,
+            p[1],
             p[2]
         );
     }
@@ -678,8 +670,6 @@ impl ImguiRenderLoop for Probe {
     }
 
     fn render(&mut self, ui: &mut imgui::Ui) {
-        self.refresh_shot_config_fov_from_memory();
-
         if ui.is_key_pressed(Key::F9) {
             self.set_ui_visibility(!self.show_ui);
             self.show_inject_hint = false;
@@ -764,6 +754,9 @@ impl ImguiRenderLoop for Probe {
                     ui.separator();
                     ui.text("Stage 0: Common");
                     ui.text_wrapped(format!("Capture Root: {}", self.capture_root.display()));
+                    if let Some(root) = &self.shot_plan_root {
+                        ui.text_wrapped(format!("Shot Plan Root: {}", root.display()));
+                    }
                     ui.text("Capture Subfolder:");
                     ui.input_text("##capture_subdir", &mut self.capture_subdir).build();
                     ui.same_line();
@@ -836,44 +829,6 @@ impl ImguiRenderLoop for Probe {
                             if ui.button("Clear Trajectory") {
                                 self.clear_all_trajectories();
                             }
-                            ui.separator();
-                            ui.text(format!(
-                                "Auto Render Size: {} x {}",
-                                self.shot_config.render_width, self.shot_config.render_height
-                            ));
-                            ui.text(format!("Auto FovY(rad): {:.6}", self.shot_config.fov_y_rad));
-                            ui.input_float(
-                                "Base Ratio px/wu",
-                                &mut self.shot_config.base_ratio_px_per_wu,
-                            )
-                            .build();
-                            ui.input_float(
-                                "Density Multiplier",
-                                &mut self.shot_config.density_multiplier,
-                            )
-                            .build();
-                            ui.input_float("Overlap Ratio", &mut self.shot_config.overlap_ratio)
-                                .build();
-                            ui.input_float(
-                                "Polyline Buffer",
-                                &mut self.shot_config.polyline_buffer_world,
-                            )
-                            .build();
-                            ui.input_scalar("Y Neighbor K", &mut self.shot_config.y_neighbor_k)
-                                .build();
-                            ui.input_float("Y Lift", &mut self.shot_config.y_lift).build();
-                            ui.input_scalar("Wait Load ms", &mut self.shot_config.wait_load_ms)
-                                .build();
-                            ui.input_scalar("Wait Shot ms", &mut self.shot_config.wait_shot_ms)
-                                .build();
-
-                            if ui.button("Save Config") {
-                                self.save_shot_config();
-                            }
-                            ui.same_line();
-                            if ui.button("Load Config") {
-                                self.load_shot_config();
-                            }
                         }
                         if let Some(_tab) = ui.tab_item("Screenshot") {
                             self.ui_phase = ProbeUiPhase::Screenshot;
@@ -889,7 +844,7 @@ impl ImguiRenderLoop for Probe {
                         self.shot_points.len(),
                         self.shot_running
                     ));
-                            if ui.button("Load shot_points.json") {
+                            if ui.button("Load Stage 4 shot plan") {
                                 self.load_shot_points();
                             }
                             ui.same_line();
@@ -1198,4 +1153,39 @@ fn dedup_paths(paths: &mut Vec<Vec<[f32; 3]>>) {
         }
     }
     *paths = out;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn development_dll_uses_workspace_capture_root() {
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let dll_path = repo_root.join("target/debug/libds3_map_probe.dll");
+        assert_eq!(workspace_capture_root_from_dll(&dll_path), Some(repo_root.join("capture")));
+        assert_eq!(
+            resolve_shot_plan_root(Some(&dll_path)),
+            Some(repo_root.join("map-work").join("capture-planner"))
+        );
+    }
+
+    #[test]
+    fn parses_planner_stage4_payload() {
+        let json = br#"{
+            "coord_space": "game",
+            "version": 1,
+            "fov_y_rad": 0.75,
+            "wait_load_ms": 500,
+            "wait_shot_ms": 1000,
+            "camera": { "direction": [0, -1, 0], "up": [0, 0, -1], "near": 0.1, "far": 1000 },
+            "points": [{ "id": 0, "x": 1, "y": 2, "z": 3, "y_ref": 0, "nav_hit_count": 1 }],
+            "stats": { "accepted_points": 1 }
+        }"#;
+        let parsed: ShotPointsFile = serde_json::from_slice(json).unwrap();
+        assert_eq!(parsed.coord_space, "game");
+        assert_eq!(parsed.points.len(), 1);
+        assert_eq!(parsed.points[0].z, 3.0);
+        assert_eq!(parsed.camera.unwrap().far, 1000.0);
+    }
 }

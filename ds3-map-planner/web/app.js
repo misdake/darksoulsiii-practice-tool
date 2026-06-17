@@ -9,8 +9,11 @@ import { ThirdPersonControllerSystem } from "./systems/third-person-controller-s
 import { NavProbeSystem } from "./systems/nav-probe-system.js";
 import { CollisionSystem } from "./systems/collision-system.js";
 import { NavSystem } from "./systems/nav-system.js";
+import { ShotPlanSystem } from "./systems/shot-plan-system.js";
 
 const app = document.getElementById("app");
+const panelEl = document.getElementById("panel");
+const panelCollapseBtn = document.getElementById("panelCollapseBtn");
 const mapSelectEl = document.getElementById("mapSelect");
 const fitBtn = document.getElementById("fitBtn");
 const resetVisibleBtn = document.getElementById("resetVisibleBtn");
@@ -27,6 +30,28 @@ const loadProgressFillEl = document.getElementById("loadProgressFill");
 const loadProgressWrapEl = document.getElementById("loadProgressWrap");
 const stageRadioEls = Array.from(document.querySelectorAll('input[name="stage"]'));
 const stageLabelEls = new Map(Array.from(document.querySelectorAll("[data-stage-label]")).map((el) => [Number(el.getAttribute("data-stage-label")), el]));
+const shotPlanPanelEl = document.getElementById("shotPlanPanel");
+const stageObjectListsEl = document.getElementById("stageObjectLists");
+const stage12ControlsEl = document.getElementById("stage12Controls");
+const stage3ControlsEl = document.getElementById("stage3Controls");
+const stage3HideCollisionEl = document.getElementById("stage3HideCollision");
+const stage3CollisionOpacityEl = document.getElementById("stage3CollisionOpacity");
+const stage3CollisionOpacityValueEl = document.getElementById("stage3CollisionOpacityValue");
+const PANEL_COLLAPSED_KEY = "ds3-map-planner.panel-collapsed";
+
+function setPanelCollapsed(collapsed) {
+  const next = Boolean(collapsed);
+  panelEl?.classList.toggle("panel-collapsed", next);
+  if (panelCollapseBtn) {
+    panelCollapseBtn.textContent = next ? "+" : "-";
+    panelCollapseBtn.title = next ? "Expand panel" : "Collapse panel";
+    panelCollapseBtn.setAttribute("aria-label", panelCollapseBtn.title);
+    panelCollapseBtn.setAttribute("aria-expanded", String(!next));
+  }
+  localStorage.setItem(PANEL_COLLAPSED_KEY, next ? "1" : "0");
+}
+
+setPanelCollapsed(localStorage.getItem(PANEL_COLLAPSED_KEY) === "1");
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -113,6 +138,7 @@ let suppressNextClick = false;
 let statusResetTimer = null;
 let isReloading = false;
 let queuedReload = false;
+let pendingAutoFitFrame = 0;
 let currentDefaultHitFilterIds = [8];
 let hasAppliedInitialStage = false;
 const rowByKey = new Map();
@@ -131,6 +157,31 @@ const thirdPersonSystem = new ThirdPersonControllerSystem();
 const navProbeSystem = new NavProbeSystem();
 const collisionSystem = new CollisionSystem();
 const navSystem = new NavSystem();
+const shotPlanSystem = new ShotPlanSystem({
+  calculateButton: document.getElementById("calculateShotPlanBtn"),
+  previewButton: document.getElementById("previewShotCameraBtn"),
+  exitPreviewButton: document.getElementById("exitShotPreviewBtn"),
+  showFrustumsInput: document.getElementById("showShotFrustums"),
+  firstButton: document.getElementById("firstShotBtn"),
+  previousButton: document.getElementById("previousShotBtn"),
+  nextButton: document.getElementById("nextShotBtn"),
+  lastButton: document.getElementById("lastShotBtn"),
+  navigationIndex: document.getElementById("shotNavigationIndex"),
+  addModeButton: document.getElementById("addShotModeBtn"),
+  cloneButton: document.getElementById("cloneShotBtn"),
+  info: document.getElementById("shotPlanInfo"),
+  inputs: {
+    render_width: document.getElementById("shotRenderWidth"),
+    render_height: document.getElementById("shotRenderHeight"),
+    fov_y_rad: document.getElementById("shotFovY"),
+    base_ratio_px_per_wu: document.getElementById("shotBaseRatio"),
+    density_multiplier: document.getElementById("shotDensity"),
+    overlap_ratio: document.getElementById("shotOverlap"),
+    y_lift: document.getElementById("shotYLift"),
+    wait_load_ms: document.getElementById("shotWaitLoad"),
+    wait_shot_ms: document.getElementById("shotWaitShot"),
+  },
+});
 const stageRuntimeHooks = {
   onUpdateStage(_stageId, ctx, dt) {
     physicsSystem.update(ctx, dt);
@@ -285,6 +336,13 @@ function highlightSelectedRow() {
 async function fetchJson(url, opts) {
   const reqOpts = { cache: "no-cache", ...(opts || {}) };
   const res = await fetch(url, reqOpts);
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
+  return await res.json();
+}
+
+async function fetchOptionalJson(url) {
+  const res = await fetch(url, { cache: "no-cache" });
+  if (res.status === 404) return null;
   if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
   return await res.json();
 }
@@ -448,10 +506,8 @@ function collectSelectedNavSegments() {
   return out;
 }
 
-function readProfileSelection(profile) {
-  const selectedSegments = Array.isArray(profile?.selection?.selected_nav_segments)
-    ? profile.selection.selected_nav_segments
-    : [];
+function applyStage3MarkNav(data) {
+  const selectedSegments = Array.isArray(data?.selected_nav_segments) ? data.selected_nav_segments : [];
   navSegmentUsageStates.clear();
   for (const x of selectedSegments) {
     const navName = x?.nav_name;
@@ -460,41 +516,14 @@ function readProfileSelection(profile) {
   }
 }
 
-function applySavedProfile(profile) {
-  const collisionEnabledPaths = Array.isArray(profile?.visibility?.collision_enabled_paths)
-    ? profile.visibility.collision_enabled_paths
-    : [];
-  const navEnabledPaths = Array.isArray(profile?.visibility?.navmesh_enabled_paths)
-    ? profile.visibility.navmesh_enabled_paths
-    : [];
-
-  const cset = new Set(collisionEnabledPaths);
-  const nset = new Set(navEnabledPaths);
-  const cBase = new Set(Array.from(cset).map((p) => displayName(String(p || ""))));
-  const nBase = new Set(Array.from(nset).map((p) => displayName(String(p || ""))));
-  if (collisionGroup) {
-    let matched = 0;
-    for (const child of collisionGroup.children) {
-      const on = cset.has(child.name) || cBase.has(displayName(child.name));
-      if (on) matched++;
-      child.userData.manualEnabled = on;
-    }
-    if (cset.size > 0 && matched === 0) {
-      for (const child of collisionGroup.children) child.userData.manualEnabled = true;
-    }
+function applyEnabledPaths(group, paths) {
+  if (!group || !Array.isArray(paths)) return false;
+  const exact = new Set(paths);
+  const base = new Set(paths.map((p) => displayName(String(p || ""))));
+  for (const child of group.children) {
+    child.userData.manualEnabled = exact.has(child.name) || base.has(displayName(child.name));
   }
-  if (navmeshGroup) {
-    let matched = 0;
-    for (const child of navmeshGroup.children) {
-      const on = nset.has(child.name) || nBase.has(displayName(child.name));
-      if (on) matched++;
-      child.userData.manualEnabled = on;
-    }
-    if (nset.size > 0 && matched === 0) {
-      for (const child of navmeshGroup.children) child.userData.manualEnabled = true;
-    }
-  }
-  readProfileSelection(profile);
+  return true;
 }
 
 function applyStage(stage) {
@@ -506,6 +535,10 @@ function applyStage(stage) {
   hasAppliedInitialStage = true;
   currentStage = normalizedStage;
   for (const r of stageRadioEls) r.checked = Number(r.value) === normalizedStage;
+  if (shotPlanPanelEl) shotPlanPanelEl.style.display = normalizedStage === 4 ? "block" : "none";
+  if (stageObjectListsEl) stageObjectListsEl.style.display = normalizedStage <= 2 ? "block" : "none";
+  if (stage12ControlsEl) stage12ControlsEl.style.display = normalizedStage <= 2 ? "flex" : "none";
+  if (stage3ControlsEl) stage3ControlsEl.style.display = normalizedStage === 3 ? "flex" : "none";
   clearSelection();
   applyCollisionVisibility();
   collisionSystem.applyOpacity();
@@ -528,6 +561,7 @@ const stageContext = {
   runtime,
   navSegmentUsageStates,
   requestNavVisualRefresh: applyNavVisuals,
+  requestCollisionVisibilityRefresh: applyCollisionVisibility,
   setStatus,
   systems: {
     collision: collisionSystem,
@@ -535,6 +569,7 @@ const stageContext = {
     physics: physicsSystem,
     thirdPerson: thirdPersonSystem,
     navProbe: navProbeSystem,
+    shotPlan: shotPlanSystem,
   },
   ui: {
     setSegmentToolsEnabled(enabled) {
@@ -544,6 +579,17 @@ const stageContext = {
       if (!cameraModeBtn) return;
       cameraModeBtn.style.display = visible ? "" : "none";
       if (typeof text === "string") cameraModeBtn.textContent = text;
+    },
+    setStage3CollisionHidden(hidden) {
+      if (stage3HideCollisionEl) stage3HideCollisionEl.checked = Boolean(hidden);
+    },
+    setStage3CollisionOpacity(opacity) {
+      const value = Math.max(0, Math.min(1, Number(opacity) || 0));
+      if (stage3CollisionOpacityEl) stage3CollisionOpacityEl.value = String(value);
+      if (stage3CollisionOpacityValueEl) stage3CollisionOpacityValueEl.textContent = value.toFixed(2);
+    },
+    setShotPlanPanelVisible(visible) {
+      if (shotPlanPanelEl) shotPlanPanelEl.style.display = visible ? "" : "none";
     },
   },
   actions: {
@@ -767,19 +813,6 @@ function resetNavSegmentStatesInMemory() {
   setStatus("nav segment states reset in memory; click Save Filter to persist", false, 2200);
 }
 
-function ensureAnyVisible() {
-  const anyCollisionVisible = collisionGroup
-    ? collisionGroup.children.some((x) => x.userData.manualEnabled !== false)
-    : false;
-  const anyNavVisible = navmeshGroup
-    ? navmeshGroup.children.some((x) => x.userData.manualEnabled !== false)
-    : false;
-  if (!anyCollisionVisible && !anyNavVisible) {
-    resetVisibleStatesInMemory();
-    setStatus("saved profile matched 0 objects, reset to defaults in memory", false, 2600);
-  }
-}
-
 async function reload() {
   if (isReloading) {
     queuedReload = true;
@@ -799,7 +832,13 @@ async function reload() {
     navSegmentUsageStates.clear();
     if (collisionGroup) root.remove(collisionGroup);
     if (navmeshGroup) root.remove(navmeshGroup);
-    const payload = await fetchJson(`/api/maps/${mapId}/content`);
+    const [payload, stage1Data, stage2Data, stage3Data, stage4Data] = await Promise.all([
+      fetchJson(`/api/maps/${mapId}/content`),
+      fetchOptionalJson(`/api/maps/${mapId}/stage1-collision-filter`),
+      fetchOptionalJson(`/api/maps/${mapId}/stage2-nav-filter`),
+      fetchOptionalJson(`/api/maps/${mapId}/stage3-mark-nav`),
+      fetchOptionalJson(`/api/maps/${mapId}/stage4-shot-plan`),
+    ]);
     currentDefaultHitFilterIds = Array.isArray(payload.default_hit_filter_ids)
       ? payload.default_hit_filter_ids.map((x) => Number(x)).filter((x) => Number.isFinite(x))
       : [8];
@@ -836,16 +875,16 @@ async function reload() {
     root.add(collisionGroup);
     root.add(navmeshGroup);
     applyCollisionMaterial(collisionGroup, 0.5);
-    if (payload.saved_profile_exists && payload.saved_profile) {
-      applySavedProfile(payload.saved_profile);
-    } else {
-      applyDefaultVisibilityRules(currentDefaultHitFilterIds);
-    }
-    ensureAnyVisible();
+    applyDefaultVisibilityRules(currentDefaultHitFilterIds);
+    applyEnabledPaths(collisionGroup, stage1Data?.collision_enabled_paths);
+    applyEnabledPaths(navmeshGroup, stage2Data?.nav_enabled_paths);
+    applyStage3MarkNav(stage3Data);
+    shotPlanSystem.load(stage4Data);
     rebuildObjectMenu();
     rebuildHitFilterMenu();
     applyStage(profileStage);
     getStageConfig().onSceneReload?.(buildStageContext());
+    scheduleFitCameraToMap();
     setLoadProgress(`loaded ${mapId}`, 1, false);
     setStatus(`loaded ${mapId}\ncollision: ${collisionGroup.children.length}\nnavmesh: ${navmeshGroup.children.length}\nfailed: ${cResult.failed.length + nResult.failed.length}`);
   } catch (e) {
@@ -861,49 +900,92 @@ async function reload() {
   }
 }
 
-async function saveProfile() {
+function currentStageSaveData() {
+  if (currentStage === 1) return { collision_enabled_paths: collectEnabledPaths(collisionGroup) };
+  if (currentStage === 2) return { nav_enabled_paths: collectEnabledPaths(navmeshGroup) };
+  if (currentStage === 3) return { selected_nav_segments: collectSelectedNavSegments() };
+  if (currentStage === 4) return shotPlanSystem.getSaveData();
+  return null;
+}
+
+function fitCameraToMap() {
+  if (!navmeshGroup && !collisionGroup) return;
+  applyCollisionVisibility();
+  navSystem.applyVisibility(true);
+  applyNavVisuals();
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  for (const group of [collisionGroup, navmeshGroup]) {
+    if (!group || !isObjectHierarchyVisible(group)) continue;
+    group.traverse((obj) => {
+      if (!obj.isMesh || !isObjectHierarchyVisible(obj)) return;
+      box.expandByObject(obj);
+    });
+  }
+  if (box.isEmpty()) return;
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const radius = Math.max(size.x, size.y, size.z) * 0.9 + 1;
+  camera.position.copy(center).add(new THREE.Vector3(radius, radius * 0.7, radius));
+  controls.target.copy(center);
+  controls.update();
+}
+
+function scheduleFitCameraToMap() {
+  if (pendingAutoFitFrame) cancelAnimationFrame(pendingAutoFitFrame);
+  pendingAutoFitFrame = requestAnimationFrame(() => {
+    pendingAutoFitFrame = 0;
+    fitCameraToMap();
+  });
+}
+
+async function saveCurrentStage() {
   if (!currentMapId) return;
-  const collision_enabled_paths = collectEnabledPaths(collisionGroup);
-  const navmesh_enabled_paths = collectEnabledPaths(navmeshGroup);
-  const selected_nav_segments = collectSelectedNavSegments();
+  const stage = getStageConfig();
+  const data = currentStageSaveData();
+  if (!data) {
+    setStatus(`${stage.name} has no data to save.`, true);
+    return;
+  }
   try {
-    const res = await fetch(`/api/maps/${currentMapId}/filter-profile`, {
+    const res = await fetch(`/api/maps/${currentMapId}/${stage.storageKey}`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        map_id: currentMapId,
-        collision_enabled_paths,
-        navmesh_enabled_paths,
-        selected_nav_segments,
-      }),
+      body: JSON.stringify(data),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    setStatus(`saved filter_profile.json for ${currentMapId}`, false, 2200);
+    setStatus(`saved ${stage.storageKey}.json for ${currentMapId}`, false, 2200);
   } catch (e) {
     setStatus(`save failed: ${e.message || e}`, true);
   }
 }
 
 function registerUiHandlers() {
+  panelCollapseBtn?.addEventListener("click", () => {
+    setPanelCollapsed(!panelEl?.classList.contains("panel-collapsed"));
+  });
   for (const r of stageRadioEls) {
     r.addEventListener("change", () => {
       if (r.checked) applyStage(Number(r.value));
     });
   }
   mapSelectEl.addEventListener("change", () => { void reload(); });
-  fitBtn.addEventListener("click", () => {
-    if (!navmeshGroup && !collisionGroup) return;
-    const target = navmeshGroup || collisionGroup;
-    const box = new THREE.Box3().setFromObject(target);
-    const size = box.getSize(new THREE.Vector3());
-    const center = box.getCenter(new THREE.Vector3());
-    const radius = Math.max(size.x, size.y, size.z) * 0.9 + 1;
-    camera.position.copy(center).add(new THREE.Vector3(radius, radius * 0.7, radius));
-    controls.target.copy(center);
-  });
+  fitBtn.addEventListener("click", fitCameraToMap);
   resetVisibleBtn.addEventListener("click", resetVisibleStatesInMemory);
   resetNavSegmentBtn.addEventListener("click", resetNavSegmentStatesInMemory);
-  saveBtn.addEventListener("click", saveProfile);
+  stage3HideCollisionEl?.addEventListener("change", () => {
+    getStageConfig().handleCollisionHiddenChange?.(
+      buildStageContext(),
+      stage3HideCollisionEl.checked,
+    );
+  });
+  stage3CollisionOpacityEl?.addEventListener("input", () => {
+    getStageConfig().handleCollisionOpacityChange?.(
+      buildStageContext(),
+      Number(stage3CollisionOpacityEl.value),
+    );
+  });
+  saveBtn.addEventListener("click", saveCurrentStage);
   if (cameraModeBtn) {
     cameraModeBtn.addEventListener("click", () => {
       getStageConfig().handleToggleCameraMode?.(buildStageContext());

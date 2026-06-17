@@ -1,6 +1,7 @@
-export function createStage2Definition() {
+export function createStage2NavFilterDefinition() {
   return {
-    name: "Nav Object Filter",
+    name: "Stage 2 Nav Filter",
+    storageKey: "stage2-nav-filter",
     enter(ctx) {
       ctx.systems.collision.setStage({ visible: false, opacity: 0.5, selectable: false });
       ctx.systems.nav.setStage({
@@ -9,8 +10,11 @@ export function createStage2Definition() {
         hideDeleted: false,
         allowSegmentHighlight: false,
         allowNavObjHighlight: true,
+        selectedOnly: false,
       });
       ctx.ui.setSegmentToolsEnabled(false);
+      ctx.ui.setCameraModeButton({ visible: false });
+      ctx.ui.setShotPlanPanelVisible(false);
     },
     handleHideSelected(ctx) {
       ctx.actions.hideSelectedObject();

@@ -49,10 +49,6 @@ const MAP_DISPLAY_NAMES = {
   m54_00_00_00: "Arena - Round Plaza",
 };
 
-function nowIso() {
-  return new Date().toISOString();
-}
-
 function mapDisplayName(mapId) {
   return MAP_DISPLAY_NAMES[mapId] || mapId;
 }
@@ -189,23 +185,23 @@ async function getMapContent(mapId) {
     nav.path = replaced;
   }
 
-  const profilePath = path.join(mapDir, "filter_profile.json");
-  let savedProfile = null;
-  if (fs.existsSync(profilePath)) savedProfile = await readJsonFile(profilePath, "filter profile");
-
   return {
     map_id: mapId,
     default_hit_filter_ids: DEFAULT_HIT_FILTER_IDS.slice(),
     collision_manifest: collisionManifest,
     navmesh_manifest: navmeshManifest,
-    saved_profile_exists: !!savedProfile,
-    saved_profile: savedProfile,
   };
 }
 
-async function saveFilterProfile(mapId, reqBody) {
+const STAGE_FILES = Object.freeze({
+  "stage1-collision-filter": "stage1_collision_filter.json",
+  "stage2-nav-filter": "stage2_nav_filter.json",
+  "stage3-mark-nav": "stage3_mark_nav.json",
+  "stage4-shot-plan": "stage4_shot_plan.json",
+});
+
+async function getMapDir(mapId) {
   if (!isValidMapId(mapId)) throw new Error("invalid map_id");
-  if (reqBody?.map_id !== mapId) throw new Error("map_id mismatch");
   const mapDir = path.join(plannerRoot, mapId);
   let st;
   try {
@@ -214,26 +210,24 @@ async function saveFilterProfile(mapId, reqBody) {
     throw new Error("map directory not found");
   }
   if (!st.isDirectory()) throw new Error("map directory not found");
+  return mapDir;
+}
 
-  const selectedNavSegments = Array.isArray(reqBody.selected_nav_segments) ? reqBody.selected_nav_segments : [];
-  const normalizedSelectedNavSegments = selectedNavSegments
-    .filter((x) => x && typeof x.nav_name === "string")
-    .map((x) => ({ nav_name: x.nav_name, segment_index: Number(x.segment_index || 0) }));
+async function loadStageData(mapId, stageName) {
+  const fileName = STAGE_FILES[stageName];
+  if (!fileName) throw new Error("invalid stage name");
+  const mapDir = await getMapDir(mapId);
+  const filePath = path.join(mapDir, fileName);
+  if (!fs.existsSync(filePath)) return null;
+  return await readJsonFile(filePath, stageName);
+}
 
-  const payload = {
-    map_id: mapId,
-    updated_at: nowIso(),
-    visibility: {
-      collision_enabled_paths: Array.isArray(reqBody.collision_enabled_paths) ? reqBody.collision_enabled_paths : [],
-      navmesh_enabled_paths: Array.isArray(reqBody.navmesh_enabled_paths) ? reqBody.navmesh_enabled_paths : [],
-    },
-    selection: {
-      selected_nav_segments: normalizedSelectedNavSegments,
-    },
-  };
-
-  const profilePath = path.join(mapDir, "filter_profile.json");
-  await fsp.writeFile(profilePath, JSON.stringify(payload, null, 2), "utf8");
+async function saveStageData(mapId, stageName, data) {
+  const fileName = STAGE_FILES[stageName];
+  if (!fileName) throw new Error("invalid stage name");
+  const mapDir = await getMapDir(mapId);
+  const text = JSON.stringify(data, null, 2);
+  await fsp.writeFile(path.join(mapDir, fileName), text, "utf8");
 }
 
 function maybeOpenBrowser(url) {
@@ -278,10 +272,16 @@ async function handle(req, res) {
       return;
     }
 
-    const mSave = pathname.match(/^\/api\/maps\/([^/]+)\/filter-profile$/);
-    if (req.method === "PUT" && mSave) {
+    const mStage = pathname.match(/^\/api\/maps\/([^/]+)\/(stage1-collision-filter|stage2-nav-filter|stage3-mark-nav|stage4-shot-plan)$/);
+    if (req.method === "GET" && mStage) {
+      const data = await loadStageData(mStage[1], mStage[2]);
+      if (data === null) sendJson(res, 404, { error: "stage data not found" });
+      else sendJson(res, 200, data);
+      return;
+    }
+    if (req.method === "PUT" && mStage) {
       const body = await readRequestJson(req);
-      await saveFilterProfile(mSave[1], body);
+      await saveStageData(mStage[1], mStage[2], body);
       sendText(res, 204, "");
       return;
     }

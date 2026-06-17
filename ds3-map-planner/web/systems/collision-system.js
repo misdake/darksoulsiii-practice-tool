@@ -30,7 +30,7 @@ export class CollisionSystem {
 
   applyOpacity() {
     if (!this.group) return;
-    const effectiveOpacity = Math.min(Number(this.stage.opacity), 0.9);
+    const effectiveOpacity = Math.max(0, Math.min(Number(this.stage.opacity), 1));
     this.group.traverse((obj) => {
       if (!obj.isMesh || !obj.material) return;
       obj.material.opacity = effectiveOpacity;

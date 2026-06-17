@@ -5,8 +5,8 @@
 Current scope includes:
 
 - preparation pipeline docs
-- JS local server + web viewer (`collision`/`navmesh` import + filter + persist)
-- active web stages: `Stage 1` / `Stage 2` / `Stage 3 (Terrain Adventure)`
+- JS local server + web viewer (`collision`/`navmesh` import + staged persistence)
+- browser-side shot-plan calculation and camera preview
 
 ## Preparation Pipeline (m40_00_00_00)
 
@@ -67,25 +67,23 @@ Outputs:
 - `${OUT_NAVMESH_OBJ_DIR}/*.obj`
 - `${OUT_NAVMESH_JSON}`
 
-## Next Planned Stages
-
 ### Active Stages
 
-1. `Stage 1` Collision filtering
-2. `Stage 2` Nav object filtering
-3. `Stage 3` Terrain Adventure (physics + third-person/free camera + nav split marking by ground probe)
+1. `Stage 1 Collision Filter`
+2. `Stage 2 Nav Filter`
+3. `Stage 3 Mark Nav` (physics + third-person/free camera + nav segment marking)
+4. `Stage 4 Shot Plan` (browser Worker calculation + camera visualization)
 
-### Persisted Filter Profile
+### Persisted Stage Data
 
-Goal:
+Each stage saves its raw JSON payload independently:
 
-- persist one profile file per map in `map-work/capture-planner/{map_id}/filter_profile.json`
-- saved fields:
-  - `visibility.collision_enabled_paths`
-  - `visibility.navmesh_enabled_paths`
-  - `selection.selected_nav_segments` (`{ nav_name, segment_index }`, where `nav_name` is the split OBJ path)
+- `stage1_collision_filter.json`
+- `stage2_nav_filter.json`
+- `stage3_mark_nav.json`
+- `stage4_shot_plan.json`
 
-### Run Stage 1 Server (JS)
+### Run Planner Server (JS)
 
 From workspace root:
 
@@ -150,6 +148,6 @@ After build, backend server auto-serves `ds3-map-planner/web/dist` (if present),
 cargo run -p ds3-map-planner --bin navmesh_split -- m40_00_00_00
 ```
 
-### Future Planning
+### Shot Plan
 
-Layering/screenshot-planning stages remain future work and are not implemented in current web UI.
+Open Stage 4 after saving or preparing the Stage 3 nav selection. Configure the render size, FOV, density, overlap, and timing, then calculate and save the shot plan in the browser.

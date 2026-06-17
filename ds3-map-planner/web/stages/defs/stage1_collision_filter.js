@@ -1,6 +1,7 @@
-export function createStage1Definition() {
+export function createStage1CollisionFilterDefinition() {
   return {
-    name: "Collision Filter",
+    name: "Stage 1 Collision Filter",
+    storageKey: "stage1-collision-filter",
     enter(ctx) {
       ctx.systems.collision.setStage({ visible: true, opacity: 0.9, selectable: true });
       ctx.systems.nav.setStage({
@@ -9,8 +10,11 @@ export function createStage1Definition() {
         hideDeleted: false,
         allowSegmentHighlight: false,
         allowNavObjHighlight: false,
+        selectedOnly: false,
       });
       ctx.ui.setSegmentToolsEnabled(false);
+      ctx.ui.setCameraModeButton({ visible: false });
+      ctx.ui.setShotPlanPanelVisible(false);
     },
     handleHideSelected(ctx) {
       ctx.actions.hideSelectedObject();

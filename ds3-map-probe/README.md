@@ -49,14 +49,16 @@ Before batch capture, set a stable game state:
    - Write metadata TOML with the same prefix.
 5. Repeat until area coverage is complete.
 
-## Trajectory + Shot Config
+## Trajectory + Shot Points
 
 - In probe, record trajectory points with `F1`.
 - Use `Close Loop` to save a closed area loop, or `Add Polyline` for open trajectories.
 - Export to `capture/<subdir>/trajectory.json`.
-- Open `Shot Points Config` window to edit screenshot density/resolution/timing and save to `capture/<subdir>/shot_config.json`.
-- Run processor with `--run shotpoints` to generate `capture/<subdir>/shot_points.json`.
-- Load `shot_points.json` in probe and run semi-auto capture (`F2` confirms each shot).
+- Run the map planner Stage 4 to generate `map-work/capture-planner/<map_id>/stage4_shot_plan.json`.
+- Probe reads that Stage 4 file directly. Set `DS3_MAP_PLANNER_ROOT` to override the `map-work/capture-planner` directory.
+- Capture output and trajectory data remain under `capture/<subdir>`. Set `DS3_MAP_CAPTURE_ROOT` to override that location.
+- Select the same map id in `Capture Subfolder` that was used by the planner, for example `m30_00_00_00`.
+- Load the Stage 4 shot plan in probe and run semi-auto capture (`F2` confirms each shot).
 
 Optional:
 - Press `F6` to teleport player to current camera position (with a small Y offset) if needed for map loading.

@@ -9,6 +9,7 @@ export class NavSystem {
       hideDeleted: false,
       allowSegmentHighlight: false,
       allowNavObjHighlight: false,
+      selectedOnly: false,
     };
   }
 
@@ -58,6 +59,8 @@ export class NavSystem {
         }
         seg.material.color.copy(color);
         if (!navEnabled || this.stage.useMerged) {
+          seg.visible = false;
+        } else if (this.stage.selectedOnly && !getSegmentUsage(navObj.name, seg.userData.segmentIndex)) {
           seg.visible = false;
         } else if (this.stage.hideDeleted && state === "delete") {
           seg.visible = false;

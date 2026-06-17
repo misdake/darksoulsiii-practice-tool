@@ -39,7 +39,7 @@ pub struct ShotConfig {
 }
 
 fn default_fov_y_rad() -> f32 {
-    0.9
+    0.75049156
 }
 
 impl Default for ShotConfig {
@@ -47,11 +47,11 @@ impl Default for ShotConfig {
         Self {
             render_width: 2560,
             render_height: 1440,
-            fov_y_rad: 0.9,
+            fov_y_rad: default_fov_y_rad(),
             base_ratio_px_per_wu: 32.0,
             density_multiplier: 2.0,
             overlap_ratio: 0.5,
-            polyline_buffer_world: 2.0,
+            polyline_buffer_world: 3.0,
             y_neighbor_k: 5,
             y_lift: 2.0,
             wait_load_ms: 500,
@@ -115,8 +115,7 @@ pub fn run_shot_points_stage(
             }
         }
         let traj_path = subdir.join("trajectory.json");
-        let cfg_path = subdir.join("shot_config.json");
-        if !traj_path.is_file() || !cfg_path.is_file() {
+        if !traj_path.is_file() {
             continue;
         }
         let traj: TrajectoryFile = serde_json::from_str(
@@ -124,11 +123,7 @@ pub fn run_shot_points_stage(
                 .with_context(|| format!("read {}", traj_path.display()))?,
         )
         .with_context(|| format!("parse {}", traj_path.display()))?;
-        let cfg: ShotConfig = serde_json::from_str(
-            &fs::read_to_string(&cfg_path)
-                .with_context(|| format!("read {}", cfg_path.display()))?,
-        )
-        .with_context(|| format!("parse {}", cfg_path.display()))?;
+        let cfg = ShotConfig::default();
         let out = build_shot_points(&traj, &cfg)?;
         let out_path = subdir.join("shot_points.json");
         fs::write(&out_path, serde_json::to_vec_pretty(&out).context("serialize shot_points")?)
@@ -137,7 +132,7 @@ pub fn run_shot_points_stage(
         written += 1;
     }
     if written == 0 {
-        anyhow::bail!("No trajectory.json + shot_config.json pairs found under capture/.");
+        anyhow::bail!("No trajectory.json files found under capture/.");
     }
     Ok(written)
 }
