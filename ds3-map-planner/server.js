@@ -59,7 +59,10 @@ function isValidMapId(mapId) {
 
 function sendJson(res, status, obj, extraHeaders = {}) {
   const text = JSON.stringify(obj, null, 2);
-  sendText(res, status, text, { "content-type": "application/json; charset=utf-8", ...extraHeaders });
+  sendText(res, status, text, {
+    "content-type": "application/json; charset=utf-8",
+    ...extraHeaders,
+  });
 }
 
 function sendText(res, status, text, headers = {}) {
@@ -100,7 +103,8 @@ function safeJoinInside(root, relPath) {
   const normalizedRel = relPath.replace(/\\/g, "/").replace(/^\/+/, "");
   const abs = path.resolve(root, normalizedRel);
   const rootResolved = path.resolve(root);
-  if (!abs.startsWith(rootResolved + path.sep) && abs !== rootResolved) return null;
+  if (!abs.startsWith(rootResolved + path.sep) && abs !== rootResolved)
+    return null;
   return abs;
 }
 
@@ -115,7 +119,7 @@ async function tryServeFile(res, absPath, explicitType = "") {
   const ext = path.extname(absPath).toLowerCase();
   const type =
     explicitType ||
-    ({
+    {
       ".html": "text/html; charset=utf-8",
       ".js": "text/javascript; charset=utf-8",
       ".json": "application/json; charset=utf-8",
@@ -126,7 +130,8 @@ async function tryServeFile(res, absPath, explicitType = "") {
       ".jpg": "image/jpeg",
       ".jpeg": "image/jpeg",
       ".svg": "image/svg+xml",
-    }[ext] || "application/octet-stream");
+    }[ext] ||
+    "application/octet-stream";
   const stream = fs.createReadStream(absPath);
   res.writeHead(200, {
     "access-control-allow-origin": "*",
@@ -172,9 +177,17 @@ async function getMapContent(mapId) {
   }
   if (!st.isDirectory()) throw new Error("map directory not found");
 
-  const collisionManifest = await readJsonFile(path.join(mapDir, "collision_world.json"), "collision manifest");
-  const navmeshManifest = await readJsonFile(path.join(mapDir, "navmesh_manifest.json"), "navmesh manifest");
-  const navmeshes = Array.isArray(navmeshManifest.navmeshes) ? navmeshManifest.navmeshes : [];
+  const collisionManifest = await readJsonFile(
+    path.join(mapDir, "collision_world.json"),
+    "collision manifest",
+  );
+  const navmeshManifest = await readJsonFile(
+    path.join(mapDir, "navmesh_manifest.json"),
+    "navmesh manifest",
+  );
+  const navmeshes = Array.isArray(navmeshManifest.navmeshes)
+    ? navmeshManifest.navmeshes
+    : [];
   for (const nav of navmeshes) {
     let replaced = String(nav.path || "");
     if (replaced.includes("/navmesh_objs/")) {
@@ -197,7 +210,8 @@ const STAGE_FILES = Object.freeze({
   "stage1-collision-filter": "stage1_collision_filter.json",
   "stage2-nav-filter": "stage2_nav_filter.json",
   "stage3-mark-nav": "stage3_mark_nav.json",
-  "stage4-shot-plan": "stage4_shot_plan.json",
+  "stage4-map-regions": "stage4_map_regions.json",
+  "stage6-map-region-shot-plans": "stage6_map_region_shot_plans.json",
 });
 
 async function getMapDir(mapId) {
@@ -272,7 +286,9 @@ async function handle(req, res) {
       return;
     }
 
-    const mStage = pathname.match(/^\/api\/maps\/([^/]+)\/(stage1-collision-filter|stage2-nav-filter|stage3-mark-nav|stage4-shot-plan)$/);
+    const mStage = pathname.match(
+      /^\/api\/maps\/([^/]+)\/(stage1-collision-filter|stage2-nav-filter|stage3-mark-nav|stage4-map-regions|stage6-map-region-shot-plans)$/,
+    );
     if (req.method === "GET" && mStage) {
       const data = await loadStageData(mStage[1], mStage[2]);
       if (data === null) sendJson(res, 404, { error: "stage data not found" });
@@ -286,7 +302,10 @@ async function handle(req, res) {
       return;
     }
 
-    if (req.method === "GET" && (pathname === "/" || pathname === "/index.html")) {
+    if (
+      req.method === "GET" &&
+      (pathname === "/" || pathname === "/index.html")
+    ) {
       const p = path.join(webRoot, "index.html");
       const text = await fsp.readFile(p, "utf8");
       sendText(res, 200, text, noStoreHeaders("text/html; charset=utf-8"));
@@ -296,7 +315,12 @@ async function handle(req, res) {
     if (req.method === "GET" && pathname === "/app.js") {
       const p = path.join(webRoot, "app.js");
       const text = await fsp.readFile(p, "utf8");
-      sendText(res, 200, text, noStoreHeaders("text/javascript; charset=utf-8"));
+      sendText(
+        res,
+        200,
+        text,
+        noStoreHeaders("text/javascript; charset=utf-8"),
+      );
       return;
     }
 
@@ -305,7 +329,12 @@ async function handle(req, res) {
       const pSource = path.join(webSourceRoot, "obj-worker.js");
       const p = fs.existsSync(pDist) ? pDist : pSource;
       const text = await fsp.readFile(p, "utf8");
-      sendText(res, 200, text, noStoreHeaders("text/javascript; charset=utf-8"));
+      sendText(
+        res,
+        200,
+        text,
+        noStoreHeaders("text/javascript; charset=utf-8"),
+      );
       return;
     }
 
@@ -343,7 +372,9 @@ async function handle(req, res) {
 }
 
 const server = http.createServer((req, res) => {
-  handle(req, res).catch((e) => sendJson(res, 500, { error: e.message || String(e) }));
+  handle(req, res).catch((e) =>
+    sendJson(res, 500, { error: e.message || String(e) }),
+  );
 });
 
 server.listen(PORT, HOST, () => {

@@ -1,4 +1,4 @@
-# ds3-map-planner
+﻿# ds3-map-planner
 
 `ds3-map-planner` is the planning-side crate for map capture workflow.
 
@@ -72,7 +72,9 @@ Outputs:
 1. `Stage 1 Collision Filter`
 2. `Stage 2 Nav Filter`
 3. `Stage 3 Mark Nav` (physics + third-person/free camera + nav segment marking)
-4. `Stage 4 Shot Plan` (browser Worker calculation + camera visualization)
+4. `Stage 4 Map Regions` (on `/regions.html`)
+5. `Stage 5 Region Preview` (on `/regions.html`)
+6. `Stage 6 Region Shot Plans` (on `/regions.html`)
 
 ### Persisted Stage Data
 
@@ -81,7 +83,8 @@ Each stage saves its raw JSON payload independently:
 - `stage1_collision_filter.json`
 - `stage2_nav_filter.json`
 - `stage3_mark_nav.json`
-- `stage4_shot_plan.json`
+- `stage4_map_regions.json`
+- `stage6_map_region_shot_plans.json`
 
 ### Run Planner Server (JS)
 
@@ -148,6 +151,10 @@ After build, backend server auto-serves `ds3-map-planner/web/dist` (if present),
 cargo run -p ds3-map-planner --bin navmesh_split -- m40_00_00_00
 ```
 
-### Shot Plan
+### Map Regions
 
-Open Stage 4 after saving or preparing the Stage 3 nav selection. Configure the render size, FOV, density, overlap, and timing, then calculate and save the shot plan in the browser.
+Save the Stage 3 nav selection, then open `/regions.html`. The page edits game-coordinate region prisms, previews active regions through a clipped left map viewport, and creates per-region camera plans. The legacy `stage4_shot_plan.json` is not read by this workflow.
+
+## Map region workflow
+
+The filter page (/index.html) contains Stage 1–3. Open /regions.html for Stage 4–6: region editing is stored in stage4_map_regions.json, and regional camera plans are reserved in stage6_map_region_shot_plans.json. Region coordinates use [x_game, y_game, z_game]; scene rendering flips Z only through the shared coordinate helpers.

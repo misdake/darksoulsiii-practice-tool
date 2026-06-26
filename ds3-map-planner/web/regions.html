@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <title>DS3 Map Regions</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --panel: #171b22;
+        --line: #2a3342;
+        --text: #e7edf7;
+        --muted: #9fb0c9;
+        --accent: #6ee7ff;
+        --bad: #fb7185;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          13px Segoe UI,
+          sans-serif;
+      }
+      #layout {
+        display: grid;
+        grid-template-columns: 340px 1fr;
+        height: 100vh;
+      }
+      aside {
+        padding: 16px;
+        background: var(--panel);
+        border-right: 1px solid var(--line);
+        overflow: auto;
+      }
+      .field {
+        margin: 9px 0;
+      }
+      .field label {
+        display: block;
+        color: var(--muted);
+        margin-bottom: 3px;
+      }
+      input,
+      select,
+      button {
+        width: 100%;
+        background: #0d1117;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        color: var(--text);
+        padding: 8px;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: var(--accent);
+      }
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin: 10px 0;
+      }
+      .mode-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin: 10px 0;
+      }
+      .mode-tabs label {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .mode-tabs input {
+        width: auto;
+        padding: 0;
+      }
+      .range-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 44px;
+        gap: 8px;
+        align-items: center;
+      }
+      .range-row input[type="range"] {
+        padding: 0;
+      }
+      .range-row output {
+        color: var(--muted);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .stages {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin: 10px 0;
+      }
+      .stages label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        width: auto;
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .stages input {
+        width: auto;
+      }
+      .inline-check {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        cursor: pointer;
+      }
+      .inline-check input {
+        width: auto;
+      }
+      .stage-panel[hidden] {
+        display: none;
+      }
+      #regionWorkControls[hidden] {
+        display: none;
+      }
+      .progress-wrap {
+        margin: 10px 0;
+      }
+      .progress-wrap[hidden] {
+        display: none;
+      }
+      .progress-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 12px;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      .progress-bar {
+        width: 100%;
+        height: 10px;
+        border-radius: 999px;
+        background: #0d1117;
+        border: 1px solid var(--line);
+        overflow: hidden;
+      }
+      .progress-fill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #22d3ee, #34d399);
+      }
+      .danger {
+        color: #fecdd3;
+        border-color: #9f1239;
+      }
+      .region {
+        padding: 8px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        margin: 6px 0;
+        cursor: pointer;
+      }
+      .region.selected {
+        border-color: var(--accent);
+        background: #112534;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      #status {
+        white-space: pre-wrap;
+        color: #87f5b1;
+      }
+      main {
+        position: relative;
+        min-width: 0;
+      }
+      #map {
+        width: 100%;
+        height: 100%;
+        display: block;
+        background: radial-gradient(circle at 50% 50%, #172536, #0b0e13);
+      }
+      #help {
+        position: absolute;
+        right: 16px;
+        top: 16px;
+        padding: 10px;
+        background: #111a;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        color: var(--muted);
+      }
+      #confirmDialog {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        color: var(--text);
+        max-width: 380px;
+      }
+      #confirmDialog::backdrop {
+        background: #0009;
+      }
+      #confirmDialog menu {
+        display: flex;
+        gap: 8px;
+        padding: 0;
+        margin: 16px 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="layout">
+      <aside>
+        <h2>Map Regions</h2>
+        <p class="muted">Stage 4-6 regional workflow</p>
+        <div class="field">
+          <label>Map</label
+          ><select id="mapSelect"></select>
+        </div>
+        <div class="progress-wrap" id="loadProgressWrap" hidden>
+          <div class="progress-head">
+            <span id="loadProgressText">idle</span>
+            <span id="loadProgressPct">0%</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="loadProgressFill"></div>
+          </div>
+        </div>
+        <div id="regionWorkControls">
+          <div class="stages">
+            <label
+              ><input type="radio" name="regionStage" value="4" checked /><span
+                >Stage 4</span
+              ></label
+            >
+            <label
+              ><input type="radio" name="regionStage" value="5" /><span
+                >Stage 5</span
+              ></label
+            >
+            <label
+              ><input type="radio" name="regionStage" value="6" /><span
+                >Stage 6</span
+              ></label
+            >
+          </div>
+          <button id="fitCameraBtn">Fit Camera</button>
+          <hr />
+          <section class="stage-panel" data-region-stage-panel="4">
+            <div id="regionEditor">
+              <div class="mode-tabs">
+                <label
+                  ><input
+                    type="radio"
+                    name="stage4SelectMode"
+                    value="region"
+                    checked
+                  />Region</label
+                >
+                <label
+                  ><input
+                    type="radio"
+                    name="stage4SelectMode"
+                    value="navmesh"
+                  />Navmesh</label
+                >
+              </div>
+              <div id="regionFields">
+                <div id="regionSelectionFields">
+                  <div class="field">
+                    <label>Name</label><input id="name" />
+                  </div>
+                  <div class="actions">
+                    <div class="field">
+                      <label>Y min</label
+                      ><input id="ymin" type="number" step="0.01" />
+                    </div>
+                    <div class="field">
+                      <label>Y max</label
+                      ><input id="ymax" type="number" step="0.01" />
+                    </div>
+                  </div>
+                  <div class="actions">
+                    <button id="deleteBtn" class="danger">Delete</button>
+                  </div>
+                </div>
+                <div class="actions">
+                  <button id="calculateRegionsBtn">Calculate regions</button>
+                </div>
+              </div>
+              <div id="navmeshFields" hidden>
+                <div class="actions">
+                  <button id="newBtn">Region from selected splits</button
+                  ><button id="calculateRegionsBtnNav">Calculate regions</button>
+                </div>
+                <div class="field">
+                  <label class="inline-check"
+                    ><input id="stage4ShowCollision" type="checkbox" checked />
+                    Show collision</label
+                  >
+                </div>
+                <div class="field">
+                  <label>Collision opacity</label
+                  ><div class="range-row">
+                    <input
+                      id="stage4CollisionOpacity"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value="0.24"
+                    />
+                    <output
+                      id="stage4CollisionOpacityValue"
+                      for="stage4CollisionOpacity"
+                      >0.24</output
+                    >
+                  </div>
+                </div>
+                <div class="field">
+                  <label>Navmesh opacity</label
+                  ><div class="range-row">
+                    <input
+                      id="stage4NavmeshOpacity"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value="1"
+                    />
+                    <output
+                      id="stage4NavmeshOpacityValue"
+                      for="stage4NavmeshOpacity"
+                      >1.00</output
+                    >
+                  </div>
+                </div>
+              </div>
+              <p class="muted">
+                Click in the map to add vertices. Drag a selected vertex.
+                Right-click a vertex to remove it. Invalid polygons are not
+                saved.
+              </p>
+            </div>
+            <div class="actions">
+              <button id="checkBtn">Check coverage</button
+              ><button id="clearBtn" class="danger">Clear regions</button>
+            </div>
+            <h3>Regions</h3>
+            <div id="regions"></div>
+            <button id="saveBtn">Save regions</button>
+          </section>
+          <section class="stage-panel" data-region-stage-panel="5" hidden>
+            <h3>Stage 5 preview</h3>
+            <button id="stage5ModeBtn">Enter Third-Person (F)</button>
+            <p id="stage5PlayerStatus" class="muted">
+              Player: click collision in the right viewport.
+            </p>
+            <p id="stage5Warning" class="muted">No runtime warning.</p>
+            <p id="stage5MissingCount" class="muted">Missing markers: 0</p>
+            <div class="field">
+              <label>Debug position X / Y / Z</label>
+              <div class="actions">
+                <input id="px" type="number" value="0" /><input
+                  id="py"
+                  type="number"
+                  value="0"
+                />
+              </div>
+              <input id="pz" type="number" value="0" />
+            </div>
+            <button id="previewBtn">Debug update active regions</button>
+            <div class="actions">
+              <button id="recheckMissingBtn">Recheck missing points</button>
+              <button id="focusMissingBtn">Focus missing point</button>
+              <button id="clearMissingBtn" class="danger">
+                Clear missing points
+              </button>
+            </div>
+            <p id="active" class="muted">No active regions.</p>
+          </section>
+          <section class="stage-panel" data-region-stage-panel="6" hidden>
+            <h3>Stage 6 regional camera plans</h3>
+            <p class="muted">
+              Plans are stored per current region. The current baseline camera
+              is centered on the region; navmesh/BVH refinement follows in the
+              planner runtime.
+            </p>
+            <button id="calculatePlanBtn">Calculate selected plan</button>
+            <pre id="planInfo" class="muted">No regional camera plan.</pre>
+            <button id="savePlansBtn">Save camera plans</button>
+          </section>
+          <div id="status">Ready.</div>
+        </div>
+      </aside>
+      <main>
+        <canvas id="map"></canvas>
+        <div id="help">Left: XZ editor. Green: active. Yellow: selected.</div>
+      </main>
+    </div>
+    <dialog id="confirmDialog">
+      <p id="confirmMessage"></p>
+      <menu>
+        <button id="confirmCancelBtn" type="button">Cancel</button
+        ><button id="confirmOkBtn" type="button" class="danger">Confirm</button>
+      </menu>
+    </dialog>
+    <script type="module" src="./regions3d.js"></script>
+  </body>
+</html>
