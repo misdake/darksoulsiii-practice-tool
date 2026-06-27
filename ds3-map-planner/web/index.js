@@ -12,7 +12,7 @@ const rows = document.getElementById("mapRows");
 const summary = document.getElementById("summary");
 const status = document.getElementById("status");
 
-loadDashboard();
+void loadDashboard();
 
 async function loadDashboard() {
   try {

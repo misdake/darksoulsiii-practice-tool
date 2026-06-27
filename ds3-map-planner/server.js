@@ -6,17 +6,15 @@ const fs = require("fs");
 const fsp = require("fs/promises");
 const path = require("path");
 const { URL } = require("url");
-const { exec } = require("child_process");
 
 const HOST = process.env.PLANNER_HOST || "127.0.0.1";
 const PORT = Number(process.env.PLANNER_PORT || 7878);
+const WEB_ORIGIN = process.env.PLANNER_WEB_ORIGIN || "http://127.0.0.1:5173";
 const DEFAULT_HIT_FILTER_IDS = [8];
 
 const repoRoot = path.resolve(__dirname, "..");
 const plannerRoot = path.join(repoRoot, "map-work", "capture-planner");
 const webSourceRoot = path.join(__dirname, "web");
-const webDistRoot = path.join(webSourceRoot, "dist");
-const webRoot = fs.existsSync(webDistRoot) ? webDistRoot : webSourceRoot;
 const mapWorkRoot = path.join(repoRoot, "map-work");
 
 const MAP_DISPLAY_NAMES = {
@@ -254,17 +252,6 @@ async function saveStageData(mapId, stageName, data) {
   await fsp.writeFile(path.join(mapDir, fileName), text, "utf8");
 }
 
-function maybeOpenBrowser(url) {
-  if (process.env.PLANNER_OPEN_BROWSER === "0") return;
-  if (process.platform === "win32") {
-    exec(`start "" "${url}"`);
-  } else if (process.platform === "darwin") {
-    exec(`open "${url}"`);
-  } else {
-    exec(`xdg-open "${url}"`);
-  }
-}
-
 async function readRequestJson(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -314,30 +301,18 @@ async function handle(req, res) {
 
     if (
       req.method === "GET" &&
-      (pathname === "/" || pathname === "/index.html")
+      ["/", "/index.html", "/filters.html", "/regions.html"].includes(
+        pathname,
+      )
     ) {
-      const p = path.join(webRoot, "index.html");
-      const text = await fsp.readFile(p, "utf8");
-      sendText(res, 200, text, noStoreHeaders("text/html; charset=utf-8"));
-      return;
-    }
-
-    if (req.method === "GET" && pathname === "/app.js") {
-      const p = path.join(webRoot, "app.js");
-      const text = await fsp.readFile(p, "utf8");
-      sendText(
-        res,
-        200,
-        text,
-        noStoreHeaders("text/javascript; charset=utf-8"),
-      );
+      const location = new URL(pathname, `${WEB_ORIGIN}/`).toString();
+      res.writeHead(307, { location, "cache-control": "no-store" });
+      res.end();
       return;
     }
 
     if (req.method === "GET" && pathname === "/obj-worker.js") {
-      const pDist = path.join(webRoot, "obj-worker.js");
-      const pSource = path.join(webSourceRoot, "obj-worker.js");
-      const p = fs.existsSync(pDist) ? pDist : pSource;
+      const p = path.join(webSourceRoot, "obj-worker.js");
       const text = await fsp.readFile(p, "utf8");
       sendText(
         res,
@@ -361,16 +336,6 @@ async function handle(req, res) {
     }
 
     if (req.method === "GET") {
-      const rel = pathname.replace(/^\/+/, "");
-      const abs = safeJoinInside(webRoot, rel || "index.html");
-      if (!abs) {
-        sendText(res, 404, "not found");
-        return;
-      }
-      const ok = await tryServeFile(res, abs);
-      if (ok) return;
-      const maybeIndex = safeJoinInside(webRoot, path.join(rel, "index.html"));
-      if (maybeIndex && (await tryServeFile(res, maybeIndex))) return;
       sendText(res, 404, "not found");
       return;
     }
@@ -388,7 +353,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  const url = `http://${HOST}:${PORT}/`;
-  console.log(`Serving ${url}`);
-  maybeOpenBrowser(url);
+  console.log(`Planner API listening on http://${HOST}:${PORT}/`);
 });

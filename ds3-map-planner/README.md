@@ -88,60 +88,59 @@ Each stage saves its raw JSON payload independently:
 
 ### Run Planner Server (JS)
 
-From workspace root:
-
-```powershell
-node ds3-map-planner/server.js
-# or:
-# cd ds3-map-planner
-# npm start
-```
-
-Behavior:
-
-- hosts web static files from `ds3-map-planner/web`
-- hosts `map-work/*` static data at `/map-work/*` (for manifests/OBJ loading)
-- serves APIs under `/api/*`
-- opens `http://127.0.0.1:7878/` on startup
-
-Environment overrides:
-
-- `PLANNER_HOST` (default `127.0.0.1`)
-- `PLANNER_PORT` (default `7878`)
-- `PLANNER_OPEN_BROWSER=0` to disable auto-open
-
-### Web Dev (Vite + TypeScript)
-
-Install frontend deps:
+Install the frontend dependencies once:
 
 ```powershell
 cd ds3-map-planner/web
 npm install
 ```
 
-Run Vite dev server:
+Then start the planner from its package directory:
 
 ```powershell
-npm run dev
+cd ds3-map-planner
+npm start
 ```
 
-Then open:
+The development command starts both processes:
 
-- `http://127.0.0.1:5173/`
+- Vite serves and watches the web UI at `http://127.0.0.1:5173/`
+- the Node backend serves APIs and map data at `http://127.0.0.1:7878/`
+- hosts `map-work/*` static data at `/map-work/*` (for manifests/OBJ loading)
+- Vite proxies `/api`, `/map-work`, and `/obj-worker.js` to the backend
+- frontend changes use Vite HMR; no manual build is required
 
-Notes:
+Environment overrides:
 
-- Vite proxies `/api` and `/map-work` to `http://127.0.0.1:7878` by default.
-- Run backend server (`node ds3-map-planner/server.js`) in another terminal.
+- `PLANNER_HOST` (default `127.0.0.1`)
+- `PLANNER_PORT` (default `7878`)
+- `PLANNER_WEB_ORIGIN` (default `http://127.0.0.1:5173`)
+- `VITE_BACKEND_ORIGIN` (default `http://127.0.0.1:7878`)
 
-Build frontend:
+Run only the API server when needed:
+
+```powershell
+cd ds3-map-planner
+npm run api
+```
+
+### Web Development (Vite)
+
+The HTML and JavaScript entry names match:
+
+- `index.html` loads `index.js`
+- `filters.html` loads `filters.js`
+- `regions.html` loads `regions.js`
+
+To run only Vite while an API server is already available:
 
 ```powershell
 cd ds3-map-planner/web
-npm run build
+npm run dev
 ```
 
-After build, backend server auto-serves `ds3-map-planner/web/dist` (if present), otherwise falls back to source `web/`.
+This internal tool only supports the Vite development workflow. The backend does
+not serve `web/dist` or source frontend modules.
 
 ### Navmesh Split Tool (Rust)
 
