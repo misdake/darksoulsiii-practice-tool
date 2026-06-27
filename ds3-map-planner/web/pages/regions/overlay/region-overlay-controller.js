@@ -17,6 +17,7 @@ export class RegionOverlayController {
     this.vertexGroup = new THREE.Group();
     this.uncoveredGroup = new THREE.Group();
     this.selectedNavmeshGroup = new THREE.Group();
+    this.cameraPlanGroup = new THREE.Group();
     this.active = [];
     this.activeSignature = "";
 
@@ -25,6 +26,7 @@ export class RegionOverlayController {
       this.vertexGroup,
       this.uncoveredGroup,
       this.selectedNavmeshGroup,
+      this.cameraPlanGroup,
     );
   }
 
@@ -88,11 +90,40 @@ export class RegionOverlayController {
     }
   }
 
+  renderCameraPlan(points = []) {
+    disposeObjectTree(this.cameraPlanGroup);
+    if (!points.length) return;
+
+    const geometry = new THREE.SphereGeometry(0.35, 10, 8);
+    const material = new THREE.MeshBasicMaterial({ vertexColors: true });
+    const mesh = new THREE.InstancedMesh(geometry, material, points.length);
+    const matrix = new THREE.Matrix4();
+    for (const [index, point] of points.entries()) {
+      matrix.makeTranslation(point.x, point.y, point.z);
+      mesh.setMatrixAt(index, matrix);
+      mesh.setColorAt(
+        index,
+        new THREE.Color(
+          point.replenished ? 0x22d3ee : point.lowered ? 0xfacc15 : 0x4ade80,
+        ),
+      );
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.userData.kind = "camera-plan-points";
+    this.cameraPlanGroup.add(mesh);
+  }
+
+  setCameraPlanVisible(visible) {
+    this.cameraPlanGroup.visible = Boolean(visible);
+  }
+
   dispose() {
     disposeObjectTree(this.regionGroup);
     disposeObjectTree(this.vertexGroup);
     disposeObjectTree(this.uncoveredGroup);
     disposeObjectTree(this.selectedNavmeshGroup);
+    disposeObjectTree(this.cameraPlanGroup);
   }
 
   clearRegionOverlays() {

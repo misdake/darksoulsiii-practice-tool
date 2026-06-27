@@ -10,6 +10,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: resolve(__dirname, "index.html"),
+        filters: resolve(__dirname, "filters.html"),
         regions: resolve(__dirname, "regions.html"),
       },
     },

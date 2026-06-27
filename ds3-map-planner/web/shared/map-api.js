@@ -30,10 +30,14 @@ export async function loadOptionalStages(mapId, stageNames) {
   );
 }
 
-export function saveStageData(mapId, stage, data) {
-  return fetchJson(stageUrl(mapId, stage), {
+export async function saveStageData(mapId, stage, data) {
+  const response = await fetch(stageUrl(mapId, stage), {
     method: "PUT",
+    cache: "no-cache",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(data),
   });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status} ${response.url}`);
+  }
 }

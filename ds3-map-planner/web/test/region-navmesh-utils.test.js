@@ -25,7 +25,7 @@ test("trianglesFromMesh returns right-handed world-space triangles", () => {
   ]);
 });
 
-test("createRegionFromMesh uses world bounds and stores right-handed polygon", () => {
+test("generated regions use world bounds, padding and a union AABB", () => {
   const geometry = new THREE.BoxGeometry(4, 2, 6);
   geometry.translate(10, 5, -20);
   const mesh = new THREE.Mesh(geometry);
@@ -41,32 +41,7 @@ test("createRegionFromMesh uses world bounds and stores right-handed polygon", (
       [8, -17],
     ],
   });
-});
 
-test("buildAutoRegions keeps stacked navmesh layers as separate regions", () => {
-  const group = new THREE.Group();
-  group.add(createTriangleMesh(0, 0));
-  group.add(createTriangleMesh(0, 5));
-
-  const regions = buildAutoRegions(group);
-
-  assert.equal(regions.length, 2);
-  assert.deepEqual(
-    regions.map((region) => region.ymin),
-    [-0.5, 4.5],
-  );
-});
-
-test("generated regions add height padding above the navmesh ceiling", () => {
-  const geometry = new THREE.BoxGeometry(2, 4, 2);
-  geometry.translate(0, 10, 0);
-  const mesh = new THREE.Mesh(geometry);
-
-  assert.equal(createRegionFromMesh(mesh, 0).ymin, 7.5);
-  assert.equal(createRegionFromMesh(mesh, 0).ymax, 15);
-});
-
-test("multiple selected meshes generate one union region", () => {
   const first = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2));
   first.position.set(0, 1, 0);
   const second = new THREE.Mesh(new THREE.BoxGeometry(2, 4, 2));
@@ -83,6 +58,20 @@ test("multiple selected meshes generate one union region", () => {
       [-1, 6],
     ],
   });
+});
+
+test("automatic regions keep stacked navmesh layers separate", () => {
+  const group = new THREE.Group();
+  group.add(createTriangleMesh(0, 0));
+  group.add(createTriangleMesh(0, 5));
+
+  const regions = buildAutoRegions(group);
+
+  assert.equal(regions.length, 2);
+  assert.deepEqual(
+    regions.map((region) => region.ymin),
+    [-0.5, 4.5],
+  );
 });
 
 function createTriangleMesh(x, y) {

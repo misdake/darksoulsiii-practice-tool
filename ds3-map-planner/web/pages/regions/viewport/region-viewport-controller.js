@@ -83,6 +83,7 @@ export class RegionViewportController {
     leftCamera.position.x = target.x;
     leftCamera.position.z = target.z;
     leftCamera.lookAt(target.x, 0, target.z);
+    leftCamera.updateMatrixWorld();
   }
 
   createInputRouter({
@@ -98,6 +99,7 @@ export class RegionViewportController {
     onChange,
     onInvalid,
     onRegion,
+    onStage6Region,
     onNav,
     onEmpty,
     getSelectionMode,
@@ -123,10 +125,13 @@ export class RegionViewportController {
     router.register("left", {
       ...leftEditorHandlers,
       onPointerDown: (payload) => {
-        if (getStage?.() === 5) {
+        const stage = getStage?.();
+        if (stage === 5) {
           return;
         }
-        leftEditorHandlers.onPointerDown?.(payload);
+        if (stage === 4) {
+          leftEditorHandlers.onPointerDown?.(payload);
+        }
         if (payload.event.defaultPrevented || payload.event.button !== 2) {
           return;
         }
@@ -137,7 +142,8 @@ export class RegionViewportController {
         };
       },
       onPointerMove: (payload) => {
-        if (getStage?.() === 5) {
+        const stage = getStage?.();
+        if (stage === 5) {
           return;
         }
         if (this.leftPan) {
@@ -149,10 +155,13 @@ export class RegionViewportController {
           payload.event.preventDefault();
           return;
         }
-        leftEditorHandlers.onPointerMove?.(payload);
+        if (stage === 4) {
+          leftEditorHandlers.onPointerMove?.(payload);
+        }
       },
       onPointerUp: (payload) => {
-        if (getStage?.() === 5) {
+        const stage = getStage?.();
+        if (stage === 5) {
           this.leftPan = null;
           return;
         }
@@ -161,7 +170,9 @@ export class RegionViewportController {
           payload.event.preventDefault();
           return;
         }
-        leftEditorHandlers.onPointerUp?.(payload);
+        if (stage === 4) {
+          leftEditorHandlers.onPointerUp?.(payload);
+        }
       },
       onWheel: ({ event }) => {
         event.preventDefault();
@@ -169,12 +180,7 @@ export class RegionViewportController {
       },
     });
 
-    router.register(
-      "right",
-      dispatchByStage(
-        () => getStage?.() === 5,
-        stage5Handlers,
-        this.rightViewport.handlers({
+    const stage4Handlers = this.rightViewport.handlers({
         raycaster,
         vertexGroup: overlay.vertexGroup,
         regionGroup: overlay.regionGroup,
@@ -183,8 +189,20 @@ export class RegionViewportController {
         onNav,
         onEmpty,
         getSelectionMode,
-        }),
-      ),
+    });
+    const stage6Handlers = this.rightViewport.handlers({
+      raycaster,
+      vertexGroup: overlay.vertexGroup,
+      regionGroup: overlay.regionGroup,
+      navGroup,
+      onRegion: onStage6Region,
+      onNav: () => {},
+      onEmpty: () => onStage6Region?.(-1, { focusRight: false }),
+      getSelectionMode: () => "region",
+    });
+    router.register(
+      "right",
+      dispatchByStage(getStage, { 4: stage4Handlers, 5: stage5Handlers, 6: stage6Handlers }),
     );
 
     return router;
@@ -195,7 +213,7 @@ export class RegionViewportController {
   }
 }
 
-function dispatchByStage(useStage5, stage5Handlers, stage4Handlers) {
+function dispatchByStage(getStage, handlersByStage) {
   const out = {};
   for (const name of [
     "onPointerDown",
@@ -206,7 +224,7 @@ function dispatchByStage(useStage5, stage5Handlers, stage4Handlers) {
     "onKeyUp",
   ]) {
     out[name] = (payload) => {
-      const handler = useStage5() ? stage5Handlers?.[name] : stage4Handlers[name];
+      const handler = handlersByStage[Number(getStage?.()) || 4]?.[name];
       return handler?.(payload);
     };
   }

@@ -1,4 +1,3 @@
-import { filterTrianglesForRegion } from "../geometry/region-geometry.js";
 import { collectNavmeshTriangles } from "../assets/region-navmesh-utils.js";
 
 export function replaceRegionPlan(currentPlans, plan) {
@@ -9,41 +8,52 @@ export function replaceRegionPlan(currentPlans, plan) {
 }
 
 export class RegionPlanController {
-  constructor({ planSystem, state, navGroup, setStatus, setDisabled, sync }) {
+  constructor({
+    planSystem,
+    state,
+    navGroup,
+    setStatus,
+    setPlanning,
+    setProgress,
+    sync,
+  }) {
     this.planSystem = planSystem;
     this.state = state;
     this.navGroup = navGroup;
-    this.setStatus = setStatus;
-    this.setDisabled = setDisabled;
+    this.setStatus = setStatus || (() => {});
+    this.setPlanning = setPlanning || (() => {});
+    this.setProgress = setProgress || (() => {});
     this.sync = sync;
     this.requestId = 0;
+    this.abortController = null;
   }
 
-  async calculate(region, currentPlans) {
+  async calculate(region, currentPlans, config) {
     if (!region) {
       this.setStatus("Select a region first.", true);
       return currentPlans;
     }
 
-    const triangles = filterTrianglesForRegion(
-      collectNavmeshTriangles(this.navGroup),
-      region,
-    );
-    if (!triangles.length) {
-      this.setStatus(
-        "This region contains no selected Stage 3 navmesh triangles.",
-        true,
-      );
-      return currentPlans;
-    }
-
+    this.cancel("Superseded by a new calculation.", false);
     const requestId = ++this.requestId;
     const mapId = this.state.mapId;
     const regionName = region.name;
-    this.setDisabled(true);
-    this.setStatus(`Calculating ${region.name} candidates in worker...`);
+    const abortController = new AbortController();
+    this.abortController = abortController;
+    this.setPlanning(true);
+    this.setProgress({ phase: "target_geometry", processed: 0, total: 1, ratio: 0 });
+    this.setStatus(`Calculating camera plan for ${region.name}...`);
+
     try {
-      const plan = await this.planSystem.calculate(region, triangles);
+      const plan = await this.planSystem.calculate(
+        region,
+        collectNavmeshTriangles(this.navGroup),
+        config,
+        {
+          signal: abortController.signal,
+          onProgress: (progress) => this.setProgress(progress),
+        },
+      );
       if (
         requestId !== this.requestId ||
         this.state.mapId !== mapId ||
@@ -54,14 +64,33 @@ export class RegionPlanController {
       this.state.plans = replaceRegionPlan(currentPlans, plan);
       this.sync();
       this.setStatus(
-        `Calculated ${plan.plan.points.length} cameras for ${region.name}; lowered ${plan.coverage.lowered_count}, rejected ${plan.coverage.rejected_count}.`,
+        `Calculated ${plan.coverage.final_count} cameras for ${region.name}; ` +
+          `${(plan.coverage.coverage_ratio * 100).toFixed(1)}% covered.`,
       );
       return this.state.plans;
     } catch (error) {
-      this.setStatus(`Regional camera plan failed: ${error.message}`, true);
+      if (error?.name === "AbortError") {
+        if (requestId === this.requestId) this.setStatus("Camera plan cancelled.");
+      } else {
+        this.setStatus(`Regional camera plan failed: ${error.message}`, true);
+      }
       return currentPlans;
     } finally {
-      this.setDisabled(false);
+      if (this.abortController === abortController) {
+        this.abortController = null;
+        this.setPlanning(false);
+      }
     }
+  }
+
+  cancel(reason = "Camera plan cancelled.", showStatus = true) {
+    if (!this.abortController) return false;
+    this.requestId += 1;
+    this.abortController.abort(reason);
+    this.abortController = null;
+    this.planSystem.cancel?.(reason);
+    this.setPlanning(false);
+    if (showStatus) this.setStatus(reason);
+    return true;
   }
 }

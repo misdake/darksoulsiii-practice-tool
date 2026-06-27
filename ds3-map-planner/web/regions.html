@@ -207,16 +207,6 @@
         display: block;
         background: radial-gradient(circle at 50% 50%, #172536, #0b0e13);
       }
-      #help {
-        position: absolute;
-        right: 16px;
-        top: 16px;
-        padding: 10px;
-        background: #111a;
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        color: var(--muted);
-      }
       #confirmDialog {
         border: 1px solid var(--line);
         border-radius: 8px;
@@ -271,6 +261,7 @@
               ></label
             >
           </div>
+          <button id="backBtn" type="button">Home</button>
           <button id="fitCameraBtn">Fit Camera</button>
           <hr />
           <section class="stage-panel" data-region-stage-panel="4">
@@ -315,6 +306,12 @@
                   >1.00</output
                 >
               </div>
+            </div>
+            <div class="field">
+              <label class="inline-check"
+                ><input id="stage4ShowSelectedRegionOnly" type="checkbox" />
+                Show selected region only</label
+              >
             </div>
             <div id="regionEditor">
               <div class="mode-tabs">
@@ -386,18 +383,6 @@
             </p>
             <p id="stage5Warning" class="muted">No runtime warning.</p>
             <p id="stage5MissingCount" class="muted">Missing markers: 0</p>
-            <div class="field">
-              <label>Debug position X / Y / Z</label>
-              <div class="actions">
-                <input id="px" type="number" value="0" /><input
-                  id="py"
-                  type="number"
-                  value="0"
-                />
-              </div>
-              <input id="pz" type="number" value="0" />
-            </div>
-            <button id="previewBtn">Debug update active regions</button>
             <div class="actions">
               <button id="recheckMissingBtn">Recheck missing points</button>
               <button id="focusMissingBtn">Focus missing point</button>
@@ -409,12 +394,59 @@
           </section>
           <section class="stage-panel" data-region-stage-panel="6" hidden>
             <h3>Stage 6 regional camera plans</h3>
-            <p class="muted">
-              Plans are stored per current region. The current baseline camera
-              is centered on the region; navmesh/BVH refinement follows in the
-              planner runtime.
-            </p>
-            <button id="calculatePlanBtn">Calculate selected plan</button>
+            <div class="field">
+              <label>Region</label><select id="stage6RegionSelect"></select>
+            </div>
+            <fieldset id="stage6ConfigFields">
+              <div class="actions">
+                <div class="field">
+                  <label>Render width</label
+                  ><input id="stage6RenderWidth" type="number" min="64" max="16384" step="1" value="2560" />
+                </div>
+                <div class="field">
+                  <label>Render height</label
+                  ><input id="stage6RenderHeight" type="number" min="64" max="16384" step="1" value="1440" />
+                </div>
+              </div>
+              <div class="actions">
+                <div class="field">
+                  <label>Vertical FOV (deg)</label
+                  ><input id="stage6FovDegrees" type="number" min="10" max="170" step="0.1" value="43" />
+                </div>
+                <div class="field">
+                  <label>Base ratio (px/unit)</label
+                  ><input id="stage6BaseRatio" type="number" min="1" max="4096" step="1" value="256" />
+                </div>
+              </div>
+              <div class="actions">
+                <div class="field">
+                  <label>Density multiplier</label
+                  ><input id="stage6DensityMultiplier" type="number" min="0.1" max="10" step="0.1" value="1" />
+                </div>
+                <div class="field">
+                  <label>Overlap (%)</label
+                  ><input id="stage6OverlapPercent" type="number" min="0" max="90" step="1" value="15" />
+                </div>
+              </div>
+              <div class="field">
+                <label>Y lift</label
+                ><input id="stage6YLift" type="number" min="0" max="100" step="0.1" value="2" />
+              </div>
+              <button id="resetPlanConfigBtn" type="button">Reset defaults</button>
+            </fieldset>
+            <div class="actions">
+              <button id="calculatePlanBtn">Calculate selected plan</button>
+              <button id="cancelPlanBtn" class="danger" hidden>Cancel</button>
+            </div>
+            <div class="progress-wrap" id="stage6ProgressWrap" hidden>
+              <div class="progress-head">
+                <span id="stage6ProgressText">idle</span>
+                <span id="stage6ProgressPct">0%</span>
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill" id="stage6ProgressFill"></div>
+              </div>
+            </div>
             <pre id="planInfo" class="muted">No regional camera plan.</pre>
             <button id="savePlansBtn">Save camera plans</button>
           </section>
@@ -423,7 +455,6 @@
       </aside>
       <main>
         <canvas id="map"></canvas>
-        <div id="help">Left: XZ editor. Green: active. Yellow: selected.</div>
       </main>
     </div>
     <dialog id="confirmDialog">

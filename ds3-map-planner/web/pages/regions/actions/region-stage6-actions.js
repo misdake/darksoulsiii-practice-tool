@@ -7,40 +7,48 @@ export class RegionStage6Actions {
     getRegions,
     getSelectedIndex,
     getPlans,
-    setPlans,
     setStatus,
     applyEditorFields,
+    getPlanConfig,
+    resetPlanConfig,
   }) {
     this.planController = planController;
     this.getMapId = getMapId;
     this.getRegions = getRegions;
     this.getSelectedIndex = getSelectedIndex;
     this.getPlans = getPlans;
-    this.setPlans = setPlans;
     this.setStatus = setStatus;
     this.applyEditorFields = applyEditorFields;
+    this.getPlanConfig = getPlanConfig;
+    this.resetPlanConfig = resetPlanConfig;
   }
 
   handlers() {
     return {
       onCalculatePlan: () => this.calculatePlan(),
+      onCancelPlan: () => this.planController.cancel(),
+      onResetPlanConfig: () => this.resetPlanConfig(),
       onSavePlans: () => this.savePlans(),
     };
   }
 
   async calculatePlan() {
-    this.applyEditorFields();
-    const plans = await this.planController.calculate(
+    if (!this.applyEditorFields()) return;
+    await this.planController.calculate(
       this.getRegions()[this.getSelectedIndex()],
       this.getPlans(),
+      this.getPlanConfig(),
     );
-    this.setPlans(plans);
   }
 
   async savePlans() {
-    await saveStageData(this.getMapId(), "stage6-map-region-shot-plans", {
-      plans: this.getPlans(),
-    });
-    this.setStatus("Regional camera plans saved.");
+    try {
+      await saveStageData(this.getMapId(), "stage6-map-region-shot-plans", {
+        plans: this.getPlans(),
+      });
+      this.setStatus("Regional camera plans saved.");
+    } catch (error) {
+      this.setStatus(`Saving regional camera plans failed: ${error.message}`, true);
+    }
   }
 }

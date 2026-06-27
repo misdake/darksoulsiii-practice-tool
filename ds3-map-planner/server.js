@@ -49,6 +49,14 @@ const MAP_DISPLAY_NAMES = {
   m54_00_00_00: "Arena - Round Plaza",
 };
 
+const STAGE_FILES = Object.freeze({
+  "stage1-collision-filter": "stage1_collision_filter.json",
+  "stage2-nav-filter": "stage2_nav_filter.json",
+  "stage3-mark-nav": "stage3_mark_nav.json",
+  "stage4-map-regions": "stage4_map_regions.json",
+  "stage6-map-region-shot-plans": "stage6_map_region_shot_plans.json",
+});
+
 function mapDisplayName(mapId) {
   return MAP_DISPLAY_NAMES[mapId] || mapId;
 }
@@ -159,7 +167,17 @@ async function getMaps() {
     const collision = path.join(mapDir, "collision_world.json");
     const nav = path.join(mapDir, "navmesh_manifest.json");
     if (fs.existsSync(collision) && fs.existsSync(nav)) {
-      out.push({ map_id: mapId, display_name: mapDisplayName(mapId) });
+      const stageStatus = Object.fromEntries(
+        Object.entries(STAGE_FILES).map(([stage, fileName]) => [
+          stage,
+          fs.existsSync(path.join(mapDir, fileName)),
+        ]),
+      );
+      out.push({
+        map_id: mapId,
+        display_name: mapDisplayName(mapId),
+        stage_status: stageStatus,
+      });
     }
   }
   out.sort((a, b) => a.map_id.localeCompare(b.map_id));
@@ -205,14 +223,6 @@ async function getMapContent(mapId) {
     navmesh_manifest: navmeshManifest,
   };
 }
-
-const STAGE_FILES = Object.freeze({
-  "stage1-collision-filter": "stage1_collision_filter.json",
-  "stage2-nav-filter": "stage2_nav_filter.json",
-  "stage3-mark-nav": "stage3_mark_nav.json",
-  "stage4-map-regions": "stage4_map_regions.json",
-  "stage6-map-region-shot-plans": "stage6_map_region_shot_plans.json",
-});
 
 async function getMapDir(mapId) {
   if (!isValidMapId(mapId)) throw new Error("invalid map_id");

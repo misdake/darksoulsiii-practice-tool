@@ -20,10 +20,7 @@ export function createRegionMask(region) {
 }
 
 export function applyRegionClipping(scene, region) {
-  const planes = [
-    new THREE.Plane(new THREE.Vector3(0, 1, 0), -region.ymin),
-    new THREE.Plane(new THREE.Vector3(0, -1, 0), region.ymax),
-  ];
+  const planes = regionClippingPlanes(region);
 
   scene.traverse((object) => {
     if (!object.isMesh) {
@@ -41,4 +38,11 @@ export function applyRegionClipping(scene, region) {
       material.stencilZPass = THREE.KeepStencilOp;
     }
   });
+}
+
+export function regionClippingPlanes(region) {
+  return [
+    new THREE.Plane(new THREE.Vector3(0, 1, 0), -region.ymin),
+    new THREE.Plane(new THREE.Vector3(0, -1, 0), region.ymax),
+  ];
 }

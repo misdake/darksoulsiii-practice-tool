@@ -217,6 +217,23 @@ export class PhysicsSystem {
     }
     return true;
   }
+
+  resetPlayer(ctx) {
+    const origin = { x: 0, y: 0, z: 0 };
+    if (this.playerBody) {
+      this.playerBody.setNextKinematicTranslation(origin);
+      this.playerBody.setTranslation(origin, true);
+    }
+    const state = ctx?.runtime?.physicsState;
+    if (state) {
+      state.position.set(0, 0, 0);
+      state.requestedMove.set(0, 0, 0);
+      state.verticalVelocity = 0;
+      state.grounded = false;
+      state.horizontalSpeed = 0;
+    }
+    if (this.playerDebugMesh) this.playerDebugMesh.visible = false;
+  }
 }
 
 function isHierarchyPhysicsEnabled(object) {

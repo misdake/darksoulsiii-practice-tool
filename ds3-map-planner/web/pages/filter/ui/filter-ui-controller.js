@@ -23,7 +23,6 @@ export class FilterUiController {
     onStage3CollisionHiddenChange,
     onStage3CollisionOpacityInput,
     onSave,
-    onOpenRegions,
     onToggleCameraMode,
   }) {
     this.addListener(this.collapseButton, "click", onPanelToggle);
@@ -51,7 +50,6 @@ export class FilterUiController {
       onStage3CollisionOpacityInput,
     );
     this.addListener(this.saveButton, "click", onSave);
-    this.addListener(this.regionsPageButton, "click", onOpenRegions);
     this.addListener(this.cameraModeButton, "click", onToggleCameraMode);
   }
 

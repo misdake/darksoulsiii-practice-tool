@@ -37,7 +37,12 @@ export class FilterPageController {
     });
     helpers.updateStageLabels();
     await mapSession.loadMapList();
-    await this.loadMap();
+    const params = new URLSearchParams(this.window.location.search);
+    await this.loadMap(params.get("map"));
+    const requestedStage = Number(params.get("stage"));
+    if (requestedStage >= 1 && requestedStage <= 3) {
+      stageController.applyStage(requestedStage);
+    }
   }
 
   async loadMap(mapId = null) {

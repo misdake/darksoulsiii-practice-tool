@@ -7,7 +7,6 @@ export class RegionState {
     this.selectedIndices = [];
     this.editing = false;
     this.plans = [];
-    this.missingPoints = new Map();
   }
 
   load({ mapId, regions, regionGroups, plans }) {
@@ -18,7 +17,6 @@ export class RegionState {
     this.selectedIndex = this.regions.length ? 0 : -1;
     this.selectedIndices = this.selectedIndex >= 0 ? [this.selectedIndex] : [];
     this.editing = false;
-    this.missingPoints.clear();
   }
 
   get selectedRegion() {

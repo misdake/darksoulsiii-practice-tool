@@ -33,7 +33,12 @@ export class RegionPageController {
           ui.status("No filtered navmesh split is loaded.", true);
         }
       },
-      onStageChange: (stage) => runtime.setStage(stage),
+      onStageChange: (stage) => {
+        if (stage !== 6) {
+          this.graph.planController.cancel("Camera plan cancelled after leaving Stage 6.", false);
+        }
+        runtime.setStage(stage);
+      },
       onStage4SelectionModeChange: (mode) =>
         syncController.setSelectionMode(mode),
       onStage4CollisionVisibleChange: (visible) =>
@@ -42,6 +47,10 @@ export class RegionPageController {
         runtime.setCollisionOpacity(opacity),
       onStage4NavmeshOpacityInput: (opacity) =>
         runtime.setNavmeshOpacity(opacity),
+      onStage4ShowSelectedRegionOnlyChange: (enabled) =>
+        runtime.setStage4RegionFilterEnabled(enabled),
+      onSelectStage6Region: (index) =>
+        syncController.selectStage6Region(index, { focusRight: false }),
     });
     runtime.createInputRouter(syncController.createInputCallbacks());
     this.window.addEventListener("beforeunload", this.dispose);
@@ -53,14 +62,36 @@ export class RegionPageController {
       ui.onMapChange(() => {
         void this.loadMap();
       });
-      await this.loadMap();
+      const params = new URLSearchParams(this.window.location.search);
+      const requestedMap = params.get("map");
+      const mapId = maps.some((map) => map.map_id === requestedMap)
+        ? requestedMap
+        : undefined;
+      await this.loadMap(mapId);
+      const requestedStage = Number(params.get("stage"));
+      if (requestedStage === 4 || requestedStage === 5 || requestedStage === 6) {
+        ui.setActiveStage(requestedStage);
+      }
     } catch (error) {
       ui.status(error.message, true);
     }
   }
 
   async loadMap(mapId = this.graph.ui.selectedMapId) {
-    const { mapLoadController, runtime, syncController, ui } = this.graph;
+    const {
+      mapLoadController,
+      missingPoints,
+      planController,
+      runtime,
+      syncController,
+      ui,
+    } = this.graph;
+    if (mapId && ui.mapSelect) {
+      ui.mapSelect.value = mapId;
+    }
+    planController.cancel("Camera plan cancelled after map change.", false);
+    missingPoints.clear();
+    runtime.resetForMapChange();
     const token = ++this.loadToken;
     ui.beginMapLoading(mapId);
     syncController.clearSelectedNavmesh();

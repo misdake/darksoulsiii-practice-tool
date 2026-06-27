@@ -4,16 +4,27 @@ import {
   restoreMaterialState,
 } from "../../../shared/material-state.js";
 import {
-  cloneStage5SourceScene,
+  cloneClippedSourceScene,
   disposeStage5Scene,
+  applyRegionBroadPhase,
+  syncClippedSourceScene,
 } from "./region-stage5-scene.js";
 import {
   applyRegionClipping,
   createRegionMask,
 } from "./region-stage5-mask.js";
 
-export class RegionStage5MapRenderer {
-  constructor() {
+export class RegionClippedMapRenderer {
+  constructor({
+    includeNavmesh = false,
+    preserveMaterials = false,
+    syncSourceState = preserveMaterials,
+    renderPlayer = true,
+  } = {}) {
+    this.includeNavmesh = includeNavmesh;
+    this.preserveMaterials = preserveMaterials;
+    this.syncSourceState = syncSourceState;
+    this.renderPlayer = renderPlayer;
     this.scene = new THREE.Scene();
     this.maskScene = new THREE.Scene();
     this.playerScene = new THREE.Scene();
@@ -36,32 +47,26 @@ export class RegionStage5MapRenderer {
 
   rebuild(navGroup, collisionGroup) {
     disposeStage5Scene(this.scene);
-    this.scene = cloneStage5SourceScene(navGroup, collisionGroup);
+    this.scene = cloneClippedSourceScene(navGroup, collisionGroup, {
+      includeNavmesh: this.includeNavmesh,
+      preserveMaterials: this.preserveMaterials,
+    });
   }
 
   setPlayerMesh(mesh) {
     if (!mesh) {
+      disposeStage5Scene(this.playerScene);
       this.playerSourceMesh = null;
       this.playerMesh = null;
-      this.playerScene.clear();
       return;
     }
     if (this.playerSourceMesh === mesh && this.playerMesh) {
       this.syncPlayerMesh();
       return;
     }
-    this.playerScene.clear();
+    disposeStage5Scene(this.playerScene);
     this.playerSourceMesh = mesh;
-    this.playerMesh = new THREE.Mesh(
-      mesh.geometry,
-      new THREE.MeshBasicMaterial({
-        color: 0x87f5b1,
-        transparent: false,
-        opacity: 1,
-        depthTest: true,
-        depthWrite: true,
-      }),
-    );
+    this.playerMesh = clonePlayerVisual(mesh);
     this.playerScene.add(this.playerMesh);
     this.syncPlayerMesh();
   }
@@ -71,6 +76,7 @@ export class RegionStage5MapRenderer {
     const pixelViewport = normalizePixelViewport(viewport);
 
     try {
+      if (this.syncSourceState) syncClippedSourceScene(this.scene);
       this.prepareViewport(renderer, pixelViewport);
       if (!regions.length) {
         return;
@@ -131,11 +137,12 @@ export class RegionStage5MapRenderer {
     renderer.render(this.maskScene, camera);
 
     try {
+      applyRegionBroadPhase(this.scene, region);
       applyRegionClipping(this.scene, region);
       renderer.autoClear = false;
       renderer.render(this.scene, camera);
       this.syncPlayerMesh();
-      if (this.playerMesh?.visible) {
+      if (this.renderPlayer && this.playerMesh?.visible) {
         renderer.render(this.playerScene, camera);
       }
     } finally {
@@ -156,8 +163,51 @@ export class RegionStage5MapRenderer {
     this.playerMesh.position.copy(this.playerSourceMesh.position);
     this.playerMesh.quaternion.copy(this.playerSourceMesh.quaternion);
     this.playerMesh.scale.copy(this.playerSourceMesh.scale);
+    for (let index = 0; index < this.playerSourceMesh.children.length; index += 1) {
+      const sourceChild = this.playerSourceMesh.children[index];
+      const cloneChild = this.playerMesh.children[index];
+      if (!cloneChild) continue;
+      cloneChild.position.copy(sourceChild.position);
+      cloneChild.quaternion.copy(sourceChild.quaternion);
+      cloneChild.scale.copy(sourceChild.scale);
+    }
     this.playerMesh.updateMatrixWorld(true);
   }
+}
+
+export class RegionStage5MapRenderer extends RegionClippedMapRenderer {}
+
+function clonePlayerVisual(source) {
+  const clone = new THREE.Mesh(
+    source.geometry,
+    createPlayerMaterial(0x87f5b1),
+  );
+  clone.userData.kind = source.userData.kind;
+  for (const child of source.children) {
+    if (!child.isMesh) continue;
+    const childClone = new THREE.Mesh(
+      child.geometry,
+      createPlayerMaterial(
+        child.userData.kind === "camera-direction" ? 0xfacc15 : 0x87f5b1,
+      ),
+    );
+    childClone.position.copy(child.position);
+    childClone.quaternion.copy(child.quaternion);
+    childClone.scale.copy(child.scale);
+    childClone.userData.kind = child.userData.kind;
+    clone.add(childClone);
+  }
+  return clone;
+}
+
+function createPlayerMaterial(color) {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: false,
+    opacity: 1,
+    depthTest: true,
+    depthWrite: true,
+  });
 }
 
 function normalizePixelViewport(viewport) {

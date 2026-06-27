@@ -5,6 +5,7 @@ import { ThirdPersonControllerSystem } from "../../../shared/third-person-contro
 const FREE_CAMERA_SPEED = 32;
 const FREE_CAMERA_SPRINT = 3.2;
 const PLAYER_PLACE_HEIGHT = 1.2;
+const CAMERA_ARROW_HEIGHT = 0.72;
 
 export class RegionStage5Controller {
   constructor({ renderer, scene, camera, collisionGroup, runtime, setStatus }) {
@@ -48,6 +49,10 @@ export class RegionStage5Controller {
 
   get playerMesh() {
     return this.physics.playerDebugMesh;
+  }
+
+  get mapFollowTarget() {
+    return this.playerReady ? this.runtime.physicsState.position : null;
   }
 
   context() {
@@ -120,9 +125,18 @@ export class RegionStage5Controller {
       this.physics.update(this.context(), dt);
       this.controls.target.copy(this.runtime.physicsState.position);
       this.camera.lookAt(this.controls.target);
-      return;
+    } else {
+      this.updateFreeCamera(dt);
     }
-    this.updateFreeCamera(dt);
+    this.updateCameraDirectionVisual();
+  }
+
+  resetForMapChange() {
+    this.mode = "free";
+    this.playerReady = false;
+    this.freeKeys.clear();
+    this.exitThirdPerson();
+    this.physics.resetPlayer(this.context());
   }
 
   handlers() {
@@ -231,7 +245,6 @@ export class RegionStage5Controller {
       return false;
     }
     this.playerReady = true;
-    this.controls.target.copy(target);
     this.setStatus?.(
       `Placed player: ${target.x.toFixed(1)}, ${target.y.toFixed(1)}, ${target.z.toFixed(1)}`,
     );
@@ -297,6 +310,36 @@ export class RegionStage5Controller {
     this.camera.position.add(delta);
     this.controls.target.add(delta);
     this.camera.lookAt(this.controls.target);
+  }
+
+  updateCameraDirectionVisual() {
+    const player = this.physics.playerDebugMesh;
+    if (!player) return;
+    let arrow = player.getObjectByName("stage5-camera-direction");
+    if (!arrow) {
+      arrow = new THREE.Mesh(
+        new THREE.ConeGeometry(0.18, 0.72, 12),
+        new THREE.MeshBasicMaterial({
+          color: 0xfacc15,
+          transparent: false,
+          opacity: 1,
+        }),
+      );
+      arrow.name = "stage5-camera-direction";
+      arrow.userData.kind = "camera-direction";
+      player.add(arrow);
+    }
+
+    const direction = new THREE.Vector3();
+    this.camera.getWorldDirection(direction);
+    direction.y = 0;
+    if (direction.lengthSq() <= 1e-8) direction.set(0, 0, -1);
+    direction.normalize();
+    arrow.position.set(0, CAMERA_ARROW_HEIGHT, 0).addScaledVector(direction, 0.72);
+    arrow.quaternion.setFromUnitVectors(
+      new THREE.Vector3(0, 1, 0),
+      direction,
+    );
   }
 }
 

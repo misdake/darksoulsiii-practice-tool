@@ -6,16 +6,14 @@ export class RegionPageSyncController {
     this.state = state;
     this.ui = ui;
     this.runtime = runtime;
+    this.onRegionSelectionChange = null;
     this.selectedNavmeshes = [];
     this.selectionMode = "region";
+    this.stage4FilterRegion = null;
   }
 
   setRegions(regions) {
     this.state.setRegions(regions);
-  }
-
-  setPlans(plans) {
-    this.state.plans = Array.isArray(plans) ? plans : [];
   }
 
   setSelectedIndex(index) {
@@ -36,6 +34,9 @@ export class RegionPageSyncController {
   }
 
   setSelectionMode(mode) {
+    if (this.state.selectedRegion) {
+      this.stage4FilterRegion = this.state.selectedRegion;
+    }
     this.selectionMode = mode === "navmesh" ? "navmesh" : "region";
     this.ui.setStage4SelectionMode(this.selectionMode);
     if (this.selectionMode === "navmesh") {
@@ -56,6 +57,8 @@ export class RegionPageSyncController {
       onChange: () => this.sync(),
       onInvalid: (region, before) => this.revertInvalidEdit(region, before),
       onRegion: (index, options) => this.selectRegion(index, options),
+      onStage6Region: (index, options) =>
+        this.selectStage6Region(index, options),
       onNav: (mesh, options) => this.selectNavmesh(mesh, options),
       onEmpty: () => this.clearCurrentSelection(),
       getSelectionMode: () => this.selectionMode,
@@ -79,6 +82,7 @@ export class RegionPageSyncController {
       groupedIndices: [...groupedIndices],
       primaryIndex: this.state.selectedIndex,
     });
+    this.runtime.updateRegionFillVisibility();
   }
 
   updateActiveRegions(position) {
@@ -93,6 +97,8 @@ export class RegionPageSyncController {
   }
 
   sync() {
+    this.reconcileStage4FilterRegion();
+    this.runtime.setStage4FilterRegion(this.stage4FilterRegion);
     this.ui.render({
       regions: this.state.regions,
       regionGroups: this.state.regionGroups,
@@ -102,6 +108,11 @@ export class RegionPageSyncController {
       plans: this.state.plans,
       onSelect: (index, options) => this.selectRegion(index, options),
     });
+    this.runtime.setCameraPlan(
+      this.state.plans.find(
+        (plan) => plan.region_name === this.state.selectedRegion?.name,
+      ),
+    );
     this.redraw();
   }
 
@@ -110,12 +121,17 @@ export class RegionPageSyncController {
       return;
     }
     this.clearSelectedNavmesh();
+    const previousIndex = this.state.selectedIndex;
     if (toggle) {
       this.state.toggleSelected(index);
     } else {
       this.setSelectedIndex(index);
     }
+    if (previousIndex !== this.state.selectedIndex) {
+      this.onRegionSelectionChange?.(this.state.selectedRegion);
+    }
     this.state.editing = this.state.selectedIndex >= 0;
+    this.stage4FilterRegion = this.state.selectedRegion;
     if (this.state.selectedRegion) {
       this.runtime.focusRegion(this.state.selectedRegion, { focusRight });
     }
@@ -148,22 +164,63 @@ export class RegionPageSyncController {
     this.sync();
   }
 
+  selectStage6Region(index, { focusRight = false } = {}) {
+    const previousIndex = this.state.selectedIndex;
+    this.clearSelectedNavmesh();
+    this.state.select(index);
+    this.state.editing = false;
+    if (previousIndex !== this.state.selectedIndex) {
+      this.onRegionSelectionChange?.(this.state.selectedRegion);
+    }
+    if (this.state.selectedRegion) {
+      this.runtime.focusRegion(this.state.selectedRegion, { focusRight });
+    }
+    this.sync();
+  }
+
   clearCurrentSelection() {
     if (this.selectionMode === "navmesh") {
       this.clearSelectedNavmesh();
       this.ui.status("No navmesh splits selected.");
     } else {
       this.setSelectedIndex(-1);
+      this.stage4FilterRegion = null;
     }
     this.sync();
   }
 
   applyEditorFields() {
     const region = this.state.selectedRegion;
-    if (!region) return;
+    if (!region) return true;
     const oldName = region.name;
-    Object.assign(region, this.ui.readEditor());
-    this.state.renameRegion(oldName, region.name);
+    const draft = { ...region, ...this.ui.readEditor() };
+    const nextRegions = this.state.regions.map((candidate, index) =>
+      index === this.state.selectedIndex ? draft : candidate,
+    );
+    const error = validateRegions(nextRegions);
+    if (error) {
+      this.ui.status(error, true);
+      return false;
+    }
+    Object.assign(region, draft);
+    this.state.renameRegion(oldName, draft.name);
+    this.state.setRegionGroups(this.state.regionGroups);
+    return true;
+  }
+
+  reconcileStage4FilterRegion() {
+    if (
+      this.stage4FilterRegion &&
+      this.state.regions.includes(this.stage4FilterRegion)
+    ) {
+      return;
+    }
+    this.stage4FilterRegion =
+      this.state.selectedRegion ||
+      this.state.regions.find(
+        (region) => region.name === this.stage4FilterRegion?.name,
+      ) ||
+      null;
   }
 
   revertInvalidEdit(region, before) {

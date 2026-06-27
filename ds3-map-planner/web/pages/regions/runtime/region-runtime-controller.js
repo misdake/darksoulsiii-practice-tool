@@ -4,8 +4,9 @@ import { RegionShotPlanSystem } from "../planning/region-shot-plan-system.js";
 import { RegionAssetLoader } from "../assets/region-asset-loader.js";
 import { RegionOverlayController } from "../overlay/region-overlay-controller.js";
 import { RegionRenderController } from "./region-render-controller.js";
+import { RegionStage5MapRenderer } from "./region-clipped-map-renderer.js";
+import { RegionStage4FilterRenderer } from "./region-stage4-filter-renderer.js";
 import { RegionStage5Controller } from "./region-stage5-controller.js";
-import { RegionStage5MapRenderer } from "./region-stage5-map-renderer.js";
 import { RegionViewportController } from "../viewport/region-viewport-controller.js";
 
 export class RegionRuntimeController {
@@ -28,14 +29,28 @@ export class RegionRuntimeController {
     this.scene = createRegionScene();
 
     this.overlay = new RegionOverlayController(this.scene);
+    this.overlay.setCameraPlanVisible(false);
     this.navGroup = new THREE.Group();
     this.collisionGroup = new THREE.Group();
     this.collisionVisible = true;
     this.collisionOpacity = 0.24;
     this.navmeshOpacity = 1;
+    this.stage4RegionFilterEnabled = false;
+    this.stage4FilterRegion = null;
     this.scene.add(this.navGroup, this.collisionGroup);
 
-    this.regionScene = new RegionSceneController();
+    this.regionScene = new RegionSceneController({
+      scene: this.scene,
+      navGroup: this.navGroup,
+      collisionGroup: this.collisionGroup,
+      overlayGroups: [
+        this.overlay.regionGroup,
+        this.overlay.vertexGroup,
+        this.overlay.uncoveredGroup,
+        this.overlay.selectedNavmeshGroup,
+        this.overlay.cameraPlanGroup,
+      ],
+    });
     this.leftCamera = createRegionLeftCamera();
     this.rightCamera = createRegionRightCamera();
     this.viewportController = new RegionViewportController(this.rightCamera);
@@ -61,15 +76,16 @@ export class RegionRuntimeController {
         this.stage5.update(dt);
         this.regionScene.setPlayerMesh(this.stage5.playerMesh);
       },
-      onBeforeRightRender: () =>
-        setRegionFillVisibility(this.overlay.regionGroup, this.stage !== 5),
+      onBeforeRightRender: () => this.updateRegionFillVisibility(),
       getFrameGamePosition: () => [
         this.runtime.physicsState.position.x,
         this.runtime.physicsState.position.y,
         this.runtime.physicsState.position.z,
       ],
       onFrameGamePosition,
-      getFollowTarget: () => this.stage5.controls.target,
+      getFollowTarget: () => this.stage5.mapFollowTarget,
+      getStage4FilterRegion: () =>
+        this.stage4RegionFilterEnabled ? this.stage4FilterRegion : null,
     });
 
     this.raycaster = new THREE.Raycaster();
@@ -155,23 +171,25 @@ export class RegionRuntimeController {
     return true;
   }
 
-  setGamePosition([x, y, z]) {
-    this.runtime.physicsState.position.set(x, y, z);
-  }
-
   setStage(stage) {
     const nextStage = Number(stage) || 4;
     if (nextStage === this.stage) {
       return;
     }
     this.stage = nextStage;
+    this.overlay.setCameraPlanVisible(nextStage === 6);
     this.renderController.setStage(nextStage);
     if (nextStage === 5) {
       this.stage5.enter();
     } else {
       this.stage5.exit();
-      setRegionFillVisibility(this.overlay.regionGroup, true);
     }
+    this.updateRegionFillVisibility();
+  }
+
+  setCameraPlan(plan) {
+    this.overlay.renderCameraPlan(plan?.plan?.points || []);
+    this.overlay.setCameraPlanVisible(this.stage === 6);
   }
 
   toggleStage5Mode() {
@@ -180,6 +198,11 @@ export class RegionRuntimeController {
 
   stage5Snapshot() {
     return this.stage5.snapshot;
+  }
+
+  resetForMapChange() {
+    this.stage5.resetForMapChange();
+    this.regionScene.setPlayerMesh(null);
   }
 
   setCollisionVisible(visible) {
@@ -195,6 +218,22 @@ export class RegionRuntimeController {
   setNavmeshOpacity(opacity) {
     this.navmeshOpacity = Math.max(0, Math.min(1, Number(opacity) || 0));
     this.applyNavmeshDisplayState();
+  }
+
+  setStage4RegionFilterEnabled(enabled) {
+    this.stage4RegionFilterEnabled = Boolean(enabled);
+    this.updateRegionFillVisibility();
+  }
+
+  setStage4FilterRegion(region) {
+    this.stage4FilterRegion = region || null;
+  }
+
+  updateRegionFillVisibility() {
+    const visible =
+      this.stage !== 5 &&
+      !(this.stage === 4 && this.stage4RegionFilterEnabled);
+    setRegionFillVisibility(this.overlay.regionGroup, visible);
   }
 
   applyCollisionDisplayState() {
@@ -262,11 +301,18 @@ function applyGroupOpacity(group, opacity) {
 }
 
 class RegionSceneController {
-  constructor() {
+  constructor({ scene, navGroup, collisionGroup, overlayGroups }) {
+    this.stage4FilterRenderer = new RegionStage4FilterRenderer({
+      scene,
+      navGroup,
+      collisionGroup,
+      overlayGroups,
+    });
     this.leftMapRenderer = new RegionStage5MapRenderer();
   }
 
   rebuild(navmeshGroup, collisionGroup) {
+    this.stage4FilterRenderer.rebuild(navmeshGroup, collisionGroup);
     this.leftMapRenderer.rebuild(navmeshGroup, collisionGroup);
   }
 
@@ -278,7 +324,12 @@ class RegionSceneController {
     this.leftMapRenderer.render(renderer, camera, viewport, activeRegions);
   }
 
+  renderStage4Filtered(renderer, camera, viewport, region) {
+    this.stage4FilterRenderer.render(renderer, camera, viewport, region);
+  }
+
   dispose() {
+    this.stage4FilterRenderer.dispose();
     this.leftMapRenderer.dispose();
   }
 }

@@ -29,6 +29,8 @@ export function createRegionControllerGraph({ document, window, navigateBack }) 
   graph.mapLoadController = createMapLoadController(graph);
   graph.missingPoints = createMissingPointsController(graph);
   graph.planController = createPlanController(graph);
+  graph.syncController.onRegionSelectionChange = () =>
+    graph.planController.cancel("Camera plan cancelled after region selection changed.", false);
   graph.actions = createActionsController(graph, navigateBack);
   return graph;
 }
@@ -96,7 +98,8 @@ function createPlanController({ runtime, state, syncController, ui }) {
     state,
     navGroup: runtime.navGroup,
     setStatus: ui.status,
-    setDisabled: (disabled) => ui.setCalculatePlanDisabled(disabled),
+    setPlanning: (planning) => ui.setStage6Planning(planning),
+    setProgress: (progress) => ui.setStage6Progress(progress),
     sync: () => syncController.sync(),
   });
 }
@@ -125,7 +128,6 @@ function createActionsController(graph, navigateBack) {
     getSelectedRegionIndices: () => syncController.getSelectedRegionIndices(),
     setSelectedIndex: (value) => syncController.setSelectedIndex(value),
     removeSelectedRegion: () => state.removeSelected(),
-    getEditing: () => state.editing,
     setEditing: (value) => {
       state.editing = Boolean(value) && state.selectedIndex >= 0;
       syncController.sync();
@@ -133,15 +135,12 @@ function createActionsController(graph, navigateBack) {
     setSelectionMode: (mode) => syncController.setSelectionMode(mode),
     getSelectedNavmeshes: () => syncController.getSelectedNavmeshes(),
     getPlans: () => state.plans,
-    setPlans: (value) => syncController.setPlans(value),
-    getPreviewPosition: () => ui.readPreviewPosition(),
     confirm: (message) => ui.confirm(message),
     setStatus: ui.status,
     sync: () => syncController.sync(),
     applyEditorFields: () => syncController.applyEditorFields(),
-    updateActiveRegions: (position) =>
-      syncController.updateActiveRegions(position),
-    setGamePosition: (position) => runtime.setGamePosition(position),
+    getPlanConfig: () => ui.readStage6Config(),
+    resetPlanConfig: () => ui.resetStage6Config(),
     focusGamePoint: (point) => runtime.focusGamePoint(point),
     toggleStage5Mode: () => runtime.toggleStage5Mode(),
     navigateBack,

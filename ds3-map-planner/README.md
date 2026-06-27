@@ -69,9 +69,9 @@ Outputs:
 
 ### Active Stages
 
-1. `Stage 1 Collision Filter`
-2. `Stage 2 Nav Filter`
-3. `Stage 3 Mark Nav` (physics + third-person/free camera + nav segment marking)
+1. `Stage 1 Collision Filter` (on `/filters.html`)
+2. `Stage 2 Nav Filter` (on `/filters.html`)
+3. `Stage 3 Mark Nav` (on `/filters.html`, with physics + third-person/free camera + nav segment marking)
 4. `Stage 4 Map Regions` (on `/regions.html`)
 5. `Stage 5 Region Preview` (on `/regions.html`)
 6. `Stage 6 Region Shot Plans` (on `/regions.html`)
@@ -153,8 +153,8 @@ cargo run -p ds3-map-planner --bin navmesh_split -- m40_00_00_00
 
 ### Map Regions
 
-Save the Stage 3 nav selection, then open `/regions.html`. The page edits game-coordinate region prisms, previews active regions through a clipped left map viewport, and creates per-region camera plans. The legacy `stage4_shot_plan.json` is not read by this workflow.
+The homepage at `/index.html` shows each map's persisted workflow progress and links to the two work pages. Save the Stage 3 nav selection in `/filters.html`, then open `/regions.html`. The region page edits region prisms, previews active regions through a clipped left map viewport, and creates per-region camera plans. The legacy `stage4_shot_plan.json` is not read by this workflow.
 
 ## Map region workflow
 
-The filter page (/index.html) contains Stage 1–3. Open /regions.html for Stage 4–6: region editing is stored in stage4_map_regions.json, and regional camera plans are reserved in stage6_map_region_shot_plans.json. Region coordinates use [x_game, y_game, z_game]; scene rendering flips Z only through the shared coordinate helpers.
+The filter page (`/filters.html`) contains Stage 1–3. The region page (`/regions.html`) contains Stage 4–6: region editing is stored in `stage4_map_regions.json`, and regional camera plans are stored in `stage6_map_region_shot_plans.json`. Runtime, persisted region data, physics, raycasts, and worker data all use the same right-handed world coordinates.

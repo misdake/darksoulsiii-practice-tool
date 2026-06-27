@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { createRegionOverlayObjects } from "../pages/regions/overlay/region-overlay-meshes.js";
-import { createRegionMask } from "../pages/regions/runtime/region-stage5-mask.js";
+import {
+  createRegionMask,
+  regionClippingPlanes,
+} from "../pages/regions/runtime/region-stage5-mask.js";
 import {
   activeRegions,
   addGapMarker,
@@ -14,8 +17,10 @@ import {
   pointInPolygon,
   sceneToGame,
   summarizeUncoveredCoverage,
+  triangleCoverageSamples,
   validateRegions,
 } from "../pages/regions/geometry/region-geometry.js";
+
 const lower = {
   name: "lower",
   ymin: 0,
@@ -38,7 +43,7 @@ const upper = {
     [0, 4],
   ],
 };
-test("point-in-polygon supports concave polygons and edges", () => {
+test("region geometry handles concavity, edges and invalid polygons", () => {
   const p = [
     [0, 0],
     [4, 0],
@@ -48,8 +53,6 @@ test("point-in-polygon supports concave polygons and edges", () => {
   ];
   assert.equal(pointInPolygon([0, 2], p), true);
   assert.equal(pointInPolygon([2, 3], p), false);
-});
-test("invalid polygons are rejected", () => {
   assert.equal(
     hasSelfIntersection([
       [0, 0],
@@ -61,15 +64,20 @@ test("invalid polygons are rejected", () => {
   );
   assert.match(validateRegions([lower, { ...lower }]), /duplicated/);
 });
-test("active regions are ordered and coordinate conversion preserves world coordinates", () => {
+
+test("Stage5 region lookup is ordered and missing points are de-duplicated", () => {
   assert.deepEqual(
     activeRegions([lower, upper], [2, 2.5, 2]).map((r) => r.name),
     ["lower", "upper"],
   );
-  assert.deepEqual(sceneToGame([1, 2, 3]), [1, 2, 3]);
+  const markers = new Map();
+  assert.equal(addGapMarker(markers, [0.1, 0.1, 0.1]), true);
+  assert.equal(addGapMarker(markers, [0.4, 0.2, 0.3]), false);
+  assert.equal(markers.size, 1);
 });
 
-test("stage5 mask stores region polygons in scene coordinates", () => {
+test("region overlays and masks preserve right-handed world coordinates", () => {
+  assert.deepEqual(sceneToGame([1, 2, 3]), [1, 2, 3]);
   const mask = createRegionMask({
     ymin: 0,
     polygon_xz: [
@@ -93,11 +101,19 @@ test("stage5 mask stores region polygons in scene coordinates", () => {
 
   assert.ok(worldPoints.some((point) => point.x === 0));
   assert.deepEqual(worldZs, [1, 3]);
+  const clippingPlanes = regionClippingPlanes({ ymin: -2, ymax: 5 });
+  assert.ok(clippingPlanes.every((plane) => plane.distanceToPoint(
+    new THREE.Vector3(0, 1, 0),
+  ) >= 0));
+  assert.ok(clippingPlanes.some((plane) => plane.distanceToPoint(
+    new THREE.Vector3(0, -3, 0),
+  ) < 0));
+  assert.ok(clippingPlanes.some((plane) => plane.distanceToPoint(
+    new THREE.Vector3(0, 6, 0),
+  ) < 0));
   mask.geometry.dispose();
   mask.material.dispose();
-});
 
-test("region overlay prism maps ymin and ymax to ascending scene Y", () => {
   const [mesh, edges] = createRegionOverlayObjects(
     {
       ymin: -2,
@@ -124,7 +140,19 @@ test("region overlay prism maps ymin and ymax to ascending scene Y", () => {
   edges.material.dispose();
 });
 
-test("coverage samples use the full prism, not only XZ", () => {
+test("coverage sampling preserves weighted area and checks the full prism", () => {
+  const samples = triangleCoverageSamples(
+    [0, 0, 0],
+    [20, 0, 0],
+    [0, 0, 20],
+  );
+  assert.ok(samples.length > 20);
+  assert.ok(
+    Math.abs(
+      samples.reduce((sum, sample) => sum + sample.coverageWeight, 0) - 200,
+    ) < 1e-6,
+  );
+
   const triangle = [
     [
       [1, 1, 1],
@@ -136,9 +164,6 @@ test("coverage samples use the full prism, not only XZ", () => {
   assert.ok(
     findUncoveredSamples([{ ...lower, ymax: 0.5 }], triangle).length > 0,
   );
-});
-
-test("coverage summary reports area ratio and largest gap", () => {
   const triangles = [
     [
       [0, 1, 0],
@@ -155,14 +180,7 @@ test("coverage summary reports area ratio and largest gap", () => {
   assert.deepEqual(summary.representative, uncovered[0]);
 });
 
-test("gap markers are de-duplicated in world-space cells", () => {
-  const markers = new Map();
-  assert.equal(addGapMarker(markers, [0.1, 0.1, 0.1]), true);
-  assert.equal(addGapMarker(markers, [0.4, 0.2, 0.3]), false);
-  assert.equal(markers.size, 1);
-});
-
-test("automatic layers retain whole splits and separate stacked floors", () => {
+test("derived map geometry preserves layers, concavity and footprint scaling", () => {
   const triangle = (y) => [
     [
       [0, y, 0],
@@ -178,16 +196,12 @@ test("automatic layers retain whole splits and separate stacked floors", () => {
   assert.equal(layers.length, 2);
   assert.equal(layers[0].members.length, 2);
   assert.equal(layers[1].members[0].key, "upper");
-});
 
-test("lower camera height produces a smaller footprint", () => {
   const config = { render_width: 16, render_height: 9, fov_y_rad: Math.PI / 3 };
   assert.ok(
     footprintForHeight(config, 2).width < footprintForHeight(config, 4).width,
   );
-});
 
-test("occupancy contour retains a concave grid outline instead of a bounding box", () => {
   const triangles = [
     [
       [0, 0, 0],

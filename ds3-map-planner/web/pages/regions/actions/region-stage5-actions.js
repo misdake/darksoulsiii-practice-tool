@@ -9,22 +9,16 @@ export class RegionStage5Actions {
     navGroup,
     missingPoints,
     getRegions,
-    getPreviewPosition,
     setStatus,
     applyEditorFields,
-    updateActiveRegions,
-    setGamePosition,
     focusGamePoint,
     toggleStage5Mode,
   }) {
     this.navGroup = navGroup;
     this.missingPoints = missingPoints;
     this.getRegions = getRegions;
-    this.getPreviewPosition = getPreviewPosition;
     this.setStatus = setStatus;
     this.applyEditorFields = applyEditorFields;
-    this.updateActiveRegions = updateActiveRegions;
-    this.setGamePosition = setGamePosition;
     this.focusGamePoint = focusGamePoint;
     this.toggleStage5Mode = toggleStage5Mode;
   }
@@ -32,7 +26,6 @@ export class RegionStage5Actions {
   handlers() {
     return {
       onCheckCoverage: () => this.checkCoverage(),
-      onPreviewPosition: () => this.previewPosition(),
       onToggleStage5Mode: () => this.toggleStage5Mode(),
       onRecheckMissing: () => this.recheckMissing(),
       onFocusMissing: () => this.focusMissing(),
@@ -41,7 +34,7 @@ export class RegionStage5Actions {
   }
 
   checkCoverage() {
-    this.applyEditorFields();
+    if (!this.applyEditorFields()) return;
     const regions = this.getRegions();
     const error = validateRegions(regions);
     if (error) {
@@ -65,21 +58,8 @@ export class RegionStage5Actions {
     );
   }
 
-  previewPosition() {
-    this.applyEditorFields();
-    const position = this.getPreviewPosition();
-    this.setGamePosition(position);
-    if (!this.updateActiveRegions(position).length) {
-      this.missingPoints.record(position);
-      this.setStatus(
-        `Outside every region. Missing markers: ${this.missingPoints.size}.`,
-        true,
-      );
-    }
-  }
-
   recheckMissing() {
-    this.applyEditorFields();
+    if (!this.applyEditorFields()) return;
     const remaining = this.missingPoints.recheck(this.getRegions());
     this.setStatus(`Missing markers remaining: ${remaining}.`);
   }

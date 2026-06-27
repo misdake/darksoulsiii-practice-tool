@@ -32,9 +32,6 @@ export class FilterPageActionsController {
       onStage3CollisionOpacityInput: () =>
         this.updateStage3CollisionOpacity(),
       onSave: () => this.mapSession.saveCurrentStage(),
-      onOpenRegions: () => {
-        this.window.location.href = "./regions.html";
-      },
       onToggleCameraMode: () => this.toggleCameraMode(),
     });
   }

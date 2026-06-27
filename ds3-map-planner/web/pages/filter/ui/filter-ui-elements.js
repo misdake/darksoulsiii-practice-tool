@@ -21,7 +21,6 @@ export function collectFilterUiElements(document) {
     resetVisibleButton: byId("resetVisibleBtn"),
     resetNavSegmentButton: byId("resetNavSegmentBtn"),
     saveButton: byId("saveBtn"),
-    regionsPageButton: byId("regionsPageBtn"),
     stageRadios: Array.from(document.querySelectorAll('input[name="stage"]')),
     stageLabels: new Map(
       Array.from(document.querySelectorAll("[data-stage-label]")).map((el) => [

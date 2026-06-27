@@ -19,7 +19,6 @@ export class RegionStage4Actions {
     getSelectedRegionIndices,
     setSelectedIndex,
     removeSelectedRegion,
-    getEditing,
     setEditing,
     setSelectionMode,
     getSelectedNavmeshes,
@@ -40,7 +39,6 @@ export class RegionStage4Actions {
     this.getSelectedRegionIndices = getSelectedRegionIndices;
     this.setSelectedIndex = setSelectedIndex;
     this.removeSelectedRegion = removeSelectedRegion;
-    this.getEditing = getEditing;
     this.setEditing = setEditing;
     this.setSelectionMode = setSelectionMode;
     this.getSelectedNavmeshes = getSelectedNavmeshes;
@@ -53,7 +51,6 @@ export class RegionStage4Actions {
   handlers() {
     return {
       onNew: () => this.createRegion(),
-      onEdit: () => this.toggleEditRegion(),
       onDelete: () => this.deleteSelectedRegion(),
       onGroupRegions: () => this.groupSelectedRegionsAction(),
       onSave: () => this.saveRegions(),
@@ -79,14 +76,6 @@ export class RegionStage4Actions {
     this.setSelectedIndex(regions.length - 1);
     this.setEditing(true);
     this.sync();
-  }
-
-  toggleEditRegion() {
-    if (this.getSelectedIndex() < 0) {
-      this.setStatus("Select a region first.", true);
-      return;
-    }
-    this.setEditing(!this.getEditing());
   }
 
   deleteSelectedRegion() {
@@ -120,7 +109,10 @@ export class RegionStage4Actions {
   }
 
   async saveRegions() {
-    this.applyEditorFields();
+    if (!this.applyEditorFields()) {
+      this.sync();
+      return;
+    }
     const regions = this.getRegions();
     const error = validateRegions(regions);
     if (error) {
@@ -128,11 +120,15 @@ export class RegionStage4Actions {
       return;
     }
 
-    await saveStageData(this.getMapId(), "stage4-map-regions", {
-      regions,
-      region_groups: this.getRegionGroups(),
-    });
-    this.setStatus("Saved.");
+    try {
+      await saveStageData(this.getMapId(), "stage4-map-regions", {
+        regions,
+        region_groups: this.getRegionGroups(),
+      });
+      this.setStatus("Saved.");
+    } catch (saveError) {
+      this.setStatus(`Saving regions failed: ${saveError.message}`, true);
+    }
   }
 
   async clearRegions() {

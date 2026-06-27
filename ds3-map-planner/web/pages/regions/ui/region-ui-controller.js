@@ -17,6 +17,9 @@ export class RegionUiController {
     this.stage4CollisionOpacityValue = this.byId("stage4CollisionOpacityValue");
     this.stage4NavmeshOpacity = this.byId("stage4NavmeshOpacity");
     this.stage4NavmeshOpacityValue = this.byId("stage4NavmeshOpacityValue");
+    this.stage4ShowSelectedRegionOnly = this.byId(
+      "stage4ShowSelectedRegionOnly",
+    );
     this.stage4SelectionModeRadios = Array.from(
       document.querySelectorAll('input[name="stage4SelectMode"]'),
     );
@@ -91,17 +94,18 @@ export class RegionUiController {
 
   bindActions({
     onNew,
-    onEdit,
     onDelete,
     onGroupRegions,
     onSave,
     onCalculatePlan,
+    onCancelPlan,
+    onResetPlanConfig,
+    onSelectStage6Region,
     onSavePlans,
     onClear,
     onCalculateRegions,
     onEditorChange,
     onCheckCoverage,
-    onPreviewPosition,
     onToggleStage5Mode,
     onRecheckMissing,
     onFocusMissing,
@@ -113,6 +117,7 @@ export class RegionUiController {
     onStage4CollisionVisibleChange,
     onStage4CollisionOpacityInput,
     onStage4NavmeshOpacityInput,
+    onStage4ShowSelectedRegionOnlyChange,
   }) {
     this.onStageChange = onStageChange;
     for (const radio of this.stageRadios) {
@@ -125,6 +130,11 @@ export class RegionUiController {
     this.addListener(this.byId("groupRegionsBtn"), "click", onGroupRegions);
     this.addListener(this.byId("saveBtn"), "click", onSave);
     this.addListener(this.byId("calculatePlanBtn"), "click", onCalculatePlan);
+    this.addListener(this.byId("cancelPlanBtn"), "click", onCancelPlan);
+    this.addListener(this.byId("resetPlanConfigBtn"), "click", onResetPlanConfig);
+    this.addListener(this.byId("stage6RegionSelect"), "change", () =>
+      onSelectStage6Region?.(Number(this.byId("stage6RegionSelect").value)),
+    );
     this.addListener(this.byId("savePlansBtn"), "click", onSavePlans);
     this.addListener(this.byId("clearBtn"), "click", onClear);
     this.addListener(
@@ -146,7 +156,6 @@ export class RegionUiController {
       });
     }
     this.addListener(this.byId("checkBtn"), "click", onCheckCoverage);
-    this.addListener(this.byId("previewBtn"), "click", onPreviewPosition);
     this.addListener(this.byId("stage5ModeBtn"), "click", onToggleStage5Mode);
     this.addListener(this.byId("recheckMissingBtn"), "click", onRecheckMissing);
     this.addListener(this.byId("focusMissingBtn"), "click", onFocusMissing);
@@ -166,6 +175,11 @@ export class RegionUiController {
       this.setStage4NavmeshOpacity(opacity);
       onStage4NavmeshOpacityInput?.(opacity);
     });
+    this.addListener(this.stage4ShowSelectedRegionOnly, "change", () =>
+      onStage4ShowSelectedRegionOnlyChange?.(
+        this.stage4ShowSelectedRegionOnly.checked,
+      ),
+    );
     for (const id of ["name", "ymin", "ymax"]) {
       this.addListener(this.byId(id), "change", onEditorChange);
     }
@@ -179,6 +193,9 @@ export class RegionUiController {
     const initialNavmeshOpacity = Number(this.stage4NavmeshOpacity?.value);
     this.setStage4NavmeshOpacity(initialNavmeshOpacity);
     onStage4NavmeshOpacityInput?.(initialNavmeshOpacity);
+    onStage4ShowSelectedRegionOnlyChange?.(
+      this.stage4ShowSelectedRegionOnly?.checked ?? false,
+    );
   }
 
   currentStage() {
@@ -222,6 +239,47 @@ export class RegionUiController {
     this.byId("calculatePlanBtn").disabled = Boolean(disabled);
   }
 
+  setStage6Planning(planning) {
+    const active = Boolean(planning);
+    this.byId("calculatePlanBtn").disabled = active;
+    this.byId("savePlansBtn").disabled = active;
+    this.byId("cancelPlanBtn").hidden = !active;
+    this.byId("stage6ProgressWrap").hidden = !active;
+    this.byId("stage6ConfigFields").disabled = active;
+  }
+
+  setStage6Progress({ phase, processed = 0, total = 0, ratio = 0 } = {}) {
+    const phaseRanges = {
+      target_geometry: [0, 0.1],
+      worker_candidates: [0.1, 0.25],
+      initial_raycast: [0.25, 0.65],
+      local_replenishment: [0.65, 0.95],
+      coverage_summary: [0.95, 1],
+    };
+    const localRatio = Math.max(0, Math.min(1, Number(ratio) || 0));
+    const [start, end] = phaseRanges[phase] || [0, 1];
+    const value = start + (end - start) * localRatio;
+    const labels = {
+      target_geometry: "Preparing region geometry",
+      worker_candidates: "Generating candidates",
+      initial_raycast: "Checking initial cameras",
+      local_replenishment: "Replenishing uncovered areas",
+      coverage_summary: "Summarizing coverage",
+    };
+    this.byId("stage6ProgressText").textContent =
+      `${labels[phase] || "Calculating"} ${processed}/${total}`;
+    this.byId("stage6ProgressPct").textContent = `${Math.round(value * 100)}%`;
+    this.byId("stage6ProgressFill").style.width = `${value * 100}%`;
+  }
+
+  readStage6Config() {
+    return this.panelRenderer.readStage6Config();
+  }
+
+  resetStage6Config() {
+    this.panelRenderer.setStage6Config();
+  }
+
   setStage4CollisionOpacity(opacity) {
     const value = Math.max(0, Math.min(1, Number(opacity) || 0));
     if (this.stage4CollisionOpacity) {
@@ -240,10 +298,6 @@ export class RegionUiController {
     if (this.stage4NavmeshOpacityValue) {
       this.stage4NavmeshOpacityValue.textContent = value.toFixed(2);
     }
-  }
-
-  readPreviewPosition() {
-    return this.panelRenderer.readPreviewPosition();
   }
 
   renderActiveRegions(regions) {

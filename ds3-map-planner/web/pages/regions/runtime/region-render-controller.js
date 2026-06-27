@@ -13,6 +13,7 @@ export class RegionRenderController {
     getFrameGamePosition,
     onFrameGamePosition,
     getFollowTarget,
+    getStage4FilterRegion,
   }) {
     this.window = window;
     this.renderer = renderer;
@@ -27,6 +28,7 @@ export class RegionRenderController {
     this.getFrameGamePosition = getFrameGamePosition;
     this.onFrameGamePosition = onFrameGamePosition;
     this.getFollowTarget = getFollowTarget;
+    this.getStage4FilterRegion = getStage4FilterRegion;
     this.animationFrame = 0;
     this.lastFrameTime = 0;
     this.stage = 4;
@@ -78,6 +80,8 @@ export class RegionRenderController {
     const activeRegions = this.onFrameGamePosition(gamePosition);
 
     const leftViewport = { x: 0, y: 0, width: width / 2, height };
+    const stage4FilterRegion =
+      this.stage === 4 ? this.getStage4FilterRegion?.() : null;
     if (this.stage === 5) {
       this.viewportController.followLeftCameraTarget(
         this.leftCamera,
@@ -89,14 +93,32 @@ export class RegionRenderController {
         leftViewport,
         activeRegions,
       );
+    } else if (stage4FilterRegion) {
+      this.regionScene.renderStage4Filtered(
+        this.renderer,
+        this.leftCamera,
+        leftViewport,
+        stage4FilterRegion,
+      );
     } else {
       this.renderLeftScene(leftViewport);
     }
 
-    this.renderer.setScissorTest(true);
-    this.renderer.setViewport(width / 2, 0, width / 2, height);
-    this.renderer.setScissor(width / 2, 0, width / 2, height);
+    const rightViewport = { x: width / 2, y: 0, width: width / 2, height };
     this.onBeforeRightRender?.();
+    this.renderer.setScissorTest(true);
+    this.renderer.setViewport(
+      rightViewport.x,
+      rightViewport.y,
+      rightViewport.width,
+      rightViewport.height,
+    );
+    this.renderer.setScissor(
+      rightViewport.x,
+      rightViewport.y,
+      rightViewport.width,
+      rightViewport.height,
+    );
     this.renderer.render(this.scene, this.rightCamera);
     this.renderer.setScissorTest(false);
   }
