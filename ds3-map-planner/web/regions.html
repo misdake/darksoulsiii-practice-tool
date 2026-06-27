@@ -166,16 +166,29 @@
         color: #fecdd3;
         border-color: #9f1239;
       }
+      .region-group {
+        border: 1px solid #253447;
+        border-radius: 8px;
+        margin: 8px 0;
+        padding: 4px;
+      }
+      .region-group.selected {
+        border-color: #eab308;
+        background: #2a2410;
+      }
       .region {
         padding: 8px;
         border: 1px solid var(--line);
         border-radius: 6px;
-        margin: 6px 0;
+        margin: 4px 0;
         cursor: pointer;
       }
       .region.selected {
         border-color: var(--accent);
         background: #112534;
+      }
+      .region.primary {
+        outline: 1px solid #facc15;
       }
       .muted {
         color: var(--muted);
@@ -261,6 +274,48 @@
           <button id="fitCameraBtn">Fit Camera</button>
           <hr />
           <section class="stage-panel" data-region-stage-panel="4">
+            <div class="field">
+              <label class="inline-check"
+                ><input id="stage4ShowCollision" type="checkbox" checked />
+                Show collision</label
+              >
+            </div>
+            <div class="field">
+              <label>Collision opacity</label
+              ><div class="range-row">
+                <input
+                  id="stage4CollisionOpacity"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value="0.24"
+                />
+                <output
+                  id="stage4CollisionOpacityValue"
+                  for="stage4CollisionOpacity"
+                  >0.24</output
+                >
+              </div>
+            </div>
+            <div class="field">
+              <label>Navmesh opacity</label
+              ><div class="range-row">
+                <input
+                  id="stage4NavmeshOpacity"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value="1"
+                />
+                <output
+                  id="stage4NavmeshOpacityValue"
+                  for="stage4NavmeshOpacity"
+                  >1.00</output
+                >
+              </div>
+            </div>
             <div id="regionEditor">
               <div class="mode-tabs">
                 <label
@@ -296,6 +351,7 @@
                   </div>
                   <div class="actions">
                     <button id="deleteBtn" class="danger">Delete</button>
+                    <button id="groupRegionsBtn">Group selected</button>
                   </div>
                 </div>
                 <div class="actions">
@@ -306,48 +362,6 @@
                 <div class="actions">
                   <button id="newBtn">Region from selected splits</button
                   ><button id="calculateRegionsBtnNav">Calculate regions</button>
-                </div>
-                <div class="field">
-                  <label class="inline-check"
-                    ><input id="stage4ShowCollision" type="checkbox" checked />
-                    Show collision</label
-                  >
-                </div>
-                <div class="field">
-                  <label>Collision opacity</label
-                  ><div class="range-row">
-                    <input
-                      id="stage4CollisionOpacity"
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value="0.24"
-                    />
-                    <output
-                      id="stage4CollisionOpacityValue"
-                      for="stage4CollisionOpacity"
-                      >0.24</output
-                    >
-                  </div>
-                </div>
-                <div class="field">
-                  <label>Navmesh opacity</label
-                  ><div class="range-row">
-                    <input
-                      id="stage4NavmeshOpacity"
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.05"
-                      value="1"
-                    />
-                    <output
-                      id="stage4NavmeshOpacityValue"
-                      for="stage4NavmeshOpacity"
-                      >1.00</output
-                    >
-                  </div>
                 </div>
               </div>
               <p class="muted">

@@ -93,6 +93,7 @@ export class RegionUiController {
     onNew,
     onEdit,
     onDelete,
+    onGroupRegions,
     onSave,
     onCalculatePlan,
     onSavePlans,
@@ -121,6 +122,7 @@ export class RegionUiController {
     }
     this.addListener(this.byId("newBtn"), "click", onNew);
     this.addListener(this.byId("deleteBtn"), "click", onDelete);
+    this.addListener(this.byId("groupRegionsBtn"), "click", onGroupRegions);
     this.addListener(this.byId("saveBtn"), "click", onSave);
     this.addListener(this.byId("calculatePlanBtn"), "click", onCalculatePlan);
     this.addListener(this.byId("savePlansBtn"), "click", onSavePlans);

@@ -1,3 +1,5 @@
+import { displayRegionGroups } from "../state/region-state.js";
+
 export class RegionPanelRenderer {
   constructor({ document, byId }) {
     this.document = document;
@@ -71,7 +73,15 @@ export class RegionPanelRenderer {
     };
   }
 
-  render({ regions, selectedIndex, selectionMode, plans, onSelect }) {
+  render({
+    regions,
+    regionGroups = [],
+    selectedIndex,
+    selectedIndices = [],
+    selectionMode,
+    plans,
+    onSelect,
+  }) {
     const selected = regions[selectedIndex] || null;
     this.byId("name").value = selected?.name || "";
     this.byId("ymin").value = formatY(selected?.ymin ?? 0);
@@ -85,18 +95,54 @@ export class RegionPanelRenderer {
       deleteBtn.disabled = !selected;
     }
     this.byId("regions").replaceChildren(
-      ...regions.map((region, index) =>
-        this.createRegionListItem(region, index, selectedIndex, onSelect),
+      ...displayRegionGroups(regions, regionGroups).map((indices) =>
+        this.createRegionListGroup(
+          regions,
+          indices,
+          selectedIndex,
+          selectedIndices,
+          onSelect,
+        ),
       ),
     );
     this.renderPlanInfo(plans, selected);
   }
 
-  createRegionListItem(region, index, selectedIndex, onSelect) {
+  createRegionListGroup(
+    regions,
+    indices,
+    selectedIndex,
+    selectedIndices,
+    onSelect,
+  ) {
+    const selectedSet = new Set(selectedIndices);
+    const group = this.document.createElement("div");
+    group.className = `region-group ${
+      indices.some((index) => selectedSet.has(index)) ? "selected" : ""
+    }`;
+    group.replaceChildren(
+      ...indices.map((index) =>
+        this.createRegionListItem(
+          regions[index],
+          index,
+          selectedIndex,
+          selectedSet,
+          onSelect,
+        ),
+      ),
+    );
+    return group;
+  }
+
+  createRegionListItem(region, index, selectedIndex, selectedSet, onSelect) {
     const item = this.document.createElement("div");
-    item.className = `region ${index === selectedIndex ? "selected" : ""}`;
+    item.className = `region ${selectedSet.has(index) ? "selected" : ""} ${
+      index === selectedIndex ? "primary" : ""
+    }`;
     item.textContent = `${region.name} [${formatY(region.ymin)}, ${formatY(region.ymax)}]`;
-    item.addEventListener("click", () => onSelect(index));
+    item.addEventListener("click", (event) =>
+      onSelect(index, { toggle: event.ctrlKey || event.metaKey }),
+    );
     return item;
   }
 

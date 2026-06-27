@@ -37,6 +37,7 @@ export class RegionMapLoadController {
     this.state.load({
       mapId,
       regions: savedRegions?.regions || [],
+      regionGroups: savedRegions?.region_groups || [],
       plans: savedPlans?.plans || [],
     });
 

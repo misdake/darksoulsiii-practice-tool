@@ -1,6 +1,7 @@
 import * as THREE from "three";
 
 export const SELECTED_COLOR = 0xfacc15;
+export const GROUPED_COLOR = 0xfde68a;
 export const ACTIVE_COLOR = 0x22d3ee;
 export const REGION_COLOR = 0x38bdf8;
 export const VERTEX_COLOR = 0x60a5fa;

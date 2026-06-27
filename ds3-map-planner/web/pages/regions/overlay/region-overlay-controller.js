@@ -3,6 +3,7 @@ import { activeRegions } from "../geometry/region-geometry.js";
 import { disposeObjectTree } from "../../../shared/map-runtime.js";
 import {
   ACTIVE_COLOR,
+  GROUPED_COLOR,
   REGION_COLOR,
   SELECTED_COLOR,
   createRegionOverlayObjects,
@@ -27,16 +28,23 @@ export class RegionOverlayController {
     );
   }
 
-  redraw(regions, selectedIndex) {
+  redraw({
+    regions,
+    selectedIndices = [],
+    groupedIndices = [],
+    primaryIndex = -1,
+  }) {
     this.clearRegionOverlays();
+    const selectedSet = new Set(selectedIndices);
+    const groupedSet = new Set(groupedIndices);
 
     regions.forEach((region, index) => {
       if (region.polygon_xz.length < 3) {
         return;
       }
 
-      this.addRegionOverlay(region, index, selectedIndex);
-      this.addVertexMarkers(region, index, selectedIndex);
+      this.addRegionOverlay(region, index, selectedSet, groupedSet);
+      this.addVertexMarkers(region, index, primaryIndex);
     });
   }
 
@@ -92,8 +100,8 @@ export class RegionOverlayController {
     disposeObjectTree(this.vertexGroup);
   }
 
-  addRegionOverlay(region, index, selectedIndex) {
-    const color = this.regionColor(region, index, selectedIndex);
+  addRegionOverlay(region, index, selectedSet, groupedSet) {
+    const color = this.regionColor(region, index, selectedSet, groupedSet);
     this.regionGroup.add(...createRegionOverlayObjects(region, color));
   }
 
@@ -115,9 +123,12 @@ export class RegionOverlayController {
     }
   }
 
-  regionColor(region, index, selectedIndex) {
-    if (index === selectedIndex) {
+  regionColor(region, index, selectedSet, groupedSet) {
+    if (selectedSet.has(index)) {
       return SELECTED_COLOR;
+    }
+    if (groupedSet.has(index)) {
+      return GROUPED_COLOR;
     }
     return this.active.includes(region) ? ACTIVE_COLOR : REGION_COLOR;
   }

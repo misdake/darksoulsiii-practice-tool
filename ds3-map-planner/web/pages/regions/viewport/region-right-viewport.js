@@ -118,7 +118,10 @@ export class RightRegionViewport {
 
       const regionIndex = pickRegionIndex(raycaster, regionGroup);
       if (regionIndex >= 0) {
-        onRegion(regionIndex, { focusRight: false });
+        onRegion(regionIndex, {
+          focusRight: false,
+          toggle: event?.ctrlKey || event?.metaKey,
+        });
         return true;
       }
     }

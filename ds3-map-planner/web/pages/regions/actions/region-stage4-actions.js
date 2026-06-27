@@ -12,7 +12,11 @@ export class RegionStage4Actions {
     getMapId,
     getRegions,
     setRegions,
+    getRegionGroups,
+    setRegionGroups,
+    groupSelectedRegions,
     getSelectedIndex,
+    getSelectedRegionIndices,
     setSelectedIndex,
     removeSelectedRegion,
     getEditing,
@@ -29,7 +33,11 @@ export class RegionStage4Actions {
     this.getMapId = getMapId;
     this.getRegions = getRegions;
     this.setRegions = setRegions;
+    this.getRegionGroups = getRegionGroups;
+    this.setRegionGroups = setRegionGroups;
+    this.groupSelectedRegions = groupSelectedRegions;
     this.getSelectedIndex = getSelectedIndex;
+    this.getSelectedRegionIndices = getSelectedRegionIndices;
     this.setSelectedIndex = setSelectedIndex;
     this.removeSelectedRegion = removeSelectedRegion;
     this.getEditing = getEditing;
@@ -47,6 +55,7 @@ export class RegionStage4Actions {
       onNew: () => this.createRegion(),
       onEdit: () => this.toggleEditRegion(),
       onDelete: () => this.deleteSelectedRegion(),
+      onGroupRegions: () => this.groupSelectedRegionsAction(),
       onSave: () => this.saveRegions(),
       onClear: () => this.clearRegions(),
       onCalculateRegions: () => this.calculateRegions(),
@@ -93,6 +102,23 @@ export class RegionStage4Actions {
     this.sync();
   }
 
+  groupSelectedRegionsAction() {
+    if (!this.getSelectedRegionIndices().length) {
+      this.setStatus("Select at least one region first.", true);
+      return;
+    }
+    if (!this.groupSelectedRegions()) {
+      this.setStatus("Select at least one region first.", true);
+      return;
+    }
+    this.sync();
+    this.setStatus(
+      this.getSelectedRegionIndices().length > 1
+        ? "Grouped selected regions. Save to persist."
+        : "Region split into its own group. Save to persist.",
+    );
+  }
+
   async saveRegions() {
     this.applyEditorFields();
     const regions = this.getRegions();
@@ -102,7 +128,10 @@ export class RegionStage4Actions {
       return;
     }
 
-    await saveStageData(this.getMapId(), "stage4-map-regions", { regions });
+    await saveStageData(this.getMapId(), "stage4-map-regions", {
+      regions,
+      region_groups: this.getRegionGroups(),
+    });
     this.setStatus("Saved.");
   }
 
@@ -116,6 +145,7 @@ export class RegionStage4Actions {
     }
 
     this.setRegions([]);
+    this.setRegionGroups([]);
     this.setSelectedIndex(-1);
     this.setEditing(false);
     this.missingPoints.clear();
@@ -133,6 +163,7 @@ export class RegionStage4Actions {
 
     const regions = buildAutoRegions(this.navGroup);
     this.setRegions(regions);
+    this.setRegionGroups([]);
     this.setSelectedIndex(regions.length ? 0 : -1);
     this.setEditing(Boolean(regions.length));
     this.sync();

@@ -1,4 +1,5 @@
 import { validateRegions } from "../geometry/region-geometry.js";
+import { regionGroupForIndex } from "./region-state.js";
 
 export class RegionPageSyncController {
   constructor({ state, ui, runtime }) {
@@ -10,7 +11,7 @@ export class RegionPageSyncController {
   }
 
   setRegions(regions) {
-    this.state.regions = Array.isArray(regions) ? regions : [];
+    this.state.setRegions(regions);
   }
 
   setPlans(plans) {
@@ -19,6 +20,10 @@ export class RegionPageSyncController {
 
   setSelectedIndex(index) {
     this.state.select(index);
+  }
+
+  getSelectedRegionIndices() {
+    return [...this.state.selectedIndices];
   }
 
   getSelectedNavmeshes() {
@@ -58,7 +63,22 @@ export class RegionPageSyncController {
   }
 
   redraw() {
-    this.runtime.overlay.redraw(this.state.regions, this.state.selectedIndex);
+    const groupedIndices = new Set();
+    for (const index of this.state.selectedIndices) {
+      for (const groupedIndex of regionGroupForIndex(
+        this.state.regions,
+        this.state.regionGroups,
+        index,
+      )) {
+        groupedIndices.add(groupedIndex);
+      }
+    }
+    this.runtime.overlay.redraw({
+      regions: this.state.regions,
+      selectedIndices: this.state.selectedIndices,
+      groupedIndices: [...groupedIndices],
+      primaryIndex: this.state.selectedIndex,
+    });
   }
 
   updateActiveRegions(position) {
@@ -67,29 +87,38 @@ export class RegionPageSyncController {
       position,
       () => this.redraw(),
     );
-    this.ui.renderActiveRegions(activeRegions);
-    return activeRegions;
+    const expandedRegions = this.expandRegionsToGroups(activeRegions);
+    this.ui.renderActiveRegions(expandedRegions);
+    return expandedRegions;
   }
 
   sync() {
     this.ui.render({
       regions: this.state.regions,
+      regionGroups: this.state.regionGroups,
       selectedIndex: this.state.selectedIndex,
+      selectedIndices: this.state.selectedIndices,
       selectionMode: this.selectionMode,
       plans: this.state.plans,
-      onSelect: (index) => this.selectRegion(index),
+      onSelect: (index, options) => this.selectRegion(index, options),
     });
     this.redraw();
   }
 
-  selectRegion(index, { focusRight = true } = {}) {
+  selectRegion(index, { focusRight = true, toggle = false } = {}) {
     if (this.selectionMode !== "region") {
       return;
     }
     this.clearSelectedNavmesh();
-    this.setSelectedIndex(index);
+    if (toggle) {
+      this.state.toggleSelected(index);
+    } else {
+      this.setSelectedIndex(index);
+    }
     this.state.editing = this.state.selectedIndex >= 0;
-    this.runtime.focusRegion(this.state.selectedRegion, { focusRight });
+    if (this.state.selectedRegion) {
+      this.runtime.focusRegion(this.state.selectedRegion, { focusRight });
+    }
     this.sync();
   }
 
@@ -132,7 +161,9 @@ export class RegionPageSyncController {
   applyEditorFields() {
     const region = this.state.selectedRegion;
     if (!region) return;
+    const oldName = region.name;
     Object.assign(region, this.ui.readEditor());
+    this.state.renameRegion(oldName, region.name);
   }
 
   revertInvalidEdit(region, before) {
@@ -140,5 +171,40 @@ export class RegionPageSyncController {
     region.polygon_xz = before;
     this.ui.status("Invalid polygon edit was reverted.", true);
     return true;
+  }
+
+  expandRegionsToGroups(activeRegions) {
+    const result = [];
+    const names = new Set();
+    const activeNames = new Set(activeRegions.map((region) => region.name));
+    const groupedNames = new Set(
+      this.state.regionGroups.flatMap((group) => group.regions),
+    );
+
+    for (const group of this.state.regionGroups) {
+      if (!group.regions.some((name) => activeNames.has(name))) {
+        continue;
+      }
+      for (const name of group.regions) {
+        const region = this.state.regions.find((item) => item.name === name);
+        if (region && !names.has(region.name)) {
+          names.add(region.name);
+          result.push(region);
+        }
+      }
+    }
+
+    for (const region of activeRegions) {
+      if (!groupedNames.has(region.name) && !names.has(region.name)) {
+        names.add(region.name);
+        result.push(region);
+      }
+    }
+
+    return result.sort(
+      (a, b) =>
+        a.ymin - b.ymin ||
+        this.state.regions.indexOf(a) - this.state.regions.indexOf(b),
+    );
   }
 }
