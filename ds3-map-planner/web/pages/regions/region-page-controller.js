@@ -34,27 +34,36 @@ export class RegionPageController {
         }
       },
       onStageChange: (stage) => {
-        if (stage !== 6) {
-          this.graph.planController.cancel("Camera plan cancelled after leaving Stage 6.", false);
+        if (stage !== 5) {
+          this.graph.planController.cancel("Camera plan cancelled after leaving Stage 5.", false);
         }
         runtime.setStage(stage);
+        if (stage === 5) {
+          syncController.ensureStage5Selection();
+        } else {
+          syncController.setMode(syncController.mode);
+        }
       },
-      onStage4SelectionModeChange: (mode) =>
-        syncController.setSelectionMode(mode),
+      onStage4ModeChange: (mode) => {
+        runtime.setStage4Mode(mode);
+        syncController.setMode(mode);
+      },
       onCollisionVisibleChange: (visible) =>
         runtime.setCollisionVisible(visible),
       onCollisionOpacityInput: (opacity) =>
         runtime.setCollisionOpacity(opacity),
       onNavmeshOpacityInput: (opacity) =>
         runtime.setNavmeshOpacity(opacity),
-      onStage4ShowSelectedRegionOnlyChange: (enabled) =>
-        runtime.setStage4RegionFilterEnabled(enabled),
-      onStage4ShowOutdoorRegionChange: (enabled) =>
-        runtime.setStage4OutdoorRegionEnabled(enabled),
-      onStage5ShowOutdoorRegionChange: (enabled) =>
-        runtime.setStage5OutdoorRegionEnabled(enabled),
-      onSelectStage6Region: (index) =>
-        syncController.selectStage6Region(index, { focusRight: false }),
+      onClipSelectedRegionChange: (enabled) =>
+        runtime.setClipSelectedRegion(enabled),
+      onClipActiveRegionsChange: (enabled) =>
+        runtime.setClipActiveRegions(enabled),
+      onRecordMissingPointsChange: (enabled) =>
+        runtime.setRecordMissingPoints(enabled),
+      onShowOutdoorRegionChange: (enabled) =>
+        runtime.setOutdoorRegionEnabled(enabled),
+      onSelectStage5Region: (index) =>
+        syncController.selectStage5Region(index, { focusRight: false }),
     });
     runtime.createInputRouter(syncController.createInputCallbacks());
     this.window.addEventListener("beforeunload", this.dispose);
@@ -73,7 +82,7 @@ export class RegionPageController {
         : undefined;
       await this.loadMap(mapId);
       const requestedStage = Number(params.get("stage"));
-      if (requestedStage === 4 || requestedStage === 5 || requestedStage === 6) {
+      if (requestedStage === 4 || requestedStage === 5) {
         ui.setActiveStage(requestedStage);
       }
     } catch (error) {
@@ -95,6 +104,11 @@ export class RegionPageController {
     }
     planController.cancel("Camera plan cancelled after map change.", false);
     missingPoints.clear();
+    Object.assign(this.graph.testUiState, {
+      criticalSignature: "",
+      positionSignature: "",
+      lastPositionUpdate: 0,
+    });
     runtime.resetForMapChange();
     const token = ++this.loadToken;
     ui.beginMapLoading(mapId);

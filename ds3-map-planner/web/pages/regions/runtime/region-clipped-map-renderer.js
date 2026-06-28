@@ -5,14 +5,14 @@ import {
 } from "../../../shared/material-state.js";
 import {
   cloneClippedSourceScene,
-  disposeStage5Scene,
+  disposeClippedScene,
   applyRegionBroadPhase,
   syncClippedSourceScene,
-} from "./region-stage5-scene.js";
+} from "./region-clipped-map-scene.js";
 import {
   applyRegionClipping,
   createRegionMask,
-} from "./region-stage5-mask.js";
+} from "./region-clipped-map-mask.js";
 
 export class RegionClippedMapRenderer {
   constructor({
@@ -51,7 +51,7 @@ export class RegionClippedMapRenderer {
   }
 
   rebuild(navGroup, collisionGroup) {
-    disposeStage5Scene(this.scene);
+    disposeClippedScene(this.scene);
     this.scene = cloneClippedSourceScene(navGroup, collisionGroup, {
       includeNavmesh: this.includeNavmesh,
       preserveMaterials: this.preserveMaterials,
@@ -60,7 +60,8 @@ export class RegionClippedMapRenderer {
 
   setPlayerMesh(mesh) {
     if (!mesh) {
-      disposeStage5Scene(this.playerScene);
+      if (!this.playerSourceMesh && !this.playerMesh) return;
+      disposeClippedScene(this.playerScene);
       this.playerScene = createPlayerScene();
       this.playerSourceMesh = null;
       this.playerMesh = null;
@@ -70,7 +71,7 @@ export class RegionClippedMapRenderer {
       this.syncPlayerMesh();
       return;
     }
-    disposeStage5Scene(this.playerScene);
+    disposeClippedScene(this.playerScene);
     this.playerScene = createPlayerScene();
     this.playerSourceMesh = mesh;
     this.playerMesh = clonePlayerVisual(mesh);
@@ -134,9 +135,9 @@ export class RegionClippedMapRenderer {
   }
 
   dispose() {
-    disposeStage5Scene(this.scene);
-    disposeStage5Scene(this.maskScene);
-    disposeStage5Scene(this.playerScene);
+    disposeClippedScene(this.scene);
+    disposeClippedScene(this.maskScene);
+    disposeClippedScene(this.playerScene);
     this.target?.dispose();
     this.copyScene.traverse((object) => object.geometry?.dispose?.());
     this.copyMaterial.dispose();
@@ -223,7 +224,7 @@ export class RegionClippedMapRenderer {
     renderer.setClearColor(0, 0, 0, 0);
     renderer.clear(true, true, true);
 
-    disposeStage5Scene(this.maskScene, { disposeGeometry: true });
+    disposeClippedScene(this.maskScene, { disposeGeometry: true });
     this.maskScene.add(createRegionMask(region));
     renderer.render(this.maskScene, camera);
 
@@ -254,6 +255,7 @@ export class RegionClippedMapRenderer {
     this.playerMesh.position.copy(this.playerSourceMesh.position);
     this.playerMesh.quaternion.copy(this.playerSourceMesh.quaternion);
     this.playerMesh.scale.copy(this.playerSourceMesh.scale);
+    copyMaterialColor(this.playerMesh.material, this.playerSourceMesh.material);
     for (let index = 0; index < this.playerSourceMesh.children.length; index += 1) {
       const sourceChild = this.playerSourceMesh.children[index];
       const cloneChild = this.playerMesh.children[index];
@@ -261,12 +263,12 @@ export class RegionClippedMapRenderer {
       cloneChild.position.copy(sourceChild.position);
       cloneChild.quaternion.copy(sourceChild.quaternion);
       cloneChild.scale.copy(sourceChild.scale);
+      copyMaterialColor(cloneChild.material, sourceChild.material);
     }
     this.playerMesh.updateMatrixWorld(true);
   }
 }
 
-export class RegionStage5MapRenderer extends RegionClippedMapRenderer {}
 
 function createPlayerScene() {
   const scene = new THREE.Scene();
@@ -280,7 +282,7 @@ function createPlayerScene() {
 function clonePlayerVisual(source) {
   const clone = new THREE.Mesh(
     source.geometry,
-    createPlayerMaterial(0x87f5b1),
+    createPlayerMaterial(source.material?.color?.getHex?.() ?? 0x87f5b1),
   );
   clone.userData.kind = source.userData.kind;
   for (const child of source.children) {
@@ -288,7 +290,8 @@ function clonePlayerVisual(source) {
     const childClone = new THREE.Mesh(
       child.geometry,
       createPlayerMaterial(
-        child.userData.kind === "camera-direction" ? 0xfacc15 : 0x87f5b1,
+        child.material?.color?.getHex?.() ??
+          (child.userData.kind === "camera-direction" ? 0xfacc15 : 0x87f5b1),
       ),
     );
     childClone.position.copy(child.position);
@@ -298,6 +301,14 @@ function clonePlayerVisual(source) {
     clone.add(childClone);
   }
   return clone;
+}
+
+function copyMaterialColor(target, source) {
+  const targets = Array.isArray(target) ? target : [target];
+  const sources = Array.isArray(source) ? source : [source];
+  targets.forEach((material, index) => {
+    material?.color?.copy(sources[index]?.color);
+  });
 }
 
 function createPlayerMaterial(color) {

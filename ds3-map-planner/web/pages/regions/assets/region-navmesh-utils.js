@@ -1,8 +1,4 @@
 import * as THREE from "three";
-import {
-  groupSplitsByLayer,
-  occupancyBoundsFromTriangles,
-} from "../geometry/region-geometry.js";
 
 const DEFAULT_REGION_MIN = new THREE.Vector3(-5, 0, -5);
 const DEFAULT_REGION_MAX = new THREE.Vector3(5, 0, 5);
@@ -31,15 +27,6 @@ export function collectNavmeshTriangles(navGroup) {
   return navGroup.children.flatMap((mesh) => trianglesFromMesh(mesh));
 }
 
-export function collectNavmeshSplits(navGroup) {
-  return navGroup.children
-    .map((mesh) => ({
-      key: navmeshSplitKey(mesh),
-      triangles: trianglesFromMesh(mesh),
-    }))
-    .filter((split) => split.triangles.length > 0);
-}
-
 export function createRegionFromMesh(mesh, index) {
   return createRegionFromMeshes([mesh], index);
 }
@@ -57,32 +44,6 @@ export function createRegionFromMeshes(meshes, index) {
   };
 }
 
-export function buildAutoRegions(navGroup) {
-  const regions = [];
-  const splits = collectNavmeshSplits(navGroup);
-  const layers = groupSplitsByLayer(splits);
-
-  for (const layer of layers) {
-    const paddedYmin = roundAutoRegionY(
-      layer.ymin - DEFAULT_REGION_FLOOR_PADDING,
-    );
-    const ymax = roundAutoRegionY(layer.ymax + DEFAULT_REGION_HEIGHT);
-    const triangles = layer.members.flatMap((member) => member.triangles);
-    const polygons = occupancyBoundsFromTriangles(triangles);
-
-    for (const polygon_xz of polygons) {
-      regions.push({
-        name: `Auto region ${regions.length + 1}`,
-        ymin: paddedYmin,
-        ymax,
-        polygon_xz,
-      });
-    }
-  }
-
-  return regions;
-}
-
 function meshVertexAt(position, index, offset) {
   const vertexIndex = index ? index.getX(offset) : offset;
   return [
@@ -90,10 +51,6 @@ function meshVertexAt(position, index, offset) {
     position.getY(vertexIndex),
     position.getZ(vertexIndex),
   ];
-}
-
-function navmeshSplitKey(mesh) {
-  return `${mesh.userData.navPath}::${mesh.userData.segmentIndex}`;
 }
 
 function meshesBoundsOrDefault(meshes) {

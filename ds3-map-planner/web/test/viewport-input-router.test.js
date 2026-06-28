@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ViewportInputRouter } from "../shared/viewport-input-router.js";
+import { LeftRegionEditor } from "../pages/regions/viewport/region-left-editor.js";
 
 test("ViewportInputRouter routes split pointer, drag and keyboard events", () => {
   const element = createEventTarget({
@@ -91,6 +92,39 @@ test("ViewportInputRouter forwards locked mouse movement to active viewport", ()
 
   assert.deepEqual(movement, [7]);
   router.dispose();
+});
+
+test("LeftRegionEditor validates and commits right-click vertex deletion", () => {
+  const region = {
+    polygon_xz: [[0, 0], [2, 0], [2, 2], [0, 2]],
+  };
+  let validated = false;
+  let committed = false;
+  const editor = new LeftRegionEditor({
+    leftCamera: {},
+    raycaster: {
+      setFromCamera() {},
+      intersectObjects: () => [
+        { object: { userData: { regionIndex: 0, vertexIndex: 1 } } },
+      ],
+    },
+    vertexGroup: { children: [] },
+    getSelectedRegion: () => region,
+    getSelectedIndex: () => 0,
+    isEditing: () => true,
+    onInvalid: (candidate, before) => {
+      validated = true;
+      candidate.polygon_xz = before;
+    },
+    onCommit: () => {
+      committed = true;
+    },
+  });
+
+  editor.pointerDown({}, { button: 2, preventDefault() {} });
+  assert.equal(validated, true);
+  assert.equal(committed, true);
+  assert.equal(region.polygon_xz.length, 4);
 });
 
 function createEventTarget(extra = {}) {

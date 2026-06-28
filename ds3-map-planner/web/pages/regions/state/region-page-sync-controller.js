@@ -1,11 +1,6 @@
 import { validateRegions } from "../geometry/region-geometry.js";
 import { regionGroupForIndex } from "./region-state.js";
 
-const OUTDOOR_REGION = Object.freeze({
-  name: "Outdoor",
-  virtualOutdoor: true,
-});
-
 export class RegionPageSyncController {
   constructor({ state, ui, runtime }) {
     this.state = state;
@@ -13,7 +8,7 @@ export class RegionPageSyncController {
     this.runtime = runtime;
     this.onRegionSelectionChange = null;
     this.selectedNavmeshes = [];
-    this.selectionMode = "region";
+    this.mode = "regions";
     this.stage4FilterRegion = null;
   }
 
@@ -38,13 +33,16 @@ export class RegionPageSyncController {
     this.runtime.overlay.renderSelectedNavmeshes([]);
   }
 
-  setSelectionMode(mode) {
+  setMode(mode) {
+    const nextMode = ["navmesh", "regions", "test"].includes(mode)
+      ? mode
+      : "regions";
     if (this.state.selectedRegion) {
       this.stage4FilterRegion = this.state.selectedRegion;
     }
-    this.selectionMode = mode === "navmesh" ? "navmesh" : "region";
-    this.ui.setStage4SelectionMode(this.selectionMode);
-    if (this.selectionMode === "navmesh") {
+    this.mode = nextMode;
+    this.ui.setStage4Mode(this.mode);
+    if (this.mode === "navmesh" || this.mode === "test") {
       this.setSelectedIndex(-1);
     } else {
       this.clearSelectedNavmesh();
@@ -58,25 +56,44 @@ export class RegionPageSyncController {
         this.state.regions[index] || null,
       getSelectedIndex: () => this.state.selectedIndex,
       isEditing: () =>
-        this.selectionMode === "region" && this.state.selectedIndex >= 0,
-      onChange: () => this.sync(),
+        this.mode === "regions" && this.state.selectedIndex >= 0,
+      onPreview: () => this.previewRegionEdit(),
+      onCommit: () => this.sync(),
       onInvalid: (region, before) => this.revertInvalidEdit(region, before),
       onRegion: (index, options) => this.selectRegion(index, options),
-      onStage6Region: (index, options) =>
-        this.selectStage6Region(index, options),
+      onStage5Region: (index, options) =>
+        this.selectStage5Region(index, options),
       onNav: (mesh, options) => this.selectNavmesh(mesh, options),
-      onFocusRegion: (index) => {
-        const region = this.state.regions[index];
-        if (region) this.runtime.focusRegion(region, { focusRight: true });
-      },
-      onFocusNav: (mesh) =>
-        this.runtime.focusNavmeshSelection([mesh], { focusRight: true }),
       onEmpty: () => this.clearCurrentSelection(),
-      getSelectionMode: () => this.selectionMode,
+      getStage4Mode: () => this.mode,
+      getSelectionMode: () => (this.mode === "navmesh" ? "navmesh" : "region"),
     };
   }
 
   redraw() {
+    const groupedIndices = this.groupedSelectionIndices();
+    this.runtime.overlay.redraw({
+      regions: this.state.regions,
+      selectedIndices: this.state.selectedIndices,
+      groupedIndices,
+      primaryIndex: this.state.selectedIndex,
+    });
+    this.runtime.updateRegionFillVisibility();
+  }
+
+  previewRegionEdit() {
+    this.reconcileStage4FilterRegion();
+    this.runtime.setStage4FilterRegion(this.stage4FilterRegion);
+    this.runtime.overlay.redrawRegion({
+      region: this.state.selectedRegion,
+      index: this.state.selectedIndex,
+      selectedIndices: this.state.selectedIndices,
+      groupedIndices: this.groupedSelectionIndices(),
+    });
+    this.runtime.updateRegionFillVisibility();
+  }
+
+  groupedSelectionIndices() {
     const groupedIndices = new Set();
     for (const index of this.state.selectedIndices) {
       for (const groupedIndex of regionGroupForIndex(
@@ -87,13 +104,7 @@ export class RegionPageSyncController {
         groupedIndices.add(groupedIndex);
       }
     }
-    this.runtime.overlay.redraw({
-      regions: this.state.regions,
-      selectedIndices: this.state.selectedIndices,
-      groupedIndices: [...groupedIndices],
-      primaryIndex: this.state.selectedIndex,
-    });
-    this.runtime.updateRegionFillVisibility();
+    return [...groupedIndices];
   }
 
   updateActiveRegions(position) {
@@ -103,11 +114,7 @@ export class RegionPageSyncController {
       () => this.redraw(),
     );
     const expandedRegions = this.expandRegionsToGroups(activeRegions);
-    const logicalRegions = this.runtime.stage5OutdoorRegionEnabled
-      ? [OUTDOOR_REGION, ...expandedRegions]
-      : expandedRegions;
-    this.ui.renderActiveRegions(logicalRegions);
-    return logicalRegions;
+    return expandedRegions;
   }
 
   sync() {
@@ -118,7 +125,7 @@ export class RegionPageSyncController {
       regionGroups: this.state.regionGroups,
       selectedIndex: this.state.selectedIndex,
       selectedIndices: this.state.selectedIndices,
-      selectionMode: this.selectionMode,
+      mode: this.mode,
       plans: this.state.plans,
       onSelect: (index, options) => this.selectRegion(index, options),
     });
@@ -131,7 +138,7 @@ export class RegionPageSyncController {
   }
 
   selectRegion(index, { focusRight = true, toggle = false } = {}) {
-    if (this.selectionMode !== "region") {
+    if (this.mode !== "regions") {
       return;
     }
     this.clearSelectedNavmesh();
@@ -144,7 +151,6 @@ export class RegionPageSyncController {
     if (previousIndex !== this.state.selectedIndex) {
       this.onRegionSelectionChange?.(this.state.selectedRegion);
     }
-    this.state.editing = this.state.selectedIndex >= 0;
     this.stage4FilterRegion = this.state.selectedRegion;
     if (this.state.selectedRegion) {
       this.runtime.focusRegion(this.state.selectedRegion, { focusRight });
@@ -153,7 +159,7 @@ export class RegionPageSyncController {
   }
 
   selectNavmesh(mesh, { toggle = false } = {}) {
-    if (this.selectionMode !== "navmesh") {
+    if (this.mode !== "navmesh") {
       return;
     }
     this.setSelectedIndex(-1);
@@ -178,11 +184,10 @@ export class RegionPageSyncController {
     this.sync();
   }
 
-  selectStage6Region(index, { focusRight = false } = {}) {
+  selectStage5Region(index, { focusRight = false } = {}) {
     const previousIndex = this.state.selectedIndex;
     this.clearSelectedNavmesh();
     this.state.select(index);
-    this.state.editing = false;
     if (previousIndex !== this.state.selectedIndex) {
       this.onRegionSelectionChange?.(this.state.selectedRegion);
     }
@@ -192,11 +197,17 @@ export class RegionPageSyncController {
     this.sync();
   }
 
+  ensureStage5Selection() {
+    if (this.state.selectedIndex < 0 && this.state.regions.length) {
+      this.selectStage5Region(0, { focusRight: false });
+    }
+  }
+
   clearCurrentSelection() {
-    if (this.selectionMode === "navmesh") {
+    if (this.mode === "navmesh") {
       this.clearSelectedNavmesh();
       this.ui.status("No navmesh splits selected.");
-    } else {
+    } else if (this.mode === "regions") {
       this.setSelectedIndex(-1);
       this.stage4FilterRegion = null;
     }
@@ -223,21 +234,12 @@ export class RegionPageSyncController {
   }
 
   reconcileStage4FilterRegion() {
-    if (
-      this.stage4FilterRegion &&
-      this.state.regions.includes(this.stage4FilterRegion)
-    ) {
-      return;
-    }
     this.stage4FilterRegion =
-      this.state.selectedRegion ||
-      this.state.regions.find(
-        (region) => region.name === this.stage4FilterRegion?.name,
-      ) ||
-      null;
+      this.mode === "regions" ? this.state.selectedRegion : null;
   }
 
   revertInvalidEdit(region, before) {
+    if (!region || !Array.isArray(before)) return false;
     if (!validateRegions([region])) return false;
     region.polygon_xz = before;
     this.ui.status("Invalid polygon edit was reverted.", true);

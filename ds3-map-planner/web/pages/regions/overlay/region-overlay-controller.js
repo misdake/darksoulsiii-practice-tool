@@ -50,6 +50,23 @@ export class RegionOverlayController {
     });
   }
 
+  redrawRegion({ region, index, selectedIndices = [], groupedIndices = [] }) {
+    if (!region || index < 0) return;
+    for (const object of [...this.regionGroup.children]) {
+      if (object.userData?.regionIndex !== index) continue;
+      this.regionGroup.remove(object);
+      disposeObjectTree(object);
+    }
+    disposeObjectTree(this.vertexGroup);
+    this.addRegionOverlay(
+      region,
+      index,
+      new Set(selectedIndices),
+      new Set(groupedIndices),
+    );
+    this.addVertexMarkers(region, index, index);
+  }
+
   updateActive(regions, point, onChange) {
     this.active = activeRegions(regions, point);
 
@@ -133,7 +150,9 @@ export class RegionOverlayController {
 
   addRegionOverlay(region, index, selectedSet, groupedSet) {
     const color = this.regionColor(region, index, selectedSet, groupedSet);
-    this.regionGroup.add(...createRegionOverlayObjects(region, color));
+    const objects = createRegionOverlayObjects(region, color);
+    for (const object of objects) object.userData.regionIndex = index;
+    this.regionGroup.add(...objects);
   }
 
   addVertexMarkers(region, regionIndex, selectedIndex) {

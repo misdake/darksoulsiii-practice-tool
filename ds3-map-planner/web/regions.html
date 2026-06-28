@@ -73,6 +73,9 @@
         gap: 8px;
         margin: 10px 0;
       }
+      .mode-tabs.three {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
       .mode-tabs label {
         display: inline-flex;
         align-items: center;
@@ -229,7 +232,7 @@
     <div id="layout">
       <aside>
         <h2>Map Regions</h2>
-        <p class="muted">Stage 4-6 regional workflow</p>
+        <p class="muted">Stage 4-5 regional workflow</p>
         <div class="field">
           <label>Map</label
           ><select id="mapSelect"></select>
@@ -253,11 +256,6 @@
             <label
               ><input type="radio" name="regionStage" value="5" /><span
                 >Stage 5</span
-              ></label
-            >
-            <label
-              ><input type="radio" name="regionStage" value="6" /><span
-                >Stage 6</span
               ></label
             >
           </div>
@@ -305,37 +303,38 @@
             </div>
           </div>
           <section class="stage-panel" data-region-stage-panel="4">
-            <div class="field">
+            <div class="actions">
               <label class="inline-check"
-                ><input id="stage4ShowOutdoorRegion" type="checkbox" checked />
+                ><input id="showOutdoorRegion" type="checkbox" checked />
                 Show outdoor region</label
               >
-            </div>
-            <div class="field">
               <label class="inline-check"
-                ><input id="stage4ShowSelectedRegionOnly" type="checkbox" />
-                Show selected region only</label
+                ><input id="clipSelectedRegion" type="checkbox" />
+                Clip selected region</label
               >
             </div>
             <div id="regionEditor">
-              <div class="mode-tabs">
+              <div class="mode-tabs three">
                 <label
                   ><input
                     type="radio"
-                    name="stage4SelectMode"
-                    value="region"
-                    checked
-                  />Region</label
-                >
-                <label
-                  ><input
-                    type="radio"
-                    name="stage4SelectMode"
+                    name="stage4Mode"
                     value="navmesh"
                   />Navmesh</label
                 >
+                <label
+                  ><input
+                    type="radio"
+                    name="stage4Mode"
+                    value="regions"
+                    checked
+                  />Regions</label
+                >
+                <label
+                  ><input type="radio" name="stage4Mode" value="test" />Test</label
+                >
               </div>
-              <div id="regionFields">
+              <div id="regionManagementFields">
                 <div id="regionSelectionFields">
                   <div class="field">
                     <label>Name</label><input id="name" />
@@ -350,97 +349,92 @@
                       ><input id="ymax" type="number" step="0.01" />
                     </div>
                   </div>
-                  <div class="actions">
-                    <button id="deleteBtn" class="danger">Delete</button>
-                    <button id="groupRegionsBtn">Group selected</button>
-                  </div>
                 </div>
                 <div class="actions">
-                  <button id="calculateRegionsBtn">Calculate regions</button>
+                  <button id="groupRegionsBtn">Group selected</button>
+                  <button id="deleteBtn" class="danger">Delete selected</button>
                 </div>
+                <button id="clearBtn" class="danger">Clear regions</button>
+                <p class="muted">
+                  Click an edge to add a vertex. Drag a selected vertex.
+                  Right-click a vertex to remove it.
+                </p>
               </div>
               <div id="navmeshFields" hidden>
-                <div class="actions">
-                  <button id="newBtn">Region from selected splits</button
-                  ><button id="calculateRegionsBtnNav">Calculate regions</button>
-                </div>
+                <button id="newBtn">Region from selected splits</button>
               </div>
-              <p class="muted">
-                Click in the map to add vertices. Drag a selected vertex.
-                Right-click a vertex to remove it. Invalid polygons are not
-                saved.
-              </p>
-            </div>
-            <div class="actions">
-              <button id="checkBtn">Check coverage</button
-              ><button id="clearBtn" class="danger">Clear regions</button>
+              <div id="regionTestFields" hidden>
+                <div class="field">
+                  <label class="inline-check"
+                    ><input id="clipActiveRegions" type="checkbox" checked />
+                    Clip active regions</label
+                  >
+                </div>
+                <div class="field">
+                  <label class="inline-check"
+                    ><input id="recordMissingPoints" type="checkbox" />
+                    Record outside-region points</label
+                  >
+                </div>
+                <button id="testModeBtn">Enter Third-Person (F)</button>
+                <p id="testPlayerStatus" class="muted">
+                  Player: click collision in the right viewport.
+                </p>
+                <p id="testWarning" class="muted">No runtime warning.</p>
+                <p id="testMissingCount" class="muted">Missing markers: 0</p>
+                <div class="actions">
+                  <button id="recheckMissingBtn">Recheck missing points</button>
+                  <button id="focusMissingBtn">Focus missing point</button>
+                  <button id="clearMissingBtn" class="danger">
+                    Clear missing points
+                  </button>
+                </div>
+                <p id="active" class="muted">No active regions.</p>
+              </div>
             </div>
             <h3>Regions</h3>
             <div id="regions"></div>
             <button id="saveBtn">Save regions</button>
           </section>
           <section class="stage-panel" data-region-stage-panel="5" hidden>
-            <h3>Stage 5 preview</h3>
+            <h3>Stage 5 regional camera plans</h3>
             <div class="field">
-              <label class="inline-check"
-                ><input id="stage5ShowOutdoorRegion" type="checkbox" checked />
-                Show outdoor region</label
-              >
+              <label>Region</label><select id="stage5RegionSelect"></select>
             </div>
-            <button id="stage5ModeBtn">Enter Third-Person (F)</button>
-            <p id="stage5PlayerStatus" class="muted">
-              Player: click collision in the right viewport.
-            </p>
-            <p id="stage5Warning" class="muted">No runtime warning.</p>
-            <p id="stage5MissingCount" class="muted">Missing markers: 0</p>
-            <div class="actions">
-              <button id="recheckMissingBtn">Recheck missing points</button>
-              <button id="focusMissingBtn">Focus missing point</button>
-              <button id="clearMissingBtn" class="danger">
-                Clear missing points
-              </button>
-            </div>
-            <p id="active" class="muted">No active regions.</p>
-          </section>
-          <section class="stage-panel" data-region-stage-panel="6" hidden>
-            <h3>Stage 6 regional camera plans</h3>
-            <div class="field">
-              <label>Region</label><select id="stage6RegionSelect"></select>
-            </div>
-            <fieldset id="stage6ConfigFields">
+            <fieldset id="stage5ConfigFields">
               <div class="actions">
                 <div class="field">
                   <label>Render width</label
-                  ><input id="stage6RenderWidth" type="number" min="64" max="16384" step="1" value="2560" />
+                  ><input id="stage5RenderWidth" type="number" min="64" max="16384" step="1" value="2560" />
                 </div>
                 <div class="field">
                   <label>Render height</label
-                  ><input id="stage6RenderHeight" type="number" min="64" max="16384" step="1" value="1440" />
+                  ><input id="stage5RenderHeight" type="number" min="64" max="16384" step="1" value="1440" />
                 </div>
               </div>
               <div class="actions">
                 <div class="field">
                   <label>Vertical FOV (deg)</label
-                  ><input id="stage6FovDegrees" type="number" min="10" max="170" step="0.1" value="43" />
+                  ><input id="stage5FovDegrees" type="number" min="10" max="170" step="0.1" value="43" />
                 </div>
                 <div class="field">
                   <label>Base ratio (px/unit)</label
-                  ><input id="stage6BaseRatio" type="number" min="1" max="4096" step="1" value="256" />
+                  ><input id="stage5BaseRatio" type="number" min="1" max="4096" step="1" value="256" />
                 </div>
               </div>
               <div class="actions">
                 <div class="field">
                   <label>Density multiplier</label
-                  ><input id="stage6DensityMultiplier" type="number" min="0.1" max="10" step="0.1" value="1" />
+                  ><input id="stage5DensityMultiplier" type="number" min="0.1" max="10" step="0.1" value="1" />
                 </div>
                 <div class="field">
                   <label>Overlap (%)</label
-                  ><input id="stage6OverlapPercent" type="number" min="0" max="90" step="1" value="15" />
+                  ><input id="stage5OverlapPercent" type="number" min="0" max="90" step="1" value="15" />
                 </div>
               </div>
               <div class="field">
                 <label>Y lift</label
-                ><input id="stage6YLift" type="number" min="0" max="100" step="0.1" value="2" />
+                ><input id="stage5YLift" type="number" min="0" max="100" step="0.1" value="2" />
               </div>
               <button id="resetPlanConfigBtn" type="button">Reset defaults</button>
             </fieldset>
@@ -448,13 +442,13 @@
               <button id="calculatePlanBtn">Calculate selected plan</button>
               <button id="cancelPlanBtn" class="danger" hidden>Cancel</button>
             </div>
-            <div class="progress-wrap" id="stage6ProgressWrap" hidden>
+            <div class="progress-wrap" id="stage5ProgressWrap" hidden>
               <div class="progress-head">
-                <span id="stage6ProgressText">idle</span>
-                <span id="stage6ProgressPct">0%</span>
+                <span id="stage5ProgressText">idle</span>
+                <span id="stage5ProgressPct">0%</span>
               </div>
               <div class="progress-bar">
-                <div class="progress-fill" id="stage6ProgressFill"></div>
+                <div class="progress-fill" id="stage5ProgressFill"></div>
               </div>
             </div>
             <pre id="planInfo" class="muted">No regional camera plan.</pre>

@@ -6,8 +6,10 @@ const FREE_CAMERA_SPEED = 32;
 const FREE_CAMERA_SPRINT = 3.2;
 const PLAYER_PLACE_HEIGHT = 1.2;
 const CAMERA_ARROW_HEIGHT = 0.72;
+const FREE_PLAYER_COLOR = 0x87f5b1;
+const THIRD_PERSON_PLAYER_COLOR = 0xfb923c;
 
-export class RegionStage5Controller {
+export class RegionTestController {
   constructor({ renderer, scene, camera, collisionGroup, runtime, setStatus }) {
     this.renderer = renderer;
     this.scene = scene;
@@ -25,6 +27,8 @@ export class RegionStage5Controller {
     this.lastX = 0;
     this.lastY = 0;
     this.dragMoved = false;
+    this.playerVisualMode = null;
+    this.playerVisualMesh = null;
     this.physics = new PhysicsSystem();
     this.thirdPerson = new ThirdPersonControllerSystem();
     this.controls = {
@@ -63,6 +67,7 @@ export class RegionStage5Controller {
       controls: this.controls,
       collisionGroup: this.collisionGroup,
       runtime: this.runtime,
+      playerReady: this.playerReady,
       setStatus: this.setStatus,
     };
   }
@@ -71,6 +76,7 @@ export class RegionStage5Controller {
     if (this.active) return;
     this.active = true;
     this.mode = "free";
+    this.updatePlayerModeVisual();
     this.physics.enter(this.context());
     this.exitThirdPerson();
   }
@@ -86,6 +92,7 @@ export class RegionStage5Controller {
   rebuildPhysics() {
     if (!this.active) return;
     this.physics.ensureInitialized().then(() => {
+      if (!this.active) return;
       this.physics.rebuildFromCollision(this.context());
       this.physics.ensurePlayerBody(this.context());
     });
@@ -95,7 +102,7 @@ export class RegionStage5Controller {
     const nextMode = mode === "thirdPerson" ? "thirdPerson" : "free";
     if (nextMode === this.mode) return;
     if (nextMode === "thirdPerson" && !this.playerReady) {
-      this.setStatus?.("Click collision in Stage 5 free camera first.", true);
+      this.setStatus?.("Click collision in Test free camera first.", true);
       return;
     }
     this.mode = nextMode;
@@ -104,6 +111,7 @@ export class RegionStage5Controller {
     } else {
       this.exitThirdPerson();
     }
+    this.updatePlayerModeVisual();
   }
 
   toggleMode() {
@@ -128,6 +136,7 @@ export class RegionStage5Controller {
     } else {
       this.updateFreeCamera(dt);
     }
+    this.updatePlayerModeVisual();
     this.updateCameraDirectionVisual();
   }
 
@@ -315,7 +324,7 @@ export class RegionStage5Controller {
   updateCameraDirectionVisual() {
     const player = this.physics.playerDebugMesh;
     if (!player) return;
-    let arrow = player.getObjectByName("stage5-camera-direction");
+    let arrow = player.getObjectByName("test-camera-direction");
     if (!arrow) {
       arrow = new THREE.Mesh(
         new THREE.ConeGeometry(0.18, 0.72, 12),
@@ -325,7 +334,7 @@ export class RegionStage5Controller {
           opacity: 1,
         }),
       );
-      arrow.name = "stage5-camera-direction";
+      arrow.name = "test-camera-direction";
       arrow.userData.kind = "camera-direction";
       player.add(arrow);
     }
@@ -340,6 +349,26 @@ export class RegionStage5Controller {
       new THREE.Vector3(0, 1, 0),
       direction,
     );
+  }
+
+  updatePlayerModeVisual() {
+    const player = this.physics.playerDebugMesh;
+    if (!player) return;
+    if (this.playerVisualMesh === player && this.playerVisualMode === this.mode) {
+      return;
+    }
+    const color =
+      this.mode === "thirdPerson"
+        ? THIRD_PERSON_PLAYER_COLOR
+        : FREE_PLAYER_COLOR;
+    const materials = Array.isArray(player.material)
+      ? player.material
+      : [player.material];
+    for (const material of materials) {
+      material?.color?.setHex(color);
+    }
+    this.playerVisualMesh = player;
+    this.playerVisualMode = this.mode;
   }
 }
 

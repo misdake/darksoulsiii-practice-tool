@@ -4,14 +4,22 @@ import { RegionMissingPointsController } from "../state/region-missing-points-co
 import { RegionPageSyncController } from "../state/region-page-sync-controller.js";
 import { RegionPlanController } from "../planning/region-plan-controller.js";
 import { RegionRuntimeController } from "../runtime/region-runtime-controller.js";
-import { shouldRecordStage5Missing } from "../runtime/region-stage5-state.js";
+import { shouldRecordTestMissing } from "../runtime/region-test-state.js";
 import { RegionState } from "../state/region-state.js";
 import { RegionUiController } from "../ui/region-ui-controller.js";
 
 export function createRegionControllerGraph({ document, window, navigateBack }) {
   const ui = new RegionUiController(document);
   const state = new RegionState();
-  const graph = { ui, state };
+  const graph = {
+    ui,
+    state,
+    testUiState: {
+      criticalSignature: "",
+      positionSignature: "",
+      lastPositionUpdate: 0,
+    },
+  };
   const runtime = new RegionRuntimeController({
     window,
     document,
@@ -35,13 +43,18 @@ export function createRegionControllerGraph({ document, window, navigateBack }) 
   return graph;
 }
 
-function updateFrameRegions({ missingPoints, runtime, syncController, ui }, position) {
-  const activeRegions = syncController.updateActiveRegions(position);
-  const snapshot = runtime.stage5Snapshot();
-  if (runtime.stage === 5) {
+function updateFrameRegions(graph, position) {
+  const { missingPoints, runtime, syncController } = graph;
+  const snapshot = runtime.testSnapshot();
+  if (runtime.stage === 4 && runtime.stage4Mode === "test") {
+    const activeRegions = snapshot.playerReady
+      ? syncController.updateActiveRegions(position)
+      : [];
     if (
-      shouldRecordStage5Missing({
+      shouldRecordTestMissing({
         stage: runtime.stage,
+        stage4Mode: runtime.stage4Mode,
+        enabled: runtime.recordMissingPoints,
         mode: snapshot.mode,
         playerReady: snapshot.playerReady,
         paused: snapshot.paused,
@@ -50,7 +63,7 @@ function updateFrameRegions({ missingPoints, runtime, syncController, ui }, posi
     ) {
       missingPoints.record(position);
     }
-    ui.setStage5Status({
+    presentTestStatus(graph, {
       activeRegions,
       missingCount: missingPoints.size,
       mode: snapshot.mode,
@@ -67,8 +80,35 @@ function updateFrameRegions({ missingPoints, runtime, syncController, ui }, posi
         !snapshot.paused &&
         activeRegions.length === 0,
     });
+    return activeRegions;
   }
-  return activeRegions;
+  return [];
+}
+
+function presentTestStatus(graph, status) {
+  const criticalSignature = JSON.stringify({
+    active: status.activeRegions.map((region) => region.name),
+    missingCount: status.missingCount,
+    mode: status.mode,
+    paused: status.paused,
+    playerReady: status.playerReady,
+    warning: status.warning,
+  });
+  const positionSignature = status.playerPosition
+    .map((value) => Number(value).toFixed(2))
+    .join(",");
+  const now = Date.now();
+  const criticalChanged =
+    criticalSignature !== graph.testUiState.criticalSignature;
+  const positionDue =
+    positionSignature !== graph.testUiState.positionSignature &&
+    now - graph.testUiState.lastPositionUpdate >= 100;
+  if (!criticalChanged && !positionDue) return;
+
+  graph.testUiState.criticalSignature = criticalSignature;
+  graph.testUiState.positionSignature = positionSignature;
+  graph.testUiState.lastPositionUpdate = now;
+  graph.ui.setTestStatus(status);
 }
 
 function createMapLoadController({ runtime, state, ui }) {
@@ -94,8 +134,8 @@ function createPlanController({ runtime, state, syncController, ui }) {
     state,
     navGroup: runtime.navGroup,
     setStatus: ui.status,
-    setPlanning: (planning) => ui.setStage6Planning(planning),
-    setProgress: (progress) => ui.setStage6Progress(progress),
+    setPlanning: (planning) => ui.setStage5Planning(planning),
+    setProgress: (progress) => ui.setStage5Progress(progress),
     sync: () => syncController.sync(),
   });
 }
@@ -111,7 +151,6 @@ function createActionsController(graph, navigateBack) {
   } = graph;
 
   return new RegionActionsController({
-    navGroup: runtime.navGroup,
     missingPoints,
     planController,
     getMapId: () => state.mapId,
@@ -124,22 +163,20 @@ function createActionsController(graph, navigateBack) {
     getSelectedRegionIndices: () => syncController.getSelectedRegionIndices(),
     setSelectedIndex: (value) => syncController.setSelectedIndex(value),
     removeSelectedRegion: () => state.removeSelected(),
-    setEditing: (value) => {
-      state.editing = Boolean(value) && state.selectedIndex >= 0;
-      syncController.sync();
+    setSelectionMode: (mode) => {
+      runtime.setStage4Mode(mode);
+      syncController.setMode(mode);
     },
-    setSelectionMode: (mode) => syncController.setSelectionMode(mode),
     getSelectedNavmeshes: () => syncController.getSelectedNavmeshes(),
     getPlans: () => state.plans,
     confirm: (message) => ui.confirm(message),
     setStatus: ui.status,
     sync: () => syncController.sync(),
     applyEditorFields: () => syncController.applyEditorFields(),
-    getPlanConfig: () => ui.readStage6Config(),
-    resetPlanConfig: () => ui.resetStage6Config(),
+    getPlanConfig: () => ui.readStage5Config(),
+    resetPlanConfig: () => ui.resetStage5Config(),
     focusGamePoint: (point) => runtime.focusGamePoint(point),
-    toggleStage5Mode: () => runtime.toggleStage5Mode(),
-    isStage5OutdoorRegionEnabled: () => runtime.stage5OutdoorRegionEnabled,
+    toggleTestCameraMode: () => runtime.toggleTestCameraMode(),
     navigateBack,
   });
 }

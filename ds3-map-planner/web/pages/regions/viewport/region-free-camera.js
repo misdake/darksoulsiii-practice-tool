@@ -20,15 +20,20 @@ export class RegionFreeCamera {
     this.camera.userData.target.set(center.x, center.y, center.z);
   }
 
-  focusBounds(center, radius) {
-    const distance = Math.max(20, radius * 1.8);
-    this.camera.position.set(
-      center.x + distance,
-      center.y + distance * 0.8,
-      center.z + distance,
+  focusBounds(center, maxExtent) {
+    const radius = Math.max(1, Number(maxExtent) * 0.5 || 1);
+    const verticalHalfFov = THREE.MathUtils.degToRad(this.camera.fov) * 0.5;
+    const horizontalHalfFov = Math.atan(
+      Math.tan(verticalHalfFov) * Math.max(1e-6, this.camera.aspect),
     );
+    const limitingHalfFov = Math.min(verticalHalfFov, horizontalHalfFov);
+    const distance = Math.max(20, (radius / Math.sin(limitingHalfFov)) * 1.15);
+    const direction = new THREE.Vector3(1, 0.8, 1).normalize();
+    this.camera.position.copy(center).addScaledVector(direction, distance);
     this.camera.lookAt(center.x, center.y, center.z);
     this.camera.userData.target.copy(center);
+    this.camera.far = Math.max(1000, distance + radius * 4);
+    this.camera.updateProjectionMatrix();
   }
 
   update(dt) {

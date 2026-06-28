@@ -19,6 +19,7 @@ export class PhysicsSystem {
     this.worldBodies = [];
     this.worldColliders = [];
     this.playerDebugMesh = null;
+    this.activationId = 0;
   }
 
   async ensureInitialized() {
@@ -138,10 +139,18 @@ export class PhysicsSystem {
 
   enter(ctx) {
     this.active = true;
+    const activationId = ++this.activationId;
+    const savedPosition = ctx.playerReady
+      ? ctx.runtime.physicsState.position.clone()
+      : null;
     this.ensureInitialized()
       .then(() => {
+        if (!this.active || activationId !== this.activationId) return;
         this.rebuildFromCollision(ctx);
         this.ensurePlayerBody(ctx);
+        if (savedPosition) {
+          this.setPlayerPosition(ctx, savedPosition);
+        }
       })
       .catch((error) =>
         ctx.setStatus?.(`rapier init failed: ${error.message || error}`, true),
@@ -150,6 +159,7 @@ export class PhysicsSystem {
 
   exit() {
     this.active = false;
+    this.activationId += 1;
     if (this.playerDebugMesh) {
       this.playerDebugMesh.visible = false;
     }

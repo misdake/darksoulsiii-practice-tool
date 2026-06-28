@@ -1,13 +1,9 @@
 import { saveStageData } from "../../../shared/map-api.js";
 import { validateRegions } from "../geometry/region-geometry.js";
-import {
-  buildAutoRegions,
-  createRegionFromMeshes,
-} from "../assets/region-navmesh-utils.js";
+import { createRegionFromMeshes } from "../assets/region-navmesh-utils.js";
 
 export class RegionStage4Actions {
   constructor({
-    navGroup,
     missingPoints,
     getMapId,
     getRegions,
@@ -19,7 +15,6 @@ export class RegionStage4Actions {
     getSelectedRegionIndices,
     setSelectedIndex,
     removeSelectedRegion,
-    setEditing,
     setSelectionMode,
     getSelectedNavmeshes,
     confirm,
@@ -27,7 +22,6 @@ export class RegionStage4Actions {
     sync,
     applyEditorFields,
   }) {
-    this.navGroup = navGroup;
     this.missingPoints = missingPoints;
     this.getMapId = getMapId;
     this.getRegions = getRegions;
@@ -39,7 +33,6 @@ export class RegionStage4Actions {
     this.getSelectedRegionIndices = getSelectedRegionIndices;
     this.setSelectedIndex = setSelectedIndex;
     this.removeSelectedRegion = removeSelectedRegion;
-    this.setEditing = setEditing;
     this.setSelectionMode = setSelectionMode;
     this.getSelectedNavmeshes = getSelectedNavmeshes;
     this.confirm = confirm;
@@ -55,7 +48,6 @@ export class RegionStage4Actions {
       onGroupRegions: () => this.groupSelectedRegionsAction(),
       onSave: () => this.saveRegions(),
       onClear: () => this.clearRegions(),
-      onCalculateRegions: () => this.calculateRegions(),
       onEditorChange: () => this.applyEditorChange(),
     };
   }
@@ -72,9 +64,8 @@ export class RegionStage4Actions {
 
     const regions = this.getRegions();
     regions.push(createRegionFromMeshes(selectedNavmeshes, regions.length));
-    this.setSelectionMode("region");
+    this.setSelectionMode("regions");
     this.setSelectedIndex(regions.length - 1);
-    this.setEditing(true);
     this.sync();
   }
 
@@ -84,10 +75,7 @@ export class RegionStage4Actions {
       return;
     }
 
-    this.setSelectedIndex(selected);
     this.removeSelectedRegion();
-    this.setSelectedIndex(this.getSelectedIndex());
-    this.setEditing(false);
     this.sync();
   }
 
@@ -143,27 +131,9 @@ export class RegionStage4Actions {
     this.setRegions([]);
     this.setRegionGroups([]);
     this.setSelectedIndex(-1);
-    this.setEditing(false);
     this.missingPoints.clear();
     this.sync();
     this.setStatus("Regions cleared. Save to persist the change.");
-  }
-
-  async calculateRegions() {
-    if (
-      this.getRegions().length &&
-      !(await this.confirm("Replace all unsaved map regions?"))
-    ) {
-      return;
-    }
-
-    const regions = buildAutoRegions(this.navGroup);
-    this.setRegions(regions);
-    this.setRegionGroups([]);
-    this.setSelectedIndex(regions.length ? 0 : -1);
-    this.setEditing(Boolean(regions.length));
-    this.sync();
-    this.setStatus(`Calculated ${regions.length} regions. Save to persist.`);
   }
 
   applyEditorChange() {

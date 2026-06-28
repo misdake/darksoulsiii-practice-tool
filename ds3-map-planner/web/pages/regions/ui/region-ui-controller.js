@@ -18,16 +18,16 @@ export class RegionUiController {
     this.collisionOpacityValue = this.byId("collisionOpacityValue");
     this.navmeshOpacity = this.byId("navmeshOpacity");
     this.navmeshOpacityValue = this.byId("navmeshOpacityValue");
-    this.stage4ShowOutdoorRegion = this.byId("stage4ShowOutdoorRegion");
-    this.stage5ShowOutdoorRegion = this.byId("stage5ShowOutdoorRegion");
-    this.stage4ShowSelectedRegionOnly = this.byId(
-      "stage4ShowSelectedRegionOnly",
+    this.showOutdoorRegion = this.byId("showOutdoorRegion");
+    this.clipSelectedRegion = this.byId("clipSelectedRegion");
+    this.clipActiveRegions = this.byId("clipActiveRegions");
+    this.recordMissingPoints = this.byId("recordMissingPoints");
+    this.stage4ModeRadios = Array.from(
+      document.querySelectorAll('input[name="stage4Mode"]'),
     );
-    this.stage4SelectionModeRadios = Array.from(
-      document.querySelectorAll('input[name="stage4SelectMode"]'),
-    );
-    this.regionFields = this.byId("regionFields");
+    this.regionManagementFields = this.byId("regionManagementFields");
     this.navmeshFields = this.byId("navmeshFields");
+    this.regionTestFields = this.byId("regionTestFields");
     this.status = createStatusReporter(this.byId("status"));
     this.confirmDialog = new RegionConfirmDialog(this.byId);
     this.panelRenderer = new RegionPanelRenderer({
@@ -103,26 +103,25 @@ export class RegionUiController {
     onCalculatePlan,
     onCancelPlan,
     onResetPlanConfig,
-    onSelectStage6Region,
+    onSelectStage5Region,
     onSavePlans,
     onClear,
-    onCalculateRegions,
     onEditorChange,
-    onCheckCoverage,
-    onToggleStage5Mode,
+    onToggleTestCameraMode,
     onRecheckMissing,
     onFocusMissing,
     onClearMissing,
     onBack,
     onFitCamera,
     onStageChange,
-    onStage4SelectionModeChange,
+    onStage4ModeChange,
     onCollisionVisibleChange,
     onCollisionOpacityInput,
     onNavmeshOpacityInput,
-    onStage4ShowSelectedRegionOnlyChange,
-    onStage4ShowOutdoorRegionChange,
-    onStage5ShowOutdoorRegionChange,
+    onClipSelectedRegionChange,
+    onClipActiveRegionsChange,
+    onRecordMissingPointsChange,
+    onShowOutdoorRegionChange,
   }) {
     this.onStageChange = onStageChange;
     for (const radio of this.stageRadios) {
@@ -137,31 +136,20 @@ export class RegionUiController {
     this.addListener(this.byId("calculatePlanBtn"), "click", onCalculatePlan);
     this.addListener(this.byId("cancelPlanBtn"), "click", onCancelPlan);
     this.addListener(this.byId("resetPlanConfigBtn"), "click", onResetPlanConfig);
-    this.addListener(this.byId("stage6RegionSelect"), "change", () =>
-      onSelectStage6Region?.(Number(this.byId("stage6RegionSelect").value)),
+    this.addListener(this.byId("stage5RegionSelect"), "change", () =>
+      onSelectStage5Region?.(Number(this.byId("stage5RegionSelect").value)),
     );
     this.addListener(this.byId("savePlansBtn"), "click", onSavePlans);
     this.addListener(this.byId("clearBtn"), "click", onClear);
-    this.addListener(
-      this.byId("calculateRegionsBtn"),
-      "click",
-      onCalculateRegions,
-    );
-    this.addListener(
-      this.byId("calculateRegionsBtnNav"),
-      "click",
-      onCalculateRegions,
-    );
-    for (const radio of this.stage4SelectionModeRadios) {
+    for (const radio of this.stage4ModeRadios) {
       this.addListener(radio, "change", () => {
         if (radio.checked) {
-          this.setStage4SelectionMode(radio.value);
-          onStage4SelectionModeChange?.(radio.value);
+          this.setStage4Mode(radio.value);
+          onStage4ModeChange?.(radio.value);
         }
       });
     }
-    this.addListener(this.byId("checkBtn"), "click", onCheckCoverage);
-    this.addListener(this.byId("stage5ModeBtn"), "click", onToggleStage5Mode);
+    this.addListener(this.byId("testModeBtn"), "click", onToggleTestCameraMode);
     this.addListener(this.byId("recheckMissingBtn"), "click", onRecheckMissing);
     this.addListener(this.byId("focusMissingBtn"), "click", onFocusMissing);
     this.addListener(this.byId("clearMissingBtn"), "click", onClearMissing);
@@ -180,27 +168,24 @@ export class RegionUiController {
       this.setNavmeshOpacity(opacity);
       onNavmeshOpacityInput?.(opacity);
     });
-    this.addListener(this.stage4ShowSelectedRegionOnly, "change", () =>
-      onStage4ShowSelectedRegionOnlyChange?.(
-        this.stage4ShowSelectedRegionOnly.checked,
-      ),
+    this.addListener(this.clipSelectedRegion, "change", () =>
+      onClipSelectedRegionChange?.(this.clipSelectedRegion.checked),
     );
-    this.addListener(this.stage4ShowOutdoorRegion, "change", () =>
-      onStage4ShowOutdoorRegionChange?.(
-        this.stage4ShowOutdoorRegion.checked,
-      ),
+    this.addListener(this.clipActiveRegions, "change", () =>
+      onClipActiveRegionsChange?.(this.clipActiveRegions.checked),
     );
-    this.addListener(this.stage5ShowOutdoorRegion, "change", () =>
-      onStage5ShowOutdoorRegionChange?.(
-        this.stage5ShowOutdoorRegion.checked,
-      ),
+    this.addListener(this.recordMissingPoints, "change", () =>
+      onRecordMissingPointsChange?.(this.recordMissingPoints.checked),
+    );
+    this.addListener(this.showOutdoorRegion, "change", () =>
+      onShowOutdoorRegionChange?.(this.showOutdoorRegion.checked),
     );
     for (const id of ["name", "ymin", "ymax"]) {
       this.addListener(this.byId(id), "change", onEditorChange);
     }
     this.setActiveStage(this.currentStage());
-    this.setStage4SelectionMode(this.stage4SelectionMode());
-    onStage4SelectionModeChange?.(this.stage4SelectionMode());
+    this.setStage4Mode(this.stage4Mode());
+    onStage4ModeChange?.(this.stage4Mode());
     onCollisionVisibleChange?.(this.showCollision?.checked ?? true);
     const initialOpacity = Number(this.collisionOpacity?.value);
     this.setCollisionOpacity(initialOpacity);
@@ -208,15 +193,10 @@ export class RegionUiController {
     const initialNavmeshOpacity = Number(this.navmeshOpacity?.value);
     this.setNavmeshOpacity(initialNavmeshOpacity);
     onNavmeshOpacityInput?.(initialNavmeshOpacity);
-    onStage4ShowSelectedRegionOnlyChange?.(
-      this.stage4ShowSelectedRegionOnly?.checked ?? false,
-    );
-    onStage4ShowOutdoorRegionChange?.(
-      this.stage4ShowOutdoorRegion?.checked ?? true,
-    );
-    onStage5ShowOutdoorRegionChange?.(
-      this.stage5ShowOutdoorRegion?.checked ?? true,
-    );
+    onClipSelectedRegionChange?.(this.clipSelectedRegion?.checked ?? false);
+    onClipActiveRegionsChange?.(this.clipActiveRegions?.checked ?? true);
+    onRecordMissingPointsChange?.(this.recordMissingPoints?.checked ?? false);
+    onShowOutdoorRegionChange?.(this.showOutdoorRegion?.checked ?? true);
   }
 
   currentStage() {
@@ -224,24 +204,27 @@ export class RegionUiController {
     return Number(checked?.value) || 4;
   }
 
-  stage4SelectionMode() {
-    const checked = this.stage4SelectionModeRadios.find(
+  stage4Mode() {
+    const checked = this.stage4ModeRadios.find(
       (radio) => radio.checked,
     );
-    return checked?.value === "navmesh" ? "navmesh" : "region";
+    return ["navmesh", "regions", "test"].includes(checked?.value)
+      ? checked.value
+      : "regions";
   }
 
-  setStage4SelectionMode(mode) {
-    const selectedMode = mode === "navmesh" ? "navmesh" : "region";
-    for (const radio of this.stage4SelectionModeRadios) {
+  setStage4Mode(mode) {
+    const selectedMode = ["navmesh", "regions", "test"].includes(mode)
+      ? mode
+      : "regions";
+    for (const radio of this.stage4ModeRadios) {
       radio.checked = radio.value === selectedMode;
     }
-    if (this.regionFields) {
-      this.regionFields.hidden = selectedMode !== "region";
-    }
+    this.regionManagementFields.hidden = selectedMode !== "regions";
     if (this.navmeshFields) {
       this.navmeshFields.hidden = selectedMode !== "navmesh";
     }
+    this.regionTestFields.hidden = selectedMode !== "test";
   }
 
   setActiveStage(stage) {
@@ -253,7 +236,7 @@ export class RegionUiController {
       panel.hidden =
         Number(panel.getAttribute("data-region-stage-panel")) !== activeStage;
     }
-    this.sharedMapDisplayControls.hidden = activeStage === 6;
+    this.sharedMapDisplayControls.hidden = activeStage === 5;
     this.onStageChange?.(activeStage);
   }
 
@@ -261,16 +244,16 @@ export class RegionUiController {
     this.byId("calculatePlanBtn").disabled = Boolean(disabled);
   }
 
-  setStage6Planning(planning) {
+  setStage5Planning(planning) {
     const active = Boolean(planning);
     this.byId("calculatePlanBtn").disabled = active;
     this.byId("savePlansBtn").disabled = active;
     this.byId("cancelPlanBtn").hidden = !active;
-    this.byId("stage6ProgressWrap").hidden = !active;
-    this.byId("stage6ConfigFields").disabled = active;
+    this.byId("stage5ProgressWrap").hidden = !active;
+    this.byId("stage5ConfigFields").disabled = active;
   }
 
-  setStage6Progress({ phase, processed = 0, total = 0, ratio = 0 } = {}) {
+  setStage5Progress({ phase, processed = 0, total = 0, ratio = 0 } = {}) {
     const phaseRanges = {
       target_geometry: [0, 0.1],
       worker_candidates: [0.1, 0.25],
@@ -288,18 +271,18 @@ export class RegionUiController {
       local_replenishment: "Replenishing uncovered areas",
       coverage_summary: "Summarizing coverage",
     };
-    this.byId("stage6ProgressText").textContent =
+    this.byId("stage5ProgressText").textContent =
       `${labels[phase] || "Calculating"} ${processed}/${total}`;
-    this.byId("stage6ProgressPct").textContent = `${Math.round(value * 100)}%`;
-    this.byId("stage6ProgressFill").style.width = `${value * 100}%`;
+    this.byId("stage5ProgressPct").textContent = `${Math.round(value * 100)}%`;
+    this.byId("stage5ProgressFill").style.width = `${value * 100}%`;
   }
 
-  readStage6Config() {
-    return this.panelRenderer.readStage6Config();
+  readStage5Config() {
+    return this.panelRenderer.readStage5Config();
   }
 
-  resetStage6Config() {
-    this.panelRenderer.setStage6Config();
+  resetStage5Config() {
+    this.panelRenderer.setStage5Config();
   }
 
   setCollisionOpacity(opacity) {
@@ -318,8 +301,8 @@ export class RegionUiController {
     this.panelRenderer.renderActiveRegions(regions);
   }
 
-  setStage5Status(status) {
-    this.panelRenderer.renderStage5Status(status);
+  setTestStatus(status) {
+    this.panelRenderer.renderTestStatus(status);
   }
 
   readEditor() {

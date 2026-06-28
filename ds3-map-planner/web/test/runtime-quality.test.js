@@ -4,16 +4,17 @@ import * as THREE from "three";
 import { normalizeStaticMeshData } from "../shared/map-runtime.js";
 import { RegionMapLoadController } from "../pages/regions/map/region-map-load-controller.js";
 import { RegionPlanController } from "../pages/regions/planning/region-plan-controller.js";
+import { RegionFreeCamera } from "../pages/regions/viewport/region-free-camera.js";
 import {
   applyRegionBroadPhase,
-  cloneStage5SourceScene,
-  disposeStage5Scene,
-} from "../pages/regions/runtime/region-stage5-scene.js";
-import { RegionStage5MapRenderer } from "../pages/regions/runtime/region-clipped-map-renderer.js";
-import { shouldRecordStage5Missing } from "../pages/regions/runtime/region-stage5-state.js";
+  cloneClippedSourceScene,
+  disposeClippedScene,
+} from "../pages/regions/runtime/region-clipped-map-scene.js";
+import { RegionClippedMapRenderer } from "../pages/regions/runtime/region-clipped-map-renderer.js";
+import { shouldRecordTestMissing } from "../pages/regions/runtime/region-test-state.js";
 import { saveStageData } from "../shared/map-api.js";
 
-test("Stage5 left player visual clones and updates the camera direction arrow", () => {
+test("regional viewport framing and Test player visuals stay synchronized", () => {
   const source = new THREE.Mesh(
     new THREE.CapsuleGeometry(0.3, 0.96),
     new THREE.MeshBasicMaterial(),
@@ -34,10 +35,13 @@ test("Stage5 left player visual clones and updates the camera direction arrow", 
   navGroup.add(nav);
   collisionGroup.add(collision);
 
-  const renderer = new RegionStage5MapRenderer({
+  const renderer = new RegionClippedMapRenderer({
     includeNavmesh: true,
     manageCollisionDisplay: true,
   });
+  const emptyPlayerScene = renderer.playerScene;
+  renderer.setPlayerMesh(null);
+  assert.equal(renderer.playerScene, emptyPlayerScene);
   renderer.rebuild(navGroup, collisionGroup);
   renderer.setCollisionDisplay(false, 0.4);
   renderer.setNavmeshOpacity(0.6);
@@ -64,8 +68,16 @@ test("Stage5 left player visual clones and updates the camera direction arrow", 
   assert.equal(renderer.playerMesh.children[0].material.transparent, false);
 
   arrow.position.set(2, 3, 4);
+  source.material.color.setHex(0xfb923c);
   renderer.setPlayerMesh(source);
   assert.deepEqual(renderer.playerMesh.children[0].position.toArray(), [2, 3, 4]);
+  assert.equal(renderer.playerMesh.material.color.getHex(), 0xfb923c);
+
+  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
+  camera.userData.target = new THREE.Vector3();
+  new RegionFreeCamera(camera).focusBounds(new THREE.Vector3(), 4000);
+  assert.ok(camera.far > camera.position.length());
+
   renderer.dispose();
   source.geometry.dispose();
   source.material.dispose();
@@ -89,13 +101,13 @@ test("stage saves accept an empty successful response", async () => {
   }
 });
 
-test("Stage5 broad phase hides collision outside the active region prism", () => {
+test("Clipped map broad phase hides collision outside the active region prism", () => {
   const source = new THREE.Group();
   const near = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
   const far = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
   far.position.set(20, 0, 20);
   source.add(near, far);
-  const scene = cloneStage5SourceScene(null, source);
+  const scene = cloneClippedSourceScene(null, source);
 
   applyRegionBroadPhase(scene, {
     ymin: -2,
@@ -109,7 +121,7 @@ test("Stage5 broad phase hides collision outside the active region prism", () =>
   assert.equal(clones[0].visible, true);
   assert.equal(clones[1].visible, false);
 
-  disposeStage5Scene(scene);
+  disposeClippedScene(scene);
   near.geometry.dispose();
   far.geometry.dispose();
 });
@@ -253,10 +265,12 @@ test("RegionPlanController drops stale and cancelled calculation results", async
   assert.deepEqual(cancelState.plans, []);
 });
 
-test("Stage5 missing markers record only for active third-person player leaks", () => {
+test("Test missing markers require the enabled third-person leak state", () => {
   assert.equal(
-    shouldRecordStage5Missing({
-      stage: 5,
+    shouldRecordTestMissing({
+      stage: 4,
+      stage4Mode: "test",
+      enabled: true,
       mode: "thirdPerson",
       playerReady: true,
       paused: false,
@@ -265,8 +279,22 @@ test("Stage5 missing markers record only for active third-person player leaks", 
     true,
   );
   assert.equal(
-    shouldRecordStage5Missing({
-      stage: 5,
+    shouldRecordTestMissing({
+      stage: 4,
+      stage4Mode: "test",
+      enabled: false,
+      mode: "thirdPerson",
+      playerReady: true,
+      paused: false,
+      activeRegions: [],
+    }),
+    false,
+  );
+  assert.equal(
+    shouldRecordTestMissing({
+      stage: 4,
+      stage4Mode: "test",
+      enabled: true,
       mode: "free",
       playerReady: true,
       paused: false,
@@ -275,8 +303,10 @@ test("Stage5 missing markers record only for active third-person player leaks", 
     false,
   );
   assert.equal(
-    shouldRecordStage5Missing({
-      stage: 5,
+    shouldRecordTestMissing({
+      stage: 4,
+      stage4Mode: "test",
+      enabled: true,
       mode: "thirdPerson",
       playerReady: true,
       paused: true,
@@ -285,8 +315,10 @@ test("Stage5 missing markers record only for active third-person player leaks", 
     false,
   );
   assert.equal(
-    shouldRecordStage5Missing({
-      stage: 5,
+    shouldRecordTestMissing({
+      stage: 4,
+      stage4Mode: "test",
+      enabled: true,
       mode: "thirdPerson",
       playerReady: true,
       paused: false,

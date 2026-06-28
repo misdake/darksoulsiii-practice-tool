@@ -26,6 +26,10 @@ test("region groups normalize, regroup, split, rename and delete", () => {
   });
 
   assert.deepEqual(state.regionGroups, [{ regions: ["A", "B"] }]);
+  state.select(2);
+  state.toggleSelected(0);
+  assert.deepEqual(state.selectedIndices, [2, 0]);
+  assert.equal(state.selectedIndex, 0);
 
   state.load({
     mapId: "m30_00_00_00",

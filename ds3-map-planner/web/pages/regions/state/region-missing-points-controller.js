@@ -1,8 +1,4 @@
-import {
-  activeRegions,
-  addGapMarker,
-  findUncoveredSamples,
-} from "../geometry/region-geometry.js";
+import { activeRegions } from "../geometry/region-geometry.js";
 
 export class RegionMissingPointsController {
   constructor({ renderPoints }) {
@@ -32,12 +28,6 @@ export class RegionMissingPointsController {
     this.renderPoints(points);
   }
 
-  showUncoveredSamples(regions, triangles) {
-    const points = findUncoveredSamples(regions, triangles);
-    this.render(points);
-    return points;
-  }
-
   recheck(regions) {
     for (const [cell, point] of this.pointsByCell) {
       if (activeRegions(regions, point).length) this.pointsByCell.delete(cell);
@@ -50,4 +40,15 @@ export class RegionMissingPointsController {
     this.pointsByCell.clear();
     this.render();
   }
+}
+
+export function gapMarkerKey([x, y, z], cellSize = 0.5) {
+  return [x, y, z].map((value) => Math.floor(value / cellSize)).join(":");
+}
+
+export function addGapMarker(markers, point, cellSize = 0.5) {
+  const key = gapMarkerKey(point, cellSize);
+  if (markers.has(key)) return false;
+  markers.set(key, [...point]);
+  return true;
 }

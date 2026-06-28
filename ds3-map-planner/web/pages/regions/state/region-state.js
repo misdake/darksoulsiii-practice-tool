@@ -5,7 +5,6 @@ export class RegionState {
     this.regionGroups = [];
     this.selectedIndex = -1;
     this.selectedIndices = [];
-    this.editing = false;
     this.plans = [];
   }
 
@@ -16,7 +15,6 @@ export class RegionState {
     this.plans = Array.isArray(plans) ? plans : [];
     this.selectedIndex = this.regions.length ? 0 : -1;
     this.selectedIndices = this.selectedIndex >= 0 ? [this.selectedIndex] : [];
-    this.editing = false;
   }
 
   get selectedRegion() {
@@ -26,7 +24,6 @@ export class RegionState {
   select(index) {
     this.selectedIndex = index >= 0 && index < this.regions.length ? index : -1;
     this.selectedIndices = this.selectedIndex >= 0 ? [this.selectedIndex] : [];
-    this.editing = false;
     return this.selectedRegion;
   }
 
@@ -42,20 +39,23 @@ export class RegionState {
       selected.add(index);
     }
 
-    this.selectedIndices = [...selected].sort((a, b) => a - b);
+    this.selectedIndices = [...selected];
     this.selectedIndex = this.selectedIndices.at(-1) ?? -1;
-    this.editing = this.selectedIndex >= 0;
     return this.selectedRegion;
   }
 
   removeSelected() {
-    if (this.selectedIndex < 0) return null;
-    const [removed] = this.regions.splice(this.selectedIndex, 1);
-    this.regionGroups = removeRegionFromGroups(this.regionGroups, removed?.name);
-    this.selectedIndex = Math.min(this.selectedIndex, this.regions.length - 1);
+    if (!this.selectedIndices.length) return [];
+    const selected = new Set(this.selectedIndices);
+    const removed = this.regions.filter((_, index) => selected.has(index));
+    const firstIndex = Math.min(...this.selectedIndices);
+    this.regions = this.regions.filter((_, index) => !selected.has(index));
+    for (const region of removed) {
+      this.regionGroups = removeRegionFromGroups(this.regionGroups, region.name);
+    }
+    this.selectedIndex = Math.min(firstIndex, this.regions.length - 1);
     this.selectedIndices = this.selectedIndex >= 0 ? [this.selectedIndex] : [];
-    this.editing = false;
-    return removed || null;
+    return removed;
   }
 
   renameRegion(oldName, newName) {

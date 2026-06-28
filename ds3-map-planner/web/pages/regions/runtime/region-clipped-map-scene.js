@@ -1,9 +1,5 @@
 import * as THREE from "three";
 
-export function cloneStage5SourceScene(navGroup, collisionGroup) {
-  return cloneClippedSourceScene(navGroup, collisionGroup);
-}
-
 export function cloneClippedSourceScene(
   navGroup,
   collisionGroup,
@@ -25,7 +21,7 @@ export function cloneClippedSourceScene(
   return scene;
 }
 
-export function disposeStage5Scene(scene, { disposeGeometry = false } = {}) {
+export function disposeClippedScene(scene, { disposeGeometry = false } = {}) {
   scene.traverse((object) => {
     if (object.isMesh) {
       if (disposeGeometry) {

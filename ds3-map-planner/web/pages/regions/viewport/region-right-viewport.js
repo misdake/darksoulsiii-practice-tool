@@ -26,8 +26,6 @@ export class RightRegionViewport {
     navGroup,
     onRegion,
     onNav,
-    onFocusRegion,
-    onFocusNav,
     onEmpty,
     getSelectionMode,
   }) {
@@ -79,19 +77,6 @@ export class RightRegionViewport {
           onEmpty,
           getSelectionMode,
           event,
-        });
-      },
-      onDoubleClick: ({ ndc, event }) => {
-        event.preventDefault();
-        this.focusPick({
-          ndc,
-          raycaster,
-          vertexGroup,
-          regionGroup,
-          navGroup,
-          onFocusRegion,
-          onFocusNav,
-          mode: getSelectionMode?.() === "navmesh" ? "navmesh" : "region",
         });
       },
       onWheel: ({ event }) => {
@@ -153,39 +138,6 @@ export class RightRegionViewport {
     return false;
   }
 
-  focusPick({
-    ndc,
-    raycaster,
-    vertexGroup,
-    regionGroup,
-    navGroup,
-    onFocusRegion,
-    onFocusNav,
-    mode = "any",
-  }) {
-    raycaster.setFromCamera(ndc, this.camera);
-    if (mode !== "navmesh") {
-      const vertex = raycaster
-        .intersectObjects(vertexGroup.children, true)
-        .at(0);
-      const regionIndex = vertex
-        ? vertex.object.userData.regionIndex
-        : pickRegionIndex(raycaster, regionGroup);
-      if (regionIndex >= 0) {
-        onFocusRegion?.(regionIndex);
-        return true;
-      }
-    }
-
-    if (mode !== "region") {
-      const nav = raycaster.intersectObjects(navGroup.children, true).at(0);
-      if (nav) {
-        onFocusNav?.(nav.object);
-        return true;
-      }
-    }
-    return false;
-  }
 }
 
 function pickRegionIndex(raycaster, regionGroup) {

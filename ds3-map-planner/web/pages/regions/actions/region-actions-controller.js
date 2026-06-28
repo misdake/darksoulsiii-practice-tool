@@ -1,10 +1,9 @@
 import { RegionStage4Actions } from "./region-stage4-actions.js";
-import { RegionStage5Actions } from "./region-stage5-actions.js";
-import { RegionStage6Actions } from "./region-stage6-actions.js";
+import { RegionTestActions } from "./region-test-actions.js";
+import { RegionPlanActions } from "./region-plan-actions.js";
 
 export class RegionActionsController {
   constructor({
-    navGroup,
     missingPoints,
     planController,
     getMapId,
@@ -17,7 +16,6 @@ export class RegionActionsController {
     getSelectedRegionIndices,
     setSelectedIndex,
     removeSelectedRegion,
-    setEditing,
     setSelectionMode,
     getSelectedNavmeshes,
     getPlans,
@@ -28,12 +26,10 @@ export class RegionActionsController {
     getPlanConfig,
     resetPlanConfig,
     focusGamePoint,
-    toggleStage5Mode,
-    isStage5OutdoorRegionEnabled,
+    toggleTestCameraMode,
     navigateBack,
   }) {
     this.stage4 = new RegionStage4Actions({
-      navGroup,
       missingPoints,
       getMapId,
       getRegions,
@@ -45,7 +41,6 @@ export class RegionActionsController {
       getSelectedRegionIndices,
       setSelectedIndex,
       removeSelectedRegion,
-      setEditing,
       setSelectionMode,
       getSelectedNavmeshes,
       confirm,
@@ -53,18 +48,15 @@ export class RegionActionsController {
       sync,
       applyEditorFields,
     });
-    this.stage5 = new RegionStage5Actions({
-      navGroup,
+    this.test = new RegionTestActions({
       missingPoints,
       getRegions,
-      getRegionGroups,
       setStatus,
       applyEditorFields,
       focusGamePoint,
-      toggleStage5Mode,
-      isOutdoorRegionEnabled: isStage5OutdoorRegionEnabled,
+      toggleTestCameraMode,
     });
-    this.stage6 = new RegionStage6Actions({
+    this.plan = new RegionPlanActions({
       planController,
       getMapId,
       getRegions,
@@ -81,8 +73,8 @@ export class RegionActionsController {
   createHandlers() {
     return {
       ...this.stage4.handlers(),
-      ...this.stage5.handlers(),
-      ...this.stage6.handlers(),
+      ...this.test.handlers(),
+      ...this.plan.handlers(),
       onBack: () => this.navigateBack(),
     };
   }

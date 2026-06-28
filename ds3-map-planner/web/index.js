@@ -5,7 +5,7 @@ const STAGES = [
   { key: "stage2-nav-filter", page: "filters.html", number: 2 },
   { key: "stage3-mark-nav", page: "filters.html", number: 3 },
   { key: "stage4-map-regions", page: "regions.html", number: 4 },
-  { key: "stage6-map-region-shot-plans", page: "regions.html", number: 6 },
+  { key: "stage5-map-region-shot-plans", page: "regions.html", number: 5 },
 ];
 
 const rows = document.getElementById("mapRows");

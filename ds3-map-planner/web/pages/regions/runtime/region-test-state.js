@@ -1,12 +1,16 @@
-export function shouldRecordStage5Missing({
+export function shouldRecordTestMissing({
   stage,
+  stage4Mode,
+  enabled,
   mode,
   playerReady,
   paused,
   activeRegions,
 }) {
   return (
-    Number(stage) === 5 &&
+    Number(stage) === 4 &&
+    stage4Mode === "test" &&
+    Boolean(enabled) &&
     mode === "thirdPerson" &&
     Boolean(playerReady) &&
     !paused &&

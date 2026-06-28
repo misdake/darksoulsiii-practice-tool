@@ -8,7 +8,7 @@ const root = __dirname;
 const webRoot = path.join(root, "web");
 const viteCli = path.join(webRoot, "node_modules", "vite", "bin", "vite.js");
 const children = [
-  spawn(process.execPath, ["server.js"], {
+  spawn(process.execPath, ["--watch", "server.js"], {
     cwd: root,
     env: process.env,
     stdio: "inherit",

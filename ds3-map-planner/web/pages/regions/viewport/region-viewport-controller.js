@@ -70,7 +70,10 @@ export class RegionViewportController {
     leftCamera.lookAt(center.x, 0, center.z);
     setOrthographicHalfHeight(leftCamera, halfHeight * 1.12, aspect);
     if (focusRight) {
-      this.rightViewport.focusBounds(center, Math.max(size.x, size.y, size.z));
+      this.rightViewport.focusBounds(
+        center,
+        Math.sqrt(size.x ** 2 + size.y ** 2 + size.z ** 2),
+      );
     }
   }
 
@@ -96,17 +99,17 @@ export class RegionViewportController {
     getSelectedRegion,
     getSelectedIndex,
     isEditing,
-    onChange,
+    onPreview,
+    onCommit,
     onInvalid,
     onRegion,
-    onStage6Region,
+    onStage5Region,
     onNav,
-    onFocusRegion,
-    onFocusNav,
     onEmpty,
     getSelectionMode,
+    getStage4Mode,
     getStage,
-    stage5Handlers,
+    testHandlers,
   }) {
     const router = new ViewportInputRouter(element, splitRegionViewports, {
       document,
@@ -119,7 +122,8 @@ export class RegionViewportController {
       getSelectedRegion,
       getSelectedIndex,
       isEditing,
-      onChange,
+      onPreview,
+      onCommit,
       onInvalid,
     });
 
@@ -128,7 +132,8 @@ export class RegionViewportController {
       ...leftEditorHandlers,
       onPointerDown: (payload) => {
         const stage = getStage?.();
-        if (stage === 5) {
+        const testMode = stage === 4 && getStage4Mode?.() === "test";
+        if (testMode) {
           return;
         }
         if (stage === 4) {
@@ -145,7 +150,8 @@ export class RegionViewportController {
       },
       onPointerMove: (payload) => {
         const stage = getStage?.();
-        if (stage === 5) {
+        const testMode = stage === 4 && getStage4Mode?.() === "test";
+        if (testMode) {
           return;
         }
         if (this.leftPan) {
@@ -163,7 +169,8 @@ export class RegionViewportController {
       },
       onPointerUp: (payload) => {
         const stage = getStage?.();
-        if (stage === 5) {
+        const testMode = stage === 4 && getStage4Mode?.() === "test";
+        if (testMode) {
           this.leftPan = null;
           return;
         }
@@ -189,42 +196,29 @@ export class RegionViewportController {
       navGroup,
       onRegion,
       onNav,
-      onFocusRegion,
-      onFocusNav,
       onEmpty,
       getSelectionMode,
     });
-    const stage6Handlers = this.rightViewport.handlers({
+    const stage5PlanHandlers = this.rightViewport.handlers({
       raycaster,
       vertexGroup: overlay.vertexGroup,
       regionGroup: overlay.regionGroup,
       navGroup,
-      onRegion: onStage6Region,
+      onRegion: onStage5Region,
       onNav: () => {},
-      onEmpty: () => onStage6Region?.(-1, { focusRight: false }),
+      onEmpty: () => onStage5Region?.(-1, { focusRight: false }),
       getSelectionMode: () => "region",
     });
-    const stage5FocusHandlers = {
-      ...stage5Handlers,
-      onDoubleClick: ({ ndc, event }) => {
-        event.preventDefault();
-        this.rightViewport.focusPick({
-          ndc,
-          raycaster,
-          vertexGroup: overlay.vertexGroup,
-          regionGroup: overlay.regionGroup,
-          navGroup,
-          onFocusRegion,
-          onFocusNav,
-        });
-      },
-    };
+    const stage4ModeHandlers = dispatchByMode(getStage4Mode, {
+      navmesh: stage4Handlers,
+      regions: stage4Handlers,
+      test: testHandlers,
+    });
     router.register(
       "right",
       dispatchByStage(getStage, {
-        4: stage4Handlers,
-        5: stage5FocusHandlers,
-        6: stage6Handlers,
+        4: stage4ModeHandlers,
+        5: stage5PlanHandlers,
       }),
     );
 
@@ -236,19 +230,26 @@ export class RegionViewportController {
   }
 }
 
+function dispatchByMode(getMode, handlersByMode) {
+  return dispatchHandlers(() => handlersByMode[getMode?.()] || handlersByMode.regions);
+}
+
 function dispatchByStage(getStage, handlersByStage) {
+  return dispatchHandlers(() => handlersByStage[Number(getStage?.()) || 4]);
+}
+
+function dispatchHandlers(getHandlers) {
   const out = {};
   for (const name of [
     "onPointerDown",
     "onPointerMove",
     "onPointerUp",
-    "onDoubleClick",
     "onWheel",
     "onKeyDown",
     "onKeyUp",
   ]) {
     out[name] = (payload) => {
-      const handler = handlersByStage[Number(getStage?.()) || 4]?.[name];
+      const handler = getHandlers()?.[name];
       return handler?.(payload);
     };
   }

@@ -52,7 +52,7 @@ const STAGE_FILES = Object.freeze({
   "stage2-nav-filter": "stage2_nav_filter.json",
   "stage3-mark-nav": "stage3_mark_nav.json",
   "stage4-map-regions": "stage4_map_regions.json",
-  "stage6-map-region-shot-plans": "stage6_map_region_shot_plans.json",
+  "stage5-map-region-shot-plans": "stage5_map_region_shot_plans.json",
 });
 
 function mapDisplayName(mapId) {
@@ -286,16 +286,15 @@ async function handle(req, res) {
       return;
     }
 
-    const mStage = pathname.match(
-      /^\/api\/maps\/([^/]+)\/(stage1-collision-filter|stage2-nav-filter|stage3-mark-nav|stage4-map-regions|stage6-map-region-shot-plans)$/,
-    );
-    if (req.method === "GET" && mStage) {
+    const mStage = pathname.match(/^\/api\/maps\/([^/]+)\/([^/]+)$/);
+    const knownStage = mStage && STAGE_FILES[mStage[2]];
+    if (req.method === "GET" && knownStage) {
       const data = await loadStageData(mStage[1], mStage[2]);
       if (data === null) sendJson(res, 404, { error: "stage data not found" });
       else sendJson(res, 200, data);
       return;
     }
-    if (req.method === "PUT" && mStage) {
+    if (req.method === "PUT" && knownStage) {
       const body = await readRequestJson(req);
       await saveStageData(mStage[1], mStage[2], body);
       sendText(res, 204, "");

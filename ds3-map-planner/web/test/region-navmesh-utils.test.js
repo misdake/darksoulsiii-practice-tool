@@ -2,7 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import {
-  buildAutoRegions,
   createRegionFromMesh,
   createRegionFromMeshes,
   trianglesFromMesh,
@@ -59,42 +58,3 @@ test("generated regions use world bounds, padding and a union AABB", () => {
     ],
   });
 });
-
-test("automatic regions keep stacked navmesh layers separate", () => {
-  const group = new THREE.Group();
-  group.add(createTriangleMesh(0, 0));
-  group.add(createTriangleMesh(0, 5));
-
-  const regions = buildAutoRegions(group);
-
-  assert.equal(regions.length, 2);
-  assert.deepEqual(
-    regions.map((region) => region.ymin),
-    [-0.5, 4.5],
-  );
-});
-
-function createTriangleMesh(x, y) {
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute(
-    "position",
-    new THREE.Float32BufferAttribute(
-      [
-        x,
-        y,
-        0,
-        x + 2,
-        y,
-        0,
-        x,
-        y,
-        -2,
-      ],
-      3,
-    ),
-  );
-
-  const mesh = new THREE.Mesh(geometry);
-  mesh.userData = { navPath: "nav.obj", segmentIndex: y };
-  return mesh;
-}

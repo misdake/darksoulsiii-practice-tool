@@ -5,51 +5,16 @@ import { createRegionOverlayObjects } from "../pages/regions/overlay/region-over
 import {
   createRegionMask,
   regionClippingPlanes,
-} from "../pages/regions/runtime/region-stage5-mask.js";
+} from "../pages/regions/runtime/region-clipped-map-mask.js";
 import {
   activeRegions,
-  addGapMarker,
   footprintForHeight,
-  findCrossGroupRegionOverlaps,
-  groupSplitsByLayer,
-  occupancyBoundsFromTriangles,
-  findUncoveredSamples,
   hasSelfIntersection,
   pointInPolygon,
   sceneToGame,
-  summarizeUncoveredCoverage,
-  triangleCoverageSamples,
   validateRegions,
 } from "../pages/regions/geometry/region-geometry.js";
-
-test("cross-group overlap ignores shared groups, height layers and 0.1m slivers", () => {
-  const rectangle = (name, minX, maxX, ymin = 0, ymax = 3) => ({
-    name,
-    ymin,
-    ymax,
-    polygon_xz: [[minX, 0], [maxX, 0], [maxX, 2], [minX, 2]],
-  });
-  const first = rectangle("A", 0, 2);
-  const sliver = rectangle("B", 1.95, 4);
-  const overlap = rectangle("C", 1.8, 4);
-
-  assert.equal(findCrossGroupRegionOverlaps([first, sliver], []).length, 0);
-  assert.equal(findCrossGroupRegionOverlaps([first, overlap], []).length, 1);
-  assert.equal(
-    findCrossGroupRegionOverlaps(
-      [first, overlap],
-      [{ regions: ["A", "C"] }],
-    ).length,
-    0,
-  );
-  assert.equal(
-    findCrossGroupRegionOverlaps(
-      [first, { ...overlap, ymin: 3, ymax: 5 }],
-      [],
-    ).length,
-    0,
-  );
-});
+import { addGapMarker } from "../pages/regions/state/region-missing-points-controller.js";
 
 const lower = {
   name: "lower",
@@ -95,7 +60,7 @@ test("region geometry handles concavity, edges and invalid polygons", () => {
   assert.match(validateRegions([lower, { ...lower }]), /duplicated/);
 });
 
-test("Stage5 region lookup is ordered and missing points are de-duplicated", () => {
+test("Test mode region lookup is ordered and missing points are de-duplicated", () => {
   assert.deepEqual(
     activeRegions([lower, upper], [2, 2.5, 2]).map((r) => r.name),
     ["lower", "upper"],
@@ -170,100 +135,9 @@ test("region overlays and masks preserve right-handed world coordinates", () => 
   edges.material.dispose();
 });
 
-test("coverage sampling preserves weighted area and checks the full prism", () => {
-  const samples = triangleCoverageSamples(
-    [0, 0, 0],
-    [20, 0, 0],
-    [0, 0, 20],
-  );
-  assert.ok(samples.length > 20);
-  assert.ok(
-    Math.abs(
-      samples.reduce((sum, sample) => sum + sample.coverageWeight, 0) - 200,
-    ) < 1e-6,
-  );
-
-  const triangle = [
-    [
-      [1, 1, 1],
-      [2, 1, 1],
-      [1, 1, 2],
-    ],
-  ];
-  assert.equal(findUncoveredSamples([lower], triangle).length, 0);
-  assert.ok(
-    findUncoveredSamples([{ ...lower, ymax: 0.5 }], triangle).length > 0,
-  );
-  const triangles = [
-    [
-      [0, 1, 0],
-      [2, 1, 0],
-      [0, 1, 2],
-    ],
-  ];
-  const uncovered = findUncoveredSamples([{ ...lower, ymax: 0.5 }], triangles);
-  const summary = summarizeUncoveredCoverage(uncovered, triangles, 1);
-  assert.equal(summary.targetArea, 2);
-  assert.ok(summary.uncoveredArea > 0);
-  assert.ok(summary.uncoveredRatio > 0);
-  assert.ok(summary.largestComponentArea > 0);
-  assert.deepEqual(summary.representative, uncovered[0]);
-});
-
-test("derived map geometry preserves layers, concavity and footprint scaling", () => {
-  const triangle = (y) => [
-    [
-      [0, y, 0],
-      [2, y, 0],
-      [0, y, 2],
-    ],
-  ];
-  const layers = groupSplitsByLayer([
-    { key: "lower", triangles: triangle(0) },
-    { key: "upper", triangles: triangle(5) },
-    { key: "peer", triangles: triangle(0.1) },
-  ]);
-  assert.equal(layers.length, 2);
-  assert.equal(layers[0].members.length, 2);
-  assert.equal(layers[1].members[0].key, "upper");
-
+test("camera footprint scales with height", () => {
   const config = { render_width: 16, render_height: 9, fov_y_rad: Math.PI / 3 };
   assert.ok(
     footprintForHeight(config, 2).width < footprintForHeight(config, 4).width,
   );
-
-  const triangles = [
-    [
-      [0, 0, 0],
-      [1, 0, 0],
-      [0, 0, 1],
-    ],
-    [
-      [1, 0, 0],
-      [1, 0, 1],
-      [0, 0, 1],
-    ],
-    [
-      [1, 0, 0],
-      [2, 0, 0],
-      [1, 0, 1],
-    ],
-    [
-      [2, 0, 0],
-      [2, 0, 1],
-      [1, 0, 1],
-    ],
-    [
-      [0, 0, 1],
-      [1, 0, 1],
-      [0, 0, 2],
-    ],
-    [
-      [1, 0, 1],
-      [1, 0, 2],
-      [0, 0, 2],
-    ],
-  ];
-  const [polygon] = occupancyBoundsFromTriangles(triangles, 1);
-  assert.ok(polygon.length > 4);
 });

@@ -26,13 +26,13 @@ export class RegionMapLoadController {
     this.setProgress?.(`loading ${mapId} stage data`, 0.05);
     const stages = await loadOptionalStages(mapId, [
       "stage4-map-regions",
-      "stage6-map-region-shot-plans",
+      "stage5-map-region-shot-plans",
     ]);
     if (!isCurrent()) {
       return null;
     }
     const savedRegions = stages["stage4-map-regions"];
-    const savedPlans = stages["stage6-map-region-shot-plans"];
+    const savedPlans = stages["stage5-map-region-shot-plans"];
 
     this.state.load({
       mapId,

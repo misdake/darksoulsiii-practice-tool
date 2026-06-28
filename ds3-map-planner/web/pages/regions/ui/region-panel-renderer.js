@@ -25,7 +25,7 @@ export class RegionPanelRenderer {
       : "No active regions.";
   }
 
-  renderStage5Status({
+  renderTestStatus({
     activeRegions = [],
     missingCount = 0,
     mode = "free",
@@ -35,20 +35,20 @@ export class RegionPanelRenderer {
     warning = false,
   } = {}) {
     this.renderActiveRegions(activeRegions);
-    const modeButton = this.byId("stage5ModeBtn");
+    const modeButton = this.byId("testModeBtn");
     if (modeButton) {
       modeButton.textContent =
         mode === "thirdPerson"
           ? "Switch To Free Camera (F)"
           : "Enter Third-Person (F)";
     }
-    const playerStatus = this.byId("stage5PlayerStatus");
+    const playerStatus = this.byId("testPlayerStatus");
     if (playerStatus) {
       playerStatus.textContent = playerReady
         ? `Player: ${playerPosition.map((value) => value.toFixed(2)).join(", ")}`
         : "Player: click collision in the right viewport.";
     }
-    const warningEl = this.byId("stage5Warning");
+    const warningEl = this.byId("testWarning");
     if (warningEl) {
       warningEl.textContent = warning
         ? "Warning: player is outside every region."
@@ -57,7 +57,7 @@ export class RegionPanelRenderer {
           : "No runtime warning.";
       warningEl.style.color = warning ? "#fb7185" : "";
     }
-    const missingEl = this.byId("stage5MissingCount");
+    const missingEl = this.byId("testMissingCount");
     if (missingEl) {
       missingEl.textContent = `Missing markers: ${missingCount}`;
     }
@@ -71,27 +71,27 @@ export class RegionPanelRenderer {
     };
   }
 
-  readStage6Config() {
+  readStage5Config() {
     return normalizeRegionShotConfig({
-      render_width: this.byId("stage6RenderWidth").value,
-      render_height: this.byId("stage6RenderHeight").value,
-      fov_y_rad: Number(this.byId("stage6FovDegrees").value) * Math.PI / 180,
-      base_ratio_px_per_wu: this.byId("stage6BaseRatio").value,
-      density_multiplier: this.byId("stage6DensityMultiplier").value,
-      overlap_ratio: Number(this.byId("stage6OverlapPercent").value) / 100,
-      y_lift: this.byId("stage6YLift").value,
+      render_width: this.byId("stage5RenderWidth").value,
+      render_height: this.byId("stage5RenderHeight").value,
+      fov_y_rad: Number(this.byId("stage5FovDegrees").value) * Math.PI / 180,
+      base_ratio_px_per_wu: this.byId("stage5BaseRatio").value,
+      density_multiplier: this.byId("stage5DensityMultiplier").value,
+      overlap_ratio: Number(this.byId("stage5OverlapPercent").value) / 100,
+      y_lift: this.byId("stage5YLift").value,
     });
   }
 
-  setStage6Config(config = DEFAULT_REGION_SHOT_CONFIG) {
+  setStage5Config(config = DEFAULT_REGION_SHOT_CONFIG) {
     const value = normalizeRegionShotConfig(config);
-    this.byId("stage6RenderWidth").value = String(value.render_width);
-    this.byId("stage6RenderHeight").value = String(value.render_height);
-    this.byId("stage6FovDegrees").value = (value.fov_y_rad * 180 / Math.PI).toFixed(2);
-    this.byId("stage6BaseRatio").value = String(value.base_ratio_px_per_wu);
-    this.byId("stage6DensityMultiplier").value = String(value.density_multiplier);
-    this.byId("stage6OverlapPercent").value = String(value.overlap_ratio * 100);
-    this.byId("stage6YLift").value = String(value.y_lift);
+    this.byId("stage5RenderWidth").value = String(value.render_width);
+    this.byId("stage5RenderHeight").value = String(value.render_height);
+    this.byId("stage5FovDegrees").value = (value.fov_y_rad * 180 / Math.PI).toFixed(2);
+    this.byId("stage5BaseRatio").value = String(value.base_ratio_px_per_wu);
+    this.byId("stage5DensityMultiplier").value = String(value.density_multiplier);
+    this.byId("stage5OverlapPercent").value = String(value.overlap_ratio * 100);
+    this.byId("stage5YLift").value = String(value.y_lift);
   }
 
   render({
@@ -99,7 +99,7 @@ export class RegionPanelRenderer {
     regionGroups = [],
     selectedIndex,
     selectedIndices = [],
-    selectionMode,
+    mode,
     plans,
     onSelect,
   }) {
@@ -109,7 +109,7 @@ export class RegionPanelRenderer {
     this.byId("ymax").value = formatY(selected?.ymax ?? 3);
     const selectionFields = this.byId("regionSelectionFields");
     if (selectionFields) {
-      selectionFields.hidden = selectionMode !== "region" || !selected;
+      selectionFields.hidden = mode !== "regions" || !selected;
     }
     const deleteBtn = this.byId("deleteBtn");
     if (deleteBtn) {
@@ -126,12 +126,12 @@ export class RegionPanelRenderer {
         ),
       ),
     );
-    this.renderStage6RegionOptions(regions, selectedIndex);
+    this.renderStage5RegionOptions(regions, selectedIndex);
     this.renderPlanInfo(plans, selected);
   }
 
-  renderStage6RegionOptions(regions, selectedIndex) {
-    const select = this.byId("stage6RegionSelect");
+  renderStage5RegionOptions(regions, selectedIndex) {
+    const select = this.byId("stage5RegionSelect");
     if (!select) return;
     select.replaceChildren(
       ...regions.map((region, index) => {
@@ -187,7 +187,7 @@ export class RegionPanelRenderer {
     const plan = plans.find(
       (item) => item.region_name === selectedRegion?.name,
     );
-    this.setStage6Config(plan?.config || DEFAULT_REGION_SHOT_CONFIG);
+    this.setStage5Config(plan?.config || DEFAULT_REGION_SHOT_CONFIG);
     this.byId("planInfo").textContent = plan
       ? formatPlanSummary(plan)
       : "No regional camera plan.";

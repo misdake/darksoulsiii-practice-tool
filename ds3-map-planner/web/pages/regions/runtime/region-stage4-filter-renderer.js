@@ -8,7 +8,7 @@ export class RegionStage4FilterRenderer {
     this.collisionGroup = collisionGroup;
     this.clippedRenderer = new RegionClippedMapRenderer({
       includeNavmesh: true,
-      preserveMaterials: false,
+      preserveMaterials: true,
       syncSourceState: true,
       renderPlayer: false,
     });

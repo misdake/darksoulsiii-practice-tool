@@ -13,9 +13,10 @@ export class RegionRenderController {
     getFrameGamePosition,
     onFrameGamePosition,
     getFollowTarget,
+    getStage4Mode,
     getStage4FilterRegion,
-    getStage4OutdoorEnabled,
-    getStage5OutdoorEnabled,
+    getClipActiveRegions,
+    getOutdoorEnabled,
   }) {
     this.window = window;
     this.renderer = renderer;
@@ -30,9 +31,10 @@ export class RegionRenderController {
     this.getFrameGamePosition = getFrameGamePosition;
     this.onFrameGamePosition = onFrameGamePosition;
     this.getFollowTarget = getFollowTarget;
+    this.getStage4Mode = getStage4Mode;
     this.getStage4FilterRegion = getStage4FilterRegion;
-    this.getStage4OutdoorEnabled = getStage4OutdoorEnabled;
-    this.getStage5OutdoorEnabled = getStage5OutdoorEnabled;
+    this.getClipActiveRegions = getClipActiveRegions;
+    this.getOutdoorEnabled = getOutdoorEnabled;
     this.animationFrame = 0;
     this.lastFrameTime = 0;
     this.stage = 4;
@@ -74,7 +76,9 @@ export class RegionRenderController {
     this.lastFrameTime = now;
     this.animationFrame = this.window.requestAnimationFrame(this.frame);
 
-    if (this.stage !== 5) {
+    const stage4Mode = this.getStage4Mode?.() || "regions";
+    const isTestMode = this.stage === 4 && stage4Mode === "test";
+    if (!isTestMode) {
       this.viewportController.updateFreeCamera(dt);
     }
     this.onBeforeFrame?.(dt);
@@ -86,7 +90,7 @@ export class RegionRenderController {
     const leftViewport = { x: 0, y: 0, width: width / 2, height };
     const stage4FilterRegion =
       this.stage === 4 ? this.getStage4FilterRegion?.() : null;
-    if (this.stage === 5) {
+    if (isTestMode) {
       this.viewportController.followLeftCameraTarget(
         this.leftCamera,
         this.getFollowTarget?.(),
@@ -95,8 +99,8 @@ export class RegionRenderController {
         this.renderer,
         this.leftCamera,
         leftViewport,
-        activeRegions,
-        { includeOutdoor: this.getStage5OutdoorEnabled?.() !== false },
+        this.getClipActiveRegions?.() === false ? [] : activeRegions,
+        { includeOutdoor: this.getOutdoorEnabled?.() !== false },
       );
     } else if (stage4FilterRegion) {
       this.regionScene.renderStage4Filtered(
@@ -104,9 +108,9 @@ export class RegionRenderController {
         this.leftCamera,
         leftViewport,
         stage4FilterRegion,
-        { includeOutdoor: this.getStage4OutdoorEnabled?.() !== false },
+        { includeOutdoor: this.getOutdoorEnabled?.() !== false },
       );
-    } else if (this.stage === 4 && this.getStage4OutdoorEnabled?.() === false) {
+    } else if (this.stage === 4 && this.getOutdoorEnabled?.() === false) {
       this.regionScene.renderStage4WithoutOutdoor(
         this.renderer,
         this.leftCamera,

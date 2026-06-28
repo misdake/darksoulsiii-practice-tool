@@ -11,7 +11,8 @@ export class LeftRegionEditor {
     getSelectedRegion,
     getSelectedIndex,
     isEditing,
-    onChange,
+    onPreview,
+    onCommit,
     onInvalid,
   }) {
     this.leftCamera = leftCamera;
@@ -20,7 +21,8 @@ export class LeftRegionEditor {
     this.getSelectedRegion = getSelectedRegion;
     this.getSelectedIndex = getSelectedIndex;
     this.isEditing = isEditing;
-    this.onChange = onChange;
+    this.onPreview = onPreview;
+    this.onCommit = onCommit;
     this.onInvalid = onInvalid;
     this.drag = null;
     this.beforeDragPolygon = null;
@@ -72,22 +74,19 @@ export class LeftRegionEditor {
     }
 
     region.polygon_xz[this.drag.vertexIndex] = [point.x, point.z];
-    this.onChange();
+    this.onPreview?.();
   }
 
   pointerUp() {
-    if (
-      this.drag &&
-      this.onInvalid?.(
-        this.getSelectedRegion(this.drag.regionIndex),
-        this.beforeDragPolygon,
-      )
-    ) {
-      this.onChange();
-    }
+    if (!this.drag) return;
+    this.onInvalid?.(
+      this.getSelectedRegion(this.drag.regionIndex),
+      this.beforeDragPolygon,
+    );
 
     this.drag = null;
     this.beforeDragPolygon = null;
+    this.onCommit?.();
   }
 
   pickVertex() {
@@ -101,8 +100,10 @@ export class LeftRegionEditor {
     }
 
     if (event.button === 2 && region.polygon_xz.length > 3) {
+      const before = clonePolygon(region.polygon_xz);
       region.polygon_xz.splice(vertex.vertexIndex, 1);
-      this.onChange();
+      this.onInvalid?.(region, before);
+      this.onCommit?.();
       return;
     }
 
@@ -139,7 +140,7 @@ export class LeftRegionEditor {
       regionIndex: this.getSelectedIndex(),
       vertexIndex: insertion.index,
     };
-    this.onChange();
+    this.onPreview?.();
   }
 }
 

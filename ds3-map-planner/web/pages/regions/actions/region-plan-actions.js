@@ -1,6 +1,6 @@
 import { saveStageData } from "../../../shared/map-api.js";
 
-export class RegionStage6Actions {
+export class RegionPlanActions {
   constructor({
     planController,
     getMapId,
@@ -43,7 +43,7 @@ export class RegionStage6Actions {
 
   async savePlans() {
     try {
-      await saveStageData(this.getMapId(), "stage6-map-region-shot-plans", {
+      await saveStageData(this.getMapId(), "stage5-map-region-shot-plans", {
         plans: this.getPlans(),
       });
       this.setStatus("Regional camera plans saved.");
