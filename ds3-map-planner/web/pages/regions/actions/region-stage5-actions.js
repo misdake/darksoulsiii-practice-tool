@@ -1,4 +1,7 @@
-import { validateRegions } from "../geometry/region-geometry.js";
+import {
+  findCrossGroupRegionOverlaps,
+  validateRegions,
+} from "../geometry/region-geometry.js";
 import {
   collectNavmeshTriangles,
 } from "../assets/region-navmesh-utils.js";
@@ -9,18 +12,22 @@ export class RegionStage5Actions {
     navGroup,
     missingPoints,
     getRegions,
+    getRegionGroups,
     setStatus,
     applyEditorFields,
     focusGamePoint,
     toggleStage5Mode,
+    isOutdoorRegionEnabled,
   }) {
     this.navGroup = navGroup;
     this.missingPoints = missingPoints;
     this.getRegions = getRegions;
+    this.getRegionGroups = getRegionGroups;
     this.setStatus = setStatus;
     this.applyEditorFields = applyEditorFields;
     this.focusGamePoint = focusGamePoint;
     this.toggleStage5Mode = toggleStage5Mode;
+    this.isOutdoorRegionEnabled = isOutdoorRegionEnabled;
   }
 
   handlers() {
@@ -39,6 +46,19 @@ export class RegionStage5Actions {
     const error = validateRegions(regions);
     if (error) {
       this.setStatus(error, true);
+      return;
+    }
+    const overlaps = findCrossGroupRegionOverlaps(
+      regions,
+      this.getRegionGroups(),
+    );
+    if (overlaps.length) {
+      this.setStatus(
+        `Cross-group region overlap: ${overlaps
+          .map(({ first, second }) => `${first.name} / ${second.name}`)
+          .join(", ")}.`,
+        true,
+      );
       return;
     }
 
@@ -60,6 +80,11 @@ export class RegionStage5Actions {
 
   recheckMissing() {
     if (!this.applyEditorFields()) return;
+    if (this.isOutdoorRegionEnabled?.()) {
+      this.missingPoints.clear();
+      this.setStatus("Missing markers remaining: 0.");
+      return;
+    }
     const remaining = this.missingPoints.recheck(this.getRegions());
     this.setStatus(`Missing markers remaining: ${remaining}.`);
   }

@@ -101,6 +101,8 @@ export class RegionViewportController {
     onRegion,
     onStage6Region,
     onNav,
+    onFocusRegion,
+    onFocusNav,
     onEmpty,
     getSelectionMode,
     getStage,
@@ -181,14 +183,16 @@ export class RegionViewportController {
     });
 
     const stage4Handlers = this.rightViewport.handlers({
-        raycaster,
-        vertexGroup: overlay.vertexGroup,
-        regionGroup: overlay.regionGroup,
-        navGroup,
-        onRegion,
-        onNav,
-        onEmpty,
-        getSelectionMode,
+      raycaster,
+      vertexGroup: overlay.vertexGroup,
+      regionGroup: overlay.regionGroup,
+      navGroup,
+      onRegion,
+      onNav,
+      onFocusRegion,
+      onFocusNav,
+      onEmpty,
+      getSelectionMode,
     });
     const stage6Handlers = this.rightViewport.handlers({
       raycaster,
@@ -200,9 +204,28 @@ export class RegionViewportController {
       onEmpty: () => onStage6Region?.(-1, { focusRight: false }),
       getSelectionMode: () => "region",
     });
+    const stage5FocusHandlers = {
+      ...stage5Handlers,
+      onDoubleClick: ({ ndc, event }) => {
+        event.preventDefault();
+        this.rightViewport.focusPick({
+          ndc,
+          raycaster,
+          vertexGroup: overlay.vertexGroup,
+          regionGroup: overlay.regionGroup,
+          navGroup,
+          onFocusRegion,
+          onFocusNav,
+        });
+      },
+    };
     router.register(
       "right",
-      dispatchByStage(getStage, { 4: stage4Handlers, 5: stage5Handlers, 6: stage6Handlers }),
+      dispatchByStage(getStage, {
+        4: stage4Handlers,
+        5: stage5FocusHandlers,
+        6: stage6Handlers,
+      }),
     );
 
     return router;
@@ -219,6 +242,7 @@ function dispatchByStage(getStage, handlersByStage) {
     "onPointerDown",
     "onPointerMove",
     "onPointerUp",
+    "onDoubleClick",
     "onWheel",
     "onKeyDown",
     "onKeyUp",

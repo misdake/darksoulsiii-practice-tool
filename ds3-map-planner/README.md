@@ -99,7 +99,7 @@ Then start the planner from its package directory:
 
 ```powershell
 cd ds3-map-planner
-npm start
+npm run dev
 ```
 
 The development command starts both processes:
@@ -117,13 +117,6 @@ Environment overrides:
 - `PLANNER_WEB_ORIGIN` (default `http://127.0.0.1:5173`)
 - `VITE_BACKEND_ORIGIN` (default `http://127.0.0.1:7878`)
 
-Run only the API server when needed:
-
-```powershell
-cd ds3-map-planner
-npm run api
-```
-
 ### Web Development (Vite)
 
 The HTML and JavaScript entry names match:
@@ -131,13 +124,6 @@ The HTML and JavaScript entry names match:
 - `index.html` loads `index.js`
 - `filters.html` loads `filters.js`
 - `regions.html` loads `regions.js`
-
-To run only Vite while an API server is already available:
-
-```powershell
-cd ds3-map-planner/web
-npm run dev
-```
 
 This internal tool only supports the Vite development workflow. The backend does
 not serve `web/dist` or source frontend modules.

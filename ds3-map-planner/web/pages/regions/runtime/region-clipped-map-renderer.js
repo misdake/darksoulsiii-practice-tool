@@ -20,14 +20,19 @@ export class RegionClippedMapRenderer {
     preserveMaterials = false,
     syncSourceState = preserveMaterials,
     renderPlayer = true,
+    manageCollisionDisplay = false,
   } = {}) {
     this.includeNavmesh = includeNavmesh;
     this.preserveMaterials = preserveMaterials;
     this.syncSourceState = syncSourceState;
     this.renderPlayer = renderPlayer;
+    this.manageCollisionDisplay = manageCollisionDisplay;
+    this.collisionVisible = true;
+    this.collisionOpacity = 1;
+    this.navmeshOpacity = 1;
     this.scene = new THREE.Scene();
     this.maskScene = new THREE.Scene();
-    this.playerScene = new THREE.Scene();
+    this.playerScene = createPlayerScene();
     this.copyScene = new THREE.Scene();
     this.copyCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.copyMaterial = new THREE.MeshBasicMaterial({
@@ -56,6 +61,7 @@ export class RegionClippedMapRenderer {
   setPlayerMesh(mesh) {
     if (!mesh) {
       disposeStage5Scene(this.playerScene);
+      this.playerScene = createPlayerScene();
       this.playerSourceMesh = null;
       this.playerMesh = null;
       return;
@@ -65,19 +71,32 @@ export class RegionClippedMapRenderer {
       return;
     }
     disposeStage5Scene(this.playerScene);
+    this.playerScene = createPlayerScene();
     this.playerSourceMesh = mesh;
     this.playerMesh = clonePlayerVisual(mesh);
     this.playerScene.add(this.playerMesh);
     this.syncPlayerMesh();
   }
 
-  render(renderer, camera, viewport, regions) {
+  setCollisionDisplay(visible, opacity) {
+    this.collisionVisible = Boolean(visible);
+    this.collisionOpacity = Math.max(0, Math.min(1, Number(opacity) || 0));
+    this.applyManagedDisplayState();
+  }
+
+  setNavmeshOpacity(opacity) {
+    this.navmeshOpacity = Math.max(0, Math.min(1, Number(opacity) || 0));
+    this.applyManagedDisplayState();
+  }
+
+  render(renderer, camera, viewport, regions, { clear = true } = {}) {
     const previousState = captureRendererState(renderer);
     const pixelViewport = normalizePixelViewport(viewport);
 
     try {
       if (this.syncSourceState) syncClippedSourceScene(this.scene);
-      this.prepareViewport(renderer, pixelViewport);
+      this.applyManagedDisplayState();
+      this.prepareViewport(renderer, pixelViewport, clear);
       if (!regions.length) {
         return;
       }
@@ -88,6 +107,26 @@ export class RegionClippedMapRenderer {
 
       for (const region of regions) {
         this.renderRegion(renderer, camera, pixelViewport, region);
+      }
+    } finally {
+      restoreRendererState(renderer, previousState);
+    }
+  }
+
+  renderBase(renderer, camera, viewport) {
+    const previousState = captureRendererState(renderer);
+    const pixelViewport = normalizePixelViewport(viewport);
+    try {
+      if (this.syncSourceState) syncClippedSourceScene(this.scene);
+      this.resetSceneVisibility();
+      this.applyManagedDisplayState();
+      this.prepareViewport(renderer, pixelViewport, true);
+      renderer.localClippingEnabled = false;
+      renderer.autoClear = false;
+      renderer.render(this.scene, camera);
+      this.syncPlayerMesh();
+      if (this.renderPlayer && this.playerMesh?.visible) {
+        renderer.render(this.playerScene, camera);
       }
     } finally {
       restoreRendererState(renderer, previousState);
@@ -116,12 +155,64 @@ export class RegionClippedMapRenderer {
     });
   }
 
-  prepareViewport(renderer, viewport) {
+  prepareViewport(renderer, viewport, clear) {
     renderer.setScissorTest(true);
     renderer.setViewport(viewport.x, viewport.y, viewport.width, viewport.height);
     renderer.setScissor(viewport.x, viewport.y, viewport.width, viewport.height);
-    renderer.setClearColor(0x10151d, 1);
-    renderer.clear(true, true, true);
+    if (clear) {
+      renderer.setClearColor(0x10151d, 1);
+      renderer.clear(true, true, true);
+    }
+  }
+
+  resetSceneVisibility() {
+    for (const root of this.scene.children) {
+      const sourceGroup = root.userData?.sourceGroup;
+      if (sourceGroup) {
+        root.visible = this.syncSourceState ? sourceGroup.visible : true;
+      }
+    }
+    this.scene.traverse((object) => {
+      if (!object.isMesh) return;
+      const source = object.userData?.sourceObject;
+      object.visible = this.syncSourceState ? source?.visible !== false : true;
+    });
+  }
+
+  applyManagedDisplayState() {
+    if (!this.manageCollisionDisplay) return;
+    const collisionRoot = this.scene.children.find(
+      (object) => object.userData?.kind === "collision",
+    );
+    if (!collisionRoot) return;
+    collisionRoot.visible = this.collisionVisible;
+    collisionRoot.traverse((object) => {
+      if (!object.isMesh) return;
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+      for (const material of materials) {
+        material.opacity = this.collisionOpacity;
+        material.transparent = this.collisionOpacity < 1;
+        material.depthWrite = this.collisionOpacity >= 1;
+        material.needsUpdate = true;
+      }
+    });
+    const navmeshRoot = this.scene.children.find(
+      (object) => object.userData?.kind === "navmesh",
+    );
+    navmeshRoot?.traverse((object) => {
+      if (!object.isMesh) return;
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+      for (const material of materials) {
+        material.opacity = this.navmeshOpacity;
+        material.transparent = this.navmeshOpacity < 1;
+        material.depthWrite = this.navmeshOpacity >= 1;
+        material.needsUpdate = true;
+      }
+    });
   }
 
   renderRegion(renderer, camera, viewport, region) {
@@ -177,6 +268,15 @@ export class RegionClippedMapRenderer {
 
 export class RegionStage5MapRenderer extends RegionClippedMapRenderer {}
 
+function createPlayerScene() {
+  const scene = new THREE.Scene();
+  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+  directionalLight.position.set(120, 220, 100);
+  scene.add(directionalLight);
+  return scene;
+}
+
 function clonePlayerVisual(source) {
   const clone = new THREE.Mesh(
     source.geometry,
@@ -201,7 +301,7 @@ function clonePlayerVisual(source) {
 }
 
 function createPlayerMaterial(color) {
-  return new THREE.MeshBasicMaterial({
+  return new THREE.MeshLambertMaterial({
     color,
     transparent: false,
     opacity: 1,

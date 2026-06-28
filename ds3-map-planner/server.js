@@ -144,6 +144,9 @@ async function tryServeFile(res, absPath, explicitType = "") {
     "access-control-allow-methods": "GET,PUT,OPTIONS",
     "access-control-allow-headers": "content-type",
     "content-type": type,
+    ...(ext === ".obj"
+      ? { "cache-control": "public, max-age=31536000, immutable" }
+      : {}),
   });
   stream.pipe(res);
   return true;

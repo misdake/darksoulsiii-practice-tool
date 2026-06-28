@@ -29,6 +29,7 @@ export class RegionActionsController {
     resetPlanConfig,
     focusGamePoint,
     toggleStage5Mode,
+    isStage5OutdoorRegionEnabled,
     navigateBack,
   }) {
     this.stage4 = new RegionStage4Actions({
@@ -56,10 +57,12 @@ export class RegionActionsController {
       navGroup,
       missingPoints,
       getRegions,
+      getRegionGroups,
       setStatus,
       applyEditorFields,
       focusGamePoint,
       toggleStage5Mode,
+      isOutdoorRegionEnabled: isStage5OutdoorRegionEnabled,
     });
     this.stage6 = new RegionStage6Actions({
       planController,

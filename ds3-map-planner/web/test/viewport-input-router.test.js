@@ -30,6 +30,7 @@ test("ViewportInputRouter routes split pointer, drag and keyboard events", () =>
     onPointerDown: ({ ndc }) => calls.push(["right-down", ndc.x]),
     onPointerMove: () => calls.push(["right-move"]),
     onPointerUp: () => calls.push(["right-up"]),
+    onDoubleClick: () => calls.push(["right-double"]),
     onKeyDown: (event) => calls.push(["right-key", event.code]),
   });
 
@@ -40,6 +41,7 @@ test("ViewportInputRouter routes split pointer, drag and keyboard events", () =>
     pointerEvent({ clientX: 50, clientY: 50, buttons: 1 }),
   );
   element.dispatch("pointerup", pointerEvent({ clientX: 50, clientY: 50 }));
+  element.dispatch("dblclick", pointerEvent({ clientX: 150, clientY: 50 }));
   element.dispatch("pointerdown", pointerEvent({ clientX: 50, clientY: 50 }));
   element.dispatch("keydown", { code: "KeyA" });
 
@@ -48,11 +50,12 @@ test("ViewportInputRouter routes split pointer, drag and keyboard events", () =>
     ["right-key", "KeyW"],
     ["right-move"],
     ["right-up"],
+    ["right-double"],
     ["left-down", 0],
     ["left-key", "KeyA"],
   ]);
 
-  assert.equal(element.listenerCount(), 7);
+  assert.equal(element.listenerCount(), 8);
   assert.equal(windowTarget.listenerCount(), 2);
   router.dispose();
   assert.equal(element.listenerCount(), 0);

@@ -10,16 +10,18 @@ export function cloneClippedSourceScene(
   { includeNavmesh = false, preserveMaterials = false } = {},
 ) {
   const scene = new THREE.Scene();
-  if (preserveMaterials) {
-    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-    directionalLight.position.set(120, 220, 100);
-    scene.add(directionalLight);
-  }
+  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+  directionalLight.position.set(120, 220, 100);
+  scene.add(directionalLight);
   if (includeNavmesh) {
-    scene.add(cloneMeshTree(navGroup, { preserveMaterials }));
+    scene.add(
+      cloneMeshTree(navGroup, { preserveMaterials, kind: "navmesh" }),
+    );
   }
-  scene.add(cloneMeshTree(collisionGroup, { preserveMaterials }));
+  scene.add(
+    cloneMeshTree(collisionGroup, { preserveMaterials, kind: "collision" }),
+  );
   return scene;
 }
 
@@ -35,9 +37,10 @@ export function disposeStage5Scene(scene, { disposeGeometry = false } = {}) {
   scene.clear();
 }
 
-function cloneMeshTree(source, { preserveMaterials = false } = {}) {
+function cloneMeshTree(source, { preserveMaterials = false, kind } = {}) {
   const root = new THREE.Group();
   root.userData.sourceGroup = source;
+  root.userData.kind = kind;
 
   source?.traverse((object) => {
     if (!object.isMesh) {
@@ -47,7 +50,7 @@ function cloneMeshTree(source, { preserveMaterials = false } = {}) {
     object.updateWorldMatrix(true, false);
     const material = preserveMaterials
       ? cloneSourceMaterial(object.material)
-      : new THREE.MeshBasicMaterial({
+      : new THREE.MeshLambertMaterial({
           color:
             object.userData.kind === "navmesh-split" ? 0x4ade80 : 0x94a3b8,
           side: THREE.DoubleSide,

@@ -48,11 +48,7 @@ function updateFrameRegions({ missingPoints, runtime, syncController, ui }, posi
         activeRegions,
       })
     ) {
-      missingPoints.record([
-        snapshot.position.x,
-        snapshot.position.y,
-        snapshot.position.z,
-      ]);
+      missingPoints.record(position);
     }
     ui.setStage5Status({
       activeRegions,
@@ -143,6 +139,7 @@ function createActionsController(graph, navigateBack) {
     resetPlanConfig: () => ui.resetStage6Config(),
     focusGamePoint: (point) => runtime.focusGamePoint(point),
     toggleStage5Mode: () => runtime.toggleStage5Mode(),
+    isStage5OutdoorRegionEnabled: () => runtime.stage5OutdoorRegionEnabled,
     navigateBack,
   });
 }

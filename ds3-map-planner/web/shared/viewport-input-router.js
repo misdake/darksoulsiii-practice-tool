@@ -3,6 +3,7 @@ const POINTER_METHODS = {
   pointermove: "onPointerMove",
   pointerup: "onPointerUp",
   pointercancel: "onPointerUp",
+  dblclick: "onDoubleClick",
   wheel: "onWheel",
 };
 

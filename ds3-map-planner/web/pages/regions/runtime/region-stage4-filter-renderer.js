@@ -18,8 +18,18 @@ export class RegionStage4FilterRenderer {
     this.clippedRenderer.rebuild(navGroup, collisionGroup);
   }
 
-  render(renderer, camera, viewport, region) {
-    this.clippedRenderer.render(renderer, camera, viewport, [region]);
+  render(renderer, camera, viewport, region, { includeOutdoor = true } = {}) {
+    if (includeOutdoor) {
+      this.clippedRenderer.renderBase(renderer, camera, viewport);
+    }
+    this.clippedRenderer.render(renderer, camera, viewport, [region], {
+      clear: !includeOutdoor,
+    });
+    this.renderEditorOverlay(renderer, camera, viewport);
+  }
+
+  renderWithoutOutdoor(renderer, camera, viewport) {
+    this.clippedRenderer.render(renderer, camera, viewport, []);
     this.renderEditorOverlay(renderer, camera, viewport);
   }
 

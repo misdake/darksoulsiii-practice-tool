@@ -4,8 +4,6 @@
   "version": "0.1.0",
   "description": "Node.js local server for ds3-map-planner web UI",
   "scripts": {
-    "start": "node dev.js",
-    "dev": "node dev.js",
-    "api": "node server.js"
+    "dev": "node dev.js"
   }
 }

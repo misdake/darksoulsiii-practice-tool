@@ -17,7 +17,9 @@ export class RegionPanelRenderer {
       ? regions
           .map(
             (region) =>
-              `${region.name} [${formatY(region.ymin)}, ${formatY(region.ymax)}]`,
+              region.virtualOutdoor
+                ? region.name
+                : `${region.name} [${formatY(region.ymin)}, ${formatY(region.ymax)}]`,
           )
           .join(" -> ")
       : "No active regions.";

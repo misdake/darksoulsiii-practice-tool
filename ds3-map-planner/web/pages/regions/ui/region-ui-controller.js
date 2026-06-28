@@ -12,11 +12,14 @@ export class RegionUiController {
     this.progressText = this.byId("loadProgressText");
     this.progressPercent = this.byId("loadProgressPct");
     this.progressFill = this.byId("loadProgressFill");
-    this.stage4ShowCollision = this.byId("stage4ShowCollision");
-    this.stage4CollisionOpacity = this.byId("stage4CollisionOpacity");
-    this.stage4CollisionOpacityValue = this.byId("stage4CollisionOpacityValue");
-    this.stage4NavmeshOpacity = this.byId("stage4NavmeshOpacity");
-    this.stage4NavmeshOpacityValue = this.byId("stage4NavmeshOpacityValue");
+    this.sharedMapDisplayControls = this.byId("sharedMapDisplayControls");
+    this.showCollision = this.byId("showCollision");
+    this.collisionOpacity = this.byId("collisionOpacity");
+    this.collisionOpacityValue = this.byId("collisionOpacityValue");
+    this.navmeshOpacity = this.byId("navmeshOpacity");
+    this.navmeshOpacityValue = this.byId("navmeshOpacityValue");
+    this.stage4ShowOutdoorRegion = this.byId("stage4ShowOutdoorRegion");
+    this.stage5ShowOutdoorRegion = this.byId("stage5ShowOutdoorRegion");
     this.stage4ShowSelectedRegionOnly = this.byId(
       "stage4ShowSelectedRegionOnly",
     );
@@ -114,10 +117,12 @@ export class RegionUiController {
     onFitCamera,
     onStageChange,
     onStage4SelectionModeChange,
-    onStage4CollisionVisibleChange,
-    onStage4CollisionOpacityInput,
-    onStage4NavmeshOpacityInput,
+    onCollisionVisibleChange,
+    onCollisionOpacityInput,
+    onNavmeshOpacityInput,
     onStage4ShowSelectedRegionOnlyChange,
+    onStage4ShowOutdoorRegionChange,
+    onStage5ShowOutdoorRegionChange,
   }) {
     this.onStageChange = onStageChange;
     for (const radio of this.stageRadios) {
@@ -162,22 +167,32 @@ export class RegionUiController {
     this.addListener(this.byId("clearMissingBtn"), "click", onClearMissing);
     this.addListener(this.byId("backBtn"), "click", onBack);
     this.addListener(this.byId("fitCameraBtn"), "click", onFitCamera);
-    this.addListener(this.stage4ShowCollision, "change", () =>
-      onStage4CollisionVisibleChange?.(this.stage4ShowCollision.checked),
+    this.addListener(this.showCollision, "change", () =>
+      onCollisionVisibleChange?.(this.showCollision.checked),
     );
-    this.addListener(this.stage4CollisionOpacity, "input", () => {
-      const opacity = Number(this.stage4CollisionOpacity.value);
-      this.setStage4CollisionOpacity(opacity);
-      onStage4CollisionOpacityInput?.(opacity);
+    this.addListener(this.collisionOpacity, "input", () => {
+      const opacity = Number(this.collisionOpacity.value);
+      this.setCollisionOpacity(opacity);
+      onCollisionOpacityInput?.(opacity);
     });
-    this.addListener(this.stage4NavmeshOpacity, "input", () => {
-      const opacity = Number(this.stage4NavmeshOpacity.value);
-      this.setStage4NavmeshOpacity(opacity);
-      onStage4NavmeshOpacityInput?.(opacity);
+    this.addListener(this.navmeshOpacity, "input", () => {
+      const opacity = Number(this.navmeshOpacity.value);
+      this.setNavmeshOpacity(opacity);
+      onNavmeshOpacityInput?.(opacity);
     });
     this.addListener(this.stage4ShowSelectedRegionOnly, "change", () =>
       onStage4ShowSelectedRegionOnlyChange?.(
         this.stage4ShowSelectedRegionOnly.checked,
+      ),
+    );
+    this.addListener(this.stage4ShowOutdoorRegion, "change", () =>
+      onStage4ShowOutdoorRegionChange?.(
+        this.stage4ShowOutdoorRegion.checked,
+      ),
+    );
+    this.addListener(this.stage5ShowOutdoorRegion, "change", () =>
+      onStage5ShowOutdoorRegionChange?.(
+        this.stage5ShowOutdoorRegion.checked,
       ),
     );
     for (const id of ["name", "ymin", "ymax"]) {
@@ -186,15 +201,21 @@ export class RegionUiController {
     this.setActiveStage(this.currentStage());
     this.setStage4SelectionMode(this.stage4SelectionMode());
     onStage4SelectionModeChange?.(this.stage4SelectionMode());
-    onStage4CollisionVisibleChange?.(this.stage4ShowCollision?.checked ?? true);
-    const initialOpacity = Number(this.stage4CollisionOpacity?.value);
-    this.setStage4CollisionOpacity(initialOpacity);
-    onStage4CollisionOpacityInput?.(initialOpacity);
-    const initialNavmeshOpacity = Number(this.stage4NavmeshOpacity?.value);
-    this.setStage4NavmeshOpacity(initialNavmeshOpacity);
-    onStage4NavmeshOpacityInput?.(initialNavmeshOpacity);
+    onCollisionVisibleChange?.(this.showCollision?.checked ?? true);
+    const initialOpacity = Number(this.collisionOpacity?.value);
+    this.setCollisionOpacity(initialOpacity);
+    onCollisionOpacityInput?.(initialOpacity);
+    const initialNavmeshOpacity = Number(this.navmeshOpacity?.value);
+    this.setNavmeshOpacity(initialNavmeshOpacity);
+    onNavmeshOpacityInput?.(initialNavmeshOpacity);
     onStage4ShowSelectedRegionOnlyChange?.(
       this.stage4ShowSelectedRegionOnly?.checked ?? false,
+    );
+    onStage4ShowOutdoorRegionChange?.(
+      this.stage4ShowOutdoorRegion?.checked ?? true,
+    );
+    onStage5ShowOutdoorRegionChange?.(
+      this.stage5ShowOutdoorRegion?.checked ?? true,
     );
   }
 
@@ -232,6 +253,7 @@ export class RegionUiController {
       panel.hidden =
         Number(panel.getAttribute("data-region-stage-panel")) !== activeStage;
     }
+    this.sharedMapDisplayControls.hidden = activeStage === 6;
     this.onStageChange?.(activeStage);
   }
 
@@ -280,24 +302,16 @@ export class RegionUiController {
     this.panelRenderer.setStage6Config();
   }
 
-  setStage4CollisionOpacity(opacity) {
+  setCollisionOpacity(opacity) {
     const value = Math.max(0, Math.min(1, Number(opacity) || 0));
-    if (this.stage4CollisionOpacity) {
-      this.stage4CollisionOpacity.value = String(value);
-    }
-    if (this.stage4CollisionOpacityValue) {
-      this.stage4CollisionOpacityValue.textContent = value.toFixed(2);
-    }
+    this.collisionOpacity.value = String(value);
+    this.collisionOpacityValue.textContent = value.toFixed(2);
   }
 
-  setStage4NavmeshOpacity(opacity) {
+  setNavmeshOpacity(opacity) {
     const value = Math.max(0, Math.min(1, Number(opacity) || 0));
-    if (this.stage4NavmeshOpacity) {
-      this.stage4NavmeshOpacity.value = String(value);
-    }
-    if (this.stage4NavmeshOpacityValue) {
-      this.stage4NavmeshOpacityValue.textContent = value.toFixed(2);
-    }
+    this.navmeshOpacity.value = String(value);
+    this.navmeshOpacityValue.textContent = value.toFixed(2);
   }
 
   renderActiveRegions(regions) {

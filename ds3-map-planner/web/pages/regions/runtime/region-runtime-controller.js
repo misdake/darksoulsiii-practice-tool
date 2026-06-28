@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { createObjParser } from "../../../shared/map-runtime.js";
+import { PLAYER_CAPSULE_FOOT_OFFSET } from "../../../shared/physics-system.js";
 import { RegionShotPlanSystem } from "../planning/region-shot-plan-system.js";
 import { RegionAssetLoader } from "../assets/region-asset-loader.js";
 import { RegionOverlayController } from "../overlay/region-overlay-controller.js";
@@ -33,10 +34,12 @@ export class RegionRuntimeController {
     this.navGroup = new THREE.Group();
     this.collisionGroup = new THREE.Group();
     this.collisionVisible = true;
-    this.collisionOpacity = 0.24;
+    this.collisionOpacity = 0.25;
     this.navmeshOpacity = 1;
     this.stage4RegionFilterEnabled = false;
     this.stage4FilterRegion = null;
+    this.stage4OutdoorRegionEnabled = true;
+    this.stage5OutdoorRegionEnabled = true;
     this.scene.add(this.navGroup, this.collisionGroup);
 
     this.regionScene = new RegionSceneController({
@@ -79,13 +82,15 @@ export class RegionRuntimeController {
       onBeforeRightRender: () => this.updateRegionFillVisibility(),
       getFrameGamePosition: () => [
         this.runtime.physicsState.position.x,
-        this.runtime.physicsState.position.y,
+        this.runtime.physicsState.position.y - PLAYER_CAPSULE_FOOT_OFFSET,
         this.runtime.physicsState.position.z,
       ],
       onFrameGamePosition,
       getFollowTarget: () => this.stage5.mapFollowTarget,
       getStage4FilterRegion: () =>
         this.stage4RegionFilterEnabled ? this.stage4FilterRegion : null,
+      getStage4OutdoorEnabled: () => this.stage4OutdoorRegionEnabled,
+      getStage5OutdoorEnabled: () => this.stage5OutdoorRegionEnabled,
     });
 
     this.raycaster = new THREE.Raycaster();
@@ -145,7 +150,7 @@ export class RegionRuntimeController {
     return true;
   }
 
-  focusNavmeshSelection(meshes) {
+  focusNavmeshSelection(meshes, { focusRight = false } = {}) {
     const bounds = new THREE.Box3();
     let hasBounds = false;
     for (const mesh of meshes || []) {
@@ -166,7 +171,7 @@ export class RegionRuntimeController {
 
     this.viewportController.focusBounds(bounds, this.leftCamera, {
       aspect: this.leftViewportAspect(),
-      focusRight: false,
+      focusRight,
     });
     return true;
   }
@@ -208,16 +213,25 @@ export class RegionRuntimeController {
   setCollisionVisible(visible) {
     this.collisionVisible = Boolean(visible);
     this.applyCollisionDisplayState();
+    this.regionScene.setStage5CollisionDisplay(
+      this.collisionVisible,
+      this.collisionOpacity,
+    );
   }
 
   setCollisionOpacity(opacity) {
-    this.collisionOpacity = Math.max(0, Math.min(1, Number(opacity) || 0));
+    this.collisionOpacity = clampOpacity(opacity);
     this.applyCollisionDisplayState();
+    this.regionScene.setStage5CollisionDisplay(
+      this.collisionVisible,
+      this.collisionOpacity,
+    );
   }
 
   setNavmeshOpacity(opacity) {
     this.navmeshOpacity = Math.max(0, Math.min(1, Number(opacity) || 0));
     this.applyNavmeshDisplayState();
+    this.regionScene.setStage5NavmeshOpacity(this.navmeshOpacity);
   }
 
   setStage4RegionFilterEnabled(enabled) {
@@ -227,6 +241,14 @@ export class RegionRuntimeController {
 
   setStage4FilterRegion(region) {
     this.stage4FilterRegion = region || null;
+  }
+
+  setStage4OutdoorRegionEnabled(enabled) {
+    this.stage4OutdoorRegionEnabled = Boolean(enabled);
+  }
+
+  setStage5OutdoorRegionEnabled(enabled) {
+    this.stage5OutdoorRegionEnabled = Boolean(enabled);
   }
 
   updateRegionFillVisibility() {
@@ -261,6 +283,11 @@ export class RegionRuntimeController {
   rebuild(navGroup = this.navGroup, collisionGroup = this.collisionGroup) {
     this.applyDisplayState();
     this.regionScene.rebuild(navGroup, collisionGroup);
+    this.regionScene.setStage5CollisionDisplay(
+      this.collisionVisible,
+      this.collisionOpacity,
+    );
+    this.regionScene.setStage5NavmeshOpacity(this.navmeshOpacity);
     this.planSystem.rebuildCollisionBvh(collisionGroup);
     this.stage5.rebuildPhysics();
   }
@@ -282,6 +309,10 @@ export class RegionRuntimeController {
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
+}
+
+function clampOpacity(opacity) {
+  return Math.max(0, Math.min(1, Number(opacity) || 0));
 }
 
 function applyGroupOpacity(group, opacity) {
@@ -308,7 +339,10 @@ class RegionSceneController {
       collisionGroup,
       overlayGroups,
     });
-    this.leftMapRenderer = new RegionStage5MapRenderer();
+    this.leftMapRenderer = new RegionStage5MapRenderer({
+      includeNavmesh: true,
+      manageCollisionDisplay: true,
+    });
   }
 
   rebuild(navmeshGroup, collisionGroup) {
@@ -320,12 +354,44 @@ class RegionSceneController {
     this.leftMapRenderer.setPlayerMesh(mesh);
   }
 
-  renderLeftMap(renderer, camera, viewport, activeRegions) {
-    this.leftMapRenderer.render(renderer, camera, viewport, activeRegions);
+  setStage5CollisionDisplay(visible, opacity) {
+    this.leftMapRenderer.setCollisionDisplay(visible, opacity);
   }
 
-  renderStage4Filtered(renderer, camera, viewport, region) {
-    this.stage4FilterRenderer.render(renderer, camera, viewport, region);
+  setStage5NavmeshOpacity(opacity) {
+    this.leftMapRenderer.setNavmeshOpacity(opacity);
+  }
+
+  renderLeftMap(
+    renderer,
+    camera,
+    viewport,
+    activeRegions,
+    { includeOutdoor = true } = {},
+  ) {
+    const indoorRegions = activeRegions.filter(
+      (region) => !region.virtualOutdoor,
+    );
+    if (includeOutdoor) {
+      this.leftMapRenderer.renderBase(renderer, camera, viewport);
+    }
+    this.leftMapRenderer.render(renderer, camera, viewport, indoorRegions, {
+      clear: !includeOutdoor,
+    });
+  }
+
+  renderStage4Filtered(renderer, camera, viewport, region, options) {
+    this.stage4FilterRenderer.render(
+      renderer,
+      camera,
+      viewport,
+      region,
+      options,
+    );
+  }
+
+  renderStage4WithoutOutdoor(renderer, camera, viewport) {
+    this.stage4FilterRenderer.renderWithoutOutdoor(renderer, camera, viewport);
   }
 
   dispose() {

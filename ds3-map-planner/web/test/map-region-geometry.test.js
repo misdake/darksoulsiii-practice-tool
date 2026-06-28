@@ -10,6 +10,7 @@ import {
   activeRegions,
   addGapMarker,
   footprintForHeight,
+  findCrossGroupRegionOverlaps,
   groupSplitsByLayer,
   occupancyBoundsFromTriangles,
   findUncoveredSamples,
@@ -20,6 +21,35 @@ import {
   triangleCoverageSamples,
   validateRegions,
 } from "../pages/regions/geometry/region-geometry.js";
+
+test("cross-group overlap ignores shared groups, height layers and 0.1m slivers", () => {
+  const rectangle = (name, minX, maxX, ymin = 0, ymax = 3) => ({
+    name,
+    ymin,
+    ymax,
+    polygon_xz: [[minX, 0], [maxX, 0], [maxX, 2], [minX, 2]],
+  });
+  const first = rectangle("A", 0, 2);
+  const sliver = rectangle("B", 1.95, 4);
+  const overlap = rectangle("C", 1.8, 4);
+
+  assert.equal(findCrossGroupRegionOverlaps([first, sliver], []).length, 0);
+  assert.equal(findCrossGroupRegionOverlaps([first, overlap], []).length, 1);
+  assert.equal(
+    findCrossGroupRegionOverlaps(
+      [first, overlap],
+      [{ regions: ["A", "C"] }],
+    ).length,
+    0,
+  );
+  assert.equal(
+    findCrossGroupRegionOverlaps(
+      [first, { ...overlap, ymin: 3, ymax: 5 }],
+      [],
+    ).length,
+    0,
+  );
+});
 
 const lower = {
   name: "lower",

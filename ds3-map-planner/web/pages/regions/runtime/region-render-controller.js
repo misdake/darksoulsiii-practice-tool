@@ -14,6 +14,8 @@ export class RegionRenderController {
     onFrameGamePosition,
     getFollowTarget,
     getStage4FilterRegion,
+    getStage4OutdoorEnabled,
+    getStage5OutdoorEnabled,
   }) {
     this.window = window;
     this.renderer = renderer;
@@ -29,6 +31,8 @@ export class RegionRenderController {
     this.onFrameGamePosition = onFrameGamePosition;
     this.getFollowTarget = getFollowTarget;
     this.getStage4FilterRegion = getStage4FilterRegion;
+    this.getStage4OutdoorEnabled = getStage4OutdoorEnabled;
+    this.getStage5OutdoorEnabled = getStage5OutdoorEnabled;
     this.animationFrame = 0;
     this.lastFrameTime = 0;
     this.stage = 4;
@@ -92,6 +96,7 @@ export class RegionRenderController {
         this.leftCamera,
         leftViewport,
         activeRegions,
+        { includeOutdoor: this.getStage5OutdoorEnabled?.() !== false },
       );
     } else if (stage4FilterRegion) {
       this.regionScene.renderStage4Filtered(
@@ -99,6 +104,13 @@ export class RegionRenderController {
         this.leftCamera,
         leftViewport,
         stage4FilterRegion,
+        { includeOutdoor: this.getStage4OutdoorEnabled?.() !== false },
+      );
+    } else if (this.stage === 4 && this.getStage4OutdoorEnabled?.() === false) {
+      this.regionScene.renderStage4WithoutOutdoor(
+        this.renderer,
+        this.leftCamera,
+        leftViewport,
       );
     } else {
       this.renderLeftScene(leftViewport);

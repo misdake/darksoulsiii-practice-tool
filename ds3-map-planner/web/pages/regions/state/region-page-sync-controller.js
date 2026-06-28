@@ -1,6 +1,11 @@
 import { validateRegions } from "../geometry/region-geometry.js";
 import { regionGroupForIndex } from "./region-state.js";
 
+const OUTDOOR_REGION = Object.freeze({
+  name: "Outdoor",
+  virtualOutdoor: true,
+});
+
 export class RegionPageSyncController {
   constructor({ state, ui, runtime }) {
     this.state = state;
@@ -60,6 +65,12 @@ export class RegionPageSyncController {
       onStage6Region: (index, options) =>
         this.selectStage6Region(index, options),
       onNav: (mesh, options) => this.selectNavmesh(mesh, options),
+      onFocusRegion: (index) => {
+        const region = this.state.regions[index];
+        if (region) this.runtime.focusRegion(region, { focusRight: true });
+      },
+      onFocusNav: (mesh) =>
+        this.runtime.focusNavmeshSelection([mesh], { focusRight: true }),
       onEmpty: () => this.clearCurrentSelection(),
       getSelectionMode: () => this.selectionMode,
     };
@@ -92,8 +103,11 @@ export class RegionPageSyncController {
       () => this.redraw(),
     );
     const expandedRegions = this.expandRegionsToGroups(activeRegions);
-    this.ui.renderActiveRegions(expandedRegions);
-    return expandedRegions;
+    const logicalRegions = this.runtime.stage5OutdoorRegionEnabled
+      ? [OUTDOOR_REGION, ...expandedRegions]
+      : expandedRegions;
+    this.ui.renderActiveRegions(logicalRegions);
+    return logicalRegions;
   }
 
   sync() {

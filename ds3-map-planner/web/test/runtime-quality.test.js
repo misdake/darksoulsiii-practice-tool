@@ -26,8 +26,40 @@ test("Stage5 left player visual clones and updates the camera direction arrow", 
   arrow.userData.kind = "camera-direction";
   source.add(arrow);
 
-  const renderer = new RegionStage5MapRenderer();
+  const navGroup = new THREE.Group();
+  const collisionGroup = new THREE.Group();
+  const nav = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  nav.userData.kind = "navmesh-split";
+  const collision = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+  navGroup.add(nav);
+  collisionGroup.add(collision);
+
+  const renderer = new RegionStage5MapRenderer({
+    includeNavmesh: true,
+    manageCollisionDisplay: true,
+  });
+  renderer.rebuild(navGroup, collisionGroup);
+  renderer.setCollisionDisplay(false, 0.4);
+  renderer.setNavmeshOpacity(0.6);
   renderer.setPlayerMesh(source);
+  assert.equal(
+    renderer.playerScene.children.filter((object) => object.isLight).length,
+    2,
+  );
+  assert.equal(
+    renderer.scene.children.filter((object) => object.userData.kind).length,
+    2,
+  );
+  const collisionClone = renderer.scene.children.find(
+    (object) => object.userData.kind === "collision",
+  );
+  assert.equal(collisionClone.visible, false);
+  assert.equal(collisionClone.children[0].material.opacity, 0.4);
+  assert.equal(collisionClone.children[0].material.transparent, true);
+  const navClone = renderer.scene.children.find(
+    (object) => object.userData.kind === "navmesh",
+  );
+  assert.equal(navClone.children[0].material.opacity, 0.6);
   assert.equal(renderer.playerMesh.children.length, 1);
   assert.equal(renderer.playerMesh.children[0].material.transparent, false);
 
@@ -39,6 +71,10 @@ test("Stage5 left player visual clones and updates the camera direction arrow", 
   source.material.dispose();
   arrow.geometry.dispose();
   arrow.material.dispose();
+  nav.geometry.dispose();
+  nav.material.dispose();
+  collision.geometry.dispose();
+  collision.material.dispose();
 });
 
 test("stage saves accept an empty successful response", async () => {

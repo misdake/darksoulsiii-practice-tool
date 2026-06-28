@@ -78,7 +78,7 @@ function parseObjText(text) {
 self.onmessage = async (ev) => {
   const { id, path } = ev.data;
   try {
-    const res = await fetch(path, { cache: "no-cache" });
+    const res = await fetch(path, { cache: "force-cache" });
     if (!res.ok) throw new Error(`fetch failed ${res.status}: ${path}`);
     const text = await res.text();
     const parsed = parseObjText(text);

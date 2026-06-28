@@ -4,6 +4,8 @@ import { computeGeometryBoundsTree } from "./bvh.js";
 
 const PLAYER_RADIUS = 0.3;
 const PLAYER_SEGMENT = 0.96;
+export const PLAYER_CAPSULE_FOOT_OFFSET =
+  PLAYER_SEGMENT * 0.5 + PLAYER_RADIUS;
 
 export class PhysicsSystem {
   constructor() {

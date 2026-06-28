@@ -41,14 +41,18 @@ export class RegionPageController {
       },
       onStage4SelectionModeChange: (mode) =>
         syncController.setSelectionMode(mode),
-      onStage4CollisionVisibleChange: (visible) =>
+      onCollisionVisibleChange: (visible) =>
         runtime.setCollisionVisible(visible),
-      onStage4CollisionOpacityInput: (opacity) =>
+      onCollisionOpacityInput: (opacity) =>
         runtime.setCollisionOpacity(opacity),
-      onStage4NavmeshOpacityInput: (opacity) =>
+      onNavmeshOpacityInput: (opacity) =>
         runtime.setNavmeshOpacity(opacity),
       onStage4ShowSelectedRegionOnlyChange: (enabled) =>
         runtime.setStage4RegionFilterEnabled(enabled),
+      onStage4ShowOutdoorRegionChange: (enabled) =>
+        runtime.setStage4OutdoorRegionEnabled(enabled),
+      onStage5ShowOutdoorRegionChange: (enabled) =>
+        runtime.setStage5OutdoorRegionEnabled(enabled),
       onSelectStage6Region: (index) =>
         syncController.selectStage6Region(index, { focusRight: false }),
     });
