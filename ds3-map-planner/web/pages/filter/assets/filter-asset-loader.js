@@ -19,22 +19,26 @@ export class FilterAssetLoader {
   async loadCollision(entry) {
     const path = entry.path;
     const parsed = await this.pool.parse(path);
-    const meshData = parsed.meshes?.[0];
-    if (!meshData) {
+    const meshes = parsed.meshes || [];
+    if (!meshes.length) {
       throw new Error(`empty obj: ${path}`);
     }
-
-    const geometry = createGeometry(meshData);
-    computeGeometryBoundsTree(geometry);
 
     const group = new THREE.Group();
     group.name = path;
     group.userData = {
       manualEnabled: true,
       kind: "collision",
-      triangleCount: Math.floor((meshData.indices || []).length / 3),
+      triangleCount: 0,
     };
-    group.add(new THREE.Mesh(geometry, this.makeMaterial("collision")));
+    for (const data of meshes) {
+      const geometry = createGeometry(data);
+      computeGeometryBoundsTree(geometry);
+      group.userData.triangleCount += Math.floor(
+        (data.indices || []).length / 3,
+      );
+      group.add(new THREE.Mesh(geometry, this.makeMaterial("collision")));
+    }
     return group;
   }
 
