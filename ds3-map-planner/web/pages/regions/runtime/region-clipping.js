@@ -1,4 +1,5 @@
 import * as THREE from "three";
+
 export function createRegionMask(region) {
   const points = region.polygon_xz.map(([x, z]) => new THREE.Vector2(x, z));
   const shape = new THREE.Shape(points);
@@ -19,14 +20,32 @@ export function createRegionMask(region) {
   return mask;
 }
 
-export function applyRegionClipping(scene, region) {
-  const planes = regionClippingPlanes(region);
+export function applyRegionBroadPhase(scene, region) {
+  const xs = region.polygon_xz.map(([x]) => x);
+  const zs = region.polygon_xz.map(([, z]) => z);
+  const bounds = new THREE.Box3(
+    new THREE.Vector3(Math.min(...xs), region.ymin, Math.min(...zs)),
+    new THREE.Vector3(Math.max(...xs), region.ymax, Math.max(...zs)),
+  );
 
   scene.traverse((object) => {
-    if (!object.isMesh) {
-      return;
+    if (!object.isMesh) return;
+    if (!object.userData.worldBounds) {
+      object.updateWorldMatrix(true, false);
+      if (!object.geometry.boundingBox) object.geometry.computeBoundingBox();
+      object.userData.worldBounds = object.geometry.boundingBox
+        .clone()
+        .applyMatrix4(object.matrixWorld);
     }
+    object.visible =
+      object.visible && object.userData.worldBounds.intersectsBox(bounds);
+  });
+}
 
+export function applyRegionClipping(scene, region) {
+  const planes = regionClippingPlanes(region);
+  scene.traverse((object) => {
+    if (!object.isMesh) return;
     const materials = Array.isArray(object.material)
       ? object.material
       : [object.material];

@@ -115,6 +115,10 @@ export class RegionPanelRenderer {
     if (deleteBtn) {
       deleteBtn.disabled = !selected;
     }
+    const splitHeightBtn = this.byId("splitRegionHeightBtn");
+    if (splitHeightBtn) {
+      splitHeightBtn.disabled = !selected;
+    }
     this.byId("regions").replaceChildren(
       ...displayRegionGroups(regions, regionGroups).map((indices) =>
         this.createRegionListGroup(

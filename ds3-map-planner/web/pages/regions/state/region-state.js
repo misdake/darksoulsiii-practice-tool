@@ -27,6 +27,17 @@ export class RegionState {
     return this.selectedRegion;
   }
 
+  restoreSelection(indices, primaryIndex = indices.at(-1) ?? -1) {
+    const valid = [...new Set(indices)].filter(
+      (index) => index >= 0 && index < this.regions.length,
+    );
+    this.selectedIndices = valid;
+    this.selectedIndex = valid.includes(primaryIndex)
+      ? primaryIndex
+      : valid.at(-1) ?? -1;
+    return this.selectedRegion;
+  }
+
   toggleSelected(index) {
     if (index < 0 || index >= this.regions.length) {
       return this.select(-1);
@@ -169,6 +180,13 @@ export function regionGroupForIndex(regions, regionGroups, index) {
   return group.regions
     .map((name) => regions.findIndex((candidate) => candidate.name === name))
     .filter((candidateIndex) => candidateIndex >= 0);
+}
+
+export function nextRegionName(regions) {
+  const names = new Set(regions.map((region) => region.name));
+  let index = 1;
+  while (names.has(`Region ${index}`)) index += 1;
+  return `Region ${index}`;
 }
 
 function removeRegionFromGroups(regionGroups, name) {

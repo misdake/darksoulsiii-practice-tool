@@ -4,33 +4,18 @@ import {
   restoreMaterialState,
 } from "../../../shared/material-state.js";
 import {
-  cloneClippedSourceScene,
-  disposeClippedScene,
   applyRegionBroadPhase,
-  syncClippedSourceScene,
-} from "./region-clipped-map-scene.js";
-import {
   applyRegionClipping,
   createRegionMask,
-} from "./region-clipped-map-mask.js";
+} from "./region-clipping.js";
 
 export class RegionClippedMapRenderer {
   constructor({
-    includeNavmesh = false,
-    preserveMaterials = false,
-    syncSourceState = preserveMaterials,
+    scene,
     renderPlayer = true,
-    manageCollisionDisplay = false,
   } = {}) {
-    this.includeNavmesh = includeNavmesh;
-    this.preserveMaterials = preserveMaterials;
-    this.syncSourceState = syncSourceState;
+    this.scene = scene;
     this.renderPlayer = renderPlayer;
-    this.manageCollisionDisplay = manageCollisionDisplay;
-    this.collisionVisible = true;
-    this.collisionOpacity = 1;
-    this.navmeshOpacity = 1;
-    this.scene = new THREE.Scene();
     this.maskScene = new THREE.Scene();
     this.playerScene = createPlayerScene();
     this.copyScene = new THREE.Scene();
@@ -50,18 +35,10 @@ export class RegionClippedMapRenderer {
     );
   }
 
-  rebuild(navGroup, collisionGroup) {
-    disposeClippedScene(this.scene);
-    this.scene = cloneClippedSourceScene(navGroup, collisionGroup, {
-      includeNavmesh: this.includeNavmesh,
-      preserveMaterials: this.preserveMaterials,
-    });
-  }
-
   setPlayerMesh(mesh) {
     if (!mesh) {
       if (!this.playerSourceMesh && !this.playerMesh) return;
-      disposeClippedScene(this.playerScene);
+      disposeRenderScene(this.playerScene);
       this.playerScene = createPlayerScene();
       this.playerSourceMesh = null;
       this.playerMesh = null;
@@ -71,7 +48,7 @@ export class RegionClippedMapRenderer {
       this.syncPlayerMesh();
       return;
     }
-    disposeClippedScene(this.playerScene);
+    disposeRenderScene(this.playerScene);
     this.playerScene = createPlayerScene();
     this.playerSourceMesh = mesh;
     this.playerMesh = clonePlayerVisual(mesh);
@@ -79,24 +56,11 @@ export class RegionClippedMapRenderer {
     this.syncPlayerMesh();
   }
 
-  setCollisionDisplay(visible, opacity) {
-    this.collisionVisible = Boolean(visible);
-    this.collisionOpacity = Math.max(0, Math.min(1, Number(opacity) || 0));
-    this.applyManagedDisplayState();
-  }
-
-  setNavmeshOpacity(opacity) {
-    this.navmeshOpacity = Math.max(0, Math.min(1, Number(opacity) || 0));
-    this.applyManagedDisplayState();
-  }
-
   render(renderer, camera, viewport, regions, { clear = true } = {}) {
     const previousState = captureRendererState(renderer);
     const pixelViewport = normalizePixelViewport(viewport);
 
     try {
-      if (this.syncSourceState) syncClippedSourceScene(this.scene);
-      this.applyManagedDisplayState();
       this.prepareViewport(renderer, pixelViewport, clear);
       if (!regions.length) {
         return;
@@ -118,9 +82,6 @@ export class RegionClippedMapRenderer {
     const previousState = captureRendererState(renderer);
     const pixelViewport = normalizePixelViewport(viewport);
     try {
-      if (this.syncSourceState) syncClippedSourceScene(this.scene);
-      this.resetSceneVisibility();
-      this.applyManagedDisplayState();
       this.prepareViewport(renderer, pixelViewport, true);
       renderer.localClippingEnabled = false;
       renderer.autoClear = false;
@@ -135,9 +96,8 @@ export class RegionClippedMapRenderer {
   }
 
   dispose() {
-    disposeClippedScene(this.scene);
-    disposeClippedScene(this.maskScene);
-    disposeClippedScene(this.playerScene);
+    disposeRenderScene(this.maskScene, { disposeGeometry: true });
+    disposeRenderScene(this.playerScene);
     this.target?.dispose();
     this.copyScene.traverse((object) => object.geometry?.dispose?.());
     this.copyMaterial.dispose();
@@ -166,69 +126,23 @@ export class RegionClippedMapRenderer {
     }
   }
 
-  resetSceneVisibility() {
-    for (const root of this.scene.children) {
-      const sourceGroup = root.userData?.sourceGroup;
-      if (sourceGroup) {
-        root.visible = this.syncSourceState ? sourceGroup.visible : true;
-      }
-    }
-    this.scene.traverse((object) => {
-      if (!object.isMesh) return;
-      const source = object.userData?.sourceObject;
-      object.visible = this.syncSourceState ? source?.visible !== false : true;
-    });
-  }
-
-  applyManagedDisplayState() {
-    if (!this.manageCollisionDisplay) return;
-    const collisionRoot = this.scene.children.find(
-      (object) => object.userData?.kind === "collision",
-    );
-    if (!collisionRoot) return;
-    collisionRoot.visible = this.collisionVisible;
-    collisionRoot.traverse((object) => {
-      if (!object.isMesh) return;
-      const materials = Array.isArray(object.material)
-        ? object.material
-        : [object.material];
-      for (const material of materials) {
-        material.opacity = this.collisionOpacity;
-        material.transparent = this.collisionOpacity < 1;
-        material.depthWrite = this.collisionOpacity >= 1;
-        material.needsUpdate = true;
-      }
-    });
-    const navmeshRoot = this.scene.children.find(
-      (object) => object.userData?.kind === "navmesh",
-    );
-    navmeshRoot?.traverse((object) => {
-      if (!object.isMesh) return;
-      const materials = Array.isArray(object.material)
-        ? object.material
-        : [object.material];
-      for (const material of materials) {
-        material.opacity = this.navmeshOpacity;
-        material.transparent = this.navmeshOpacity < 1;
-        material.depthWrite = this.navmeshOpacity >= 1;
-        material.needsUpdate = true;
-      }
-    });
-  }
-
   renderRegion(renderer, camera, viewport, region) {
     const materialState = captureMaterialState(this.scene);
+    const background = this.scene.background;
     renderer.setRenderTarget(this.target);
     renderer.setViewport(0, 0, viewport.width, viewport.height);
     renderer.setScissor(0, 0, viewport.width, viewport.height);
     renderer.setClearColor(0, 0, 0, 0);
     renderer.clear(true, true, true);
 
-    disposeClippedScene(this.maskScene, { disposeGeometry: true });
+    disposeRenderScene(this.maskScene, { disposeGeometry: true });
     this.maskScene.add(createRegionMask(region));
     renderer.render(this.maskScene, camera);
 
     try {
+      // The clipped pass is alpha-composited over the base map. Rendering the
+      // map scene's background here would make the target opaque and erase it.
+      this.scene.background = null;
       applyRegionBroadPhase(this.scene, region);
       applyRegionClipping(this.scene, region);
       renderer.autoClear = false;
@@ -238,6 +152,7 @@ export class RegionClippedMapRenderer {
         renderer.render(this.playerScene, camera);
       }
     } finally {
+      this.scene.background = background;
       restoreMaterialState(materialState);
     }
 
@@ -277,6 +192,18 @@ function createPlayerScene() {
   directionalLight.position.set(120, 220, 100);
   scene.add(directionalLight);
   return scene;
+}
+
+function disposeRenderScene(scene, { disposeGeometry = false } = {}) {
+  scene.traverse((object) => {
+    if (!object.isMesh) return;
+    if (disposeGeometry) object.geometry?.dispose?.();
+    const materials = Array.isArray(object.material)
+      ? object.material
+      : [object.material];
+    for (const material of materials) material?.dispose?.();
+  });
+  scene.clear();
 }
 
 function clonePlayerVisual(source) {

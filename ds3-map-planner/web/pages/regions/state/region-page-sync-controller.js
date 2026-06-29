@@ -10,6 +10,10 @@ export class RegionPageSyncController {
     this.selectedNavmeshes = [];
     this.mode = "regions";
     this.stage4FilterRegion = null;
+    this.modeSelections = {
+      navmesh: [],
+      regions: { names: [], primaryName: null },
+    };
   }
 
   setRegions(regions) {
@@ -30,6 +34,16 @@ export class RegionPageSyncController {
 
   clearSelectedNavmesh() {
     this.selectedNavmeshes = [];
+    this.modeSelections.navmesh = [];
+    this.runtime.overlay.renderSelectedNavmeshes([]);
+  }
+
+  resetModeSelections() {
+    this.modeSelections.navmesh = [];
+    this.modeSelections.regions = { names: [], primaryName: null };
+    this.selectedNavmeshes = [];
+    this.state.select(-1);
+    this.stage4FilterRegion = null;
     this.runtime.overlay.renderSelectedNavmeshes([]);
   }
 
@@ -37,17 +51,72 @@ export class RegionPageSyncController {
     const nextMode = ["navmesh", "regions", "test"].includes(mode)
       ? mode
       : "regions";
-    if (this.state.selectedRegion) {
-      this.stage4FilterRegion = this.state.selectedRegion;
+    if (nextMode === this.mode) {
+      this.ui.setStage4Mode(this.mode);
+      this.sync();
+      return;
     }
+    this.rememberModeSelection(this.mode);
+    this.clearVisibleSelection();
     this.mode = nextMode;
     this.ui.setStage4Mode(this.mode);
-    if (this.mode === "navmesh" || this.mode === "test") {
-      this.setSelectedIndex(-1);
-    } else {
-      this.clearSelectedNavmesh();
-    }
+    this.restoreModeSelection(this.mode);
     this.sync();
+  }
+
+  suspendModeSelection() {
+    this.rememberModeSelection(this.mode);
+    this.clearVisibleSelection();
+    this.sync();
+  }
+
+  resumeModeSelection() {
+    this.clearVisibleSelection();
+    this.restoreModeSelection(this.mode);
+    this.sync();
+  }
+
+  rememberModeSelection(mode) {
+    if (mode === "navmesh") {
+      this.modeSelections.navmesh = [...this.selectedNavmeshes];
+      return;
+    }
+    if (mode !== "regions") return;
+    this.modeSelections.regions = {
+      names: this.state.selectedIndices
+        .map((index) => this.state.regions[index]?.name)
+        .filter(Boolean),
+      primaryName: this.state.selectedRegion?.name || null,
+    };
+  }
+
+  clearVisibleSelection() {
+    this.selectedNavmeshes = [];
+    this.runtime.overlay.renderSelectedNavmeshes([]);
+    this.state.select(-1);
+    this.stage4FilterRegion = null;
+  }
+
+  restoreModeSelection(mode) {
+    if (mode === "navmesh") {
+      this.selectedNavmeshes = this.modeSelections.navmesh.filter(
+        (mesh) => mesh?.isMesh && mesh.parent,
+      );
+      this.runtime.overlay.renderSelectedNavmeshes(this.selectedNavmeshes);
+      return;
+    }
+    if (mode !== "regions") return;
+    const snapshot = this.modeSelections.regions;
+    const indices = snapshot.names
+      .map((name) =>
+        this.state.regions.findIndex((region) => region.name === name),
+      )
+      .filter((index) => index >= 0);
+    const primaryIndex = this.state.regions.findIndex(
+      (region) => region.name === snapshot.primaryName,
+    );
+    this.state.restoreSelection(indices, primaryIndex);
+    this.stage4FilterRegion = this.state.selectedRegion;
   }
 
   createInputCallbacks() {
@@ -141,7 +210,6 @@ export class RegionPageSyncController {
     if (this.mode !== "regions") {
       return;
     }
-    this.clearSelectedNavmesh();
     const previousIndex = this.state.selectedIndex;
     if (toggle) {
       this.state.toggleSelected(index);
@@ -152,6 +220,7 @@ export class RegionPageSyncController {
       this.onRegionSelectionChange?.(this.state.selectedRegion);
     }
     this.stage4FilterRegion = this.state.selectedRegion;
+    this.rememberModeSelection("regions");
     if (this.state.selectedRegion) {
       this.runtime.focusRegion(this.state.selectedRegion, { focusRight });
     }
@@ -173,6 +242,7 @@ export class RegionPageSyncController {
     } else {
       this.selectedNavmeshes = [mesh];
     }
+    this.modeSelections.navmesh = [...this.selectedNavmeshes];
 
     this.runtime.overlay.renderSelectedNavmeshes(this.selectedNavmeshes);
     this.runtime.focusNavmeshSelection(this.selectedNavmeshes);
@@ -186,7 +256,6 @@ export class RegionPageSyncController {
 
   selectStage5Region(index, { focusRight = false } = {}) {
     const previousIndex = this.state.selectedIndex;
-    this.clearSelectedNavmesh();
     this.state.select(index);
     if (previousIndex !== this.state.selectedIndex) {
       this.onRegionSelectionChange?.(this.state.selectedRegion);
@@ -210,6 +279,7 @@ export class RegionPageSyncController {
     } else if (this.mode === "regions") {
       this.setSelectedIndex(-1);
       this.stage4FilterRegion = null;
+      this.rememberModeSelection("regions");
     }
     this.sync();
   }

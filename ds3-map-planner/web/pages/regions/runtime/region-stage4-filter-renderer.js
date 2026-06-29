@@ -2,20 +2,19 @@ import * as THREE from "three";
 import { RegionClippedMapRenderer } from "./region-clipped-map-renderer.js";
 
 export class RegionStage4FilterRenderer {
-  constructor({ scene, navGroup, collisionGroup }) {
-    this.scene = scene;
+  constructor({ overlayScene, mapScene, navGroup, collisionGroup }) {
+    this.scene = overlayScene;
     this.navGroup = navGroup;
     this.collisionGroup = collisionGroup;
     this.clippedRenderer = new RegionClippedMapRenderer({
-      includeNavmesh: true,
-      preserveMaterials: true,
-      syncSourceState: true,
+      scene: mapScene,
       renderPlayer: false,
     });
   }
 
-  rebuild(navGroup, collisionGroup) {
-    this.clippedRenderer.rebuild(navGroup, collisionGroup);
+  renderBase(renderer, camera, viewport) {
+    this.clippedRenderer.renderBase(renderer, camera, viewport);
+    this.renderEditorOverlay(renderer, camera, viewport);
   }
 
   render(renderer, camera, viewport, region, { includeOutdoor = true } = {}) {

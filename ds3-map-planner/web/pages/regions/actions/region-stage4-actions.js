@@ -1,6 +1,10 @@
 import { saveStageData } from "../../../shared/map-api.js";
-import { validateRegions } from "../geometry/region-geometry.js";
+import {
+  splitRegionHeight,
+  validateRegions,
+} from "../geometry/region-geometry.js";
 import { createRegionFromMeshes } from "../assets/region-navmesh-utils.js";
+import { nextRegionName } from "../state/region-state.js";
 
 export class RegionStage4Actions {
   constructor({
@@ -45,6 +49,7 @@ export class RegionStage4Actions {
     return {
       onNew: () => this.createRegion(),
       onDelete: () => this.deleteSelectedRegion(),
+      onSplitRegionHeight: () => this.splitSelectedRegionHeight(),
       onGroupRegions: () => this.groupSelectedRegionsAction(),
       onSave: () => this.saveRegions(),
       onClear: () => this.clearRegions(),
@@ -63,7 +68,9 @@ export class RegionStage4Actions {
     }
 
     const regions = this.getRegions();
-    regions.push(createRegionFromMeshes(selectedNavmeshes, regions.length));
+    const region = createRegionFromMeshes(selectedNavmeshes, regions.length);
+    region.name = nextRegionName(regions);
+    regions.push(region);
     this.setSelectionMode("regions");
     this.setSelectedIndex(regions.length - 1);
     this.sync();
@@ -77,6 +84,29 @@ export class RegionStage4Actions {
 
     this.removeSelectedRegion();
     this.sync();
+  }
+
+  splitSelectedRegionHeight() {
+    if (!this.applyEditorFields()) {
+      this.sync();
+      return;
+    }
+    const selected = this.getSelectedIndex();
+    const regions = this.getRegions();
+    const region = regions[selected];
+    if (!region) {
+      this.setStatus("Select a region to split first.", true);
+      return;
+    }
+
+    const newName = nextRegionName(regions);
+    const { lower, upper } = splitRegionHeight(region, newName);
+    regions.splice(selected, 1, lower, upper);
+    this.setSelectedIndex(selected + 1);
+    this.sync();
+    this.setStatus(
+      `Split region at Y ${upper.ymin.toFixed(2)}. Save to persist.`,
+    );
   }
 
   groupSelectedRegionsAction() {

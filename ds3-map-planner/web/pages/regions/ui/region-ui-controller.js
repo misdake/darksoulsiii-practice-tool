@@ -19,8 +19,7 @@ export class RegionUiController {
     this.navmeshOpacity = this.byId("navmeshOpacity");
     this.navmeshOpacityValue = this.byId("navmeshOpacityValue");
     this.showOutdoorRegion = this.byId("showOutdoorRegion");
-    this.clipSelectedRegion = this.byId("clipSelectedRegion");
-    this.clipActiveRegions = this.byId("clipActiveRegions");
+    this.clipRegions = this.byId("clipRegions");
     this.recordMissingPoints = this.byId("recordMissingPoints");
     this.stage4ModeRadios = Array.from(
       document.querySelectorAll('input[name="stage4Mode"]'),
@@ -98,6 +97,7 @@ export class RegionUiController {
   bindActions({
     onNew,
     onDelete,
+    onSplitRegionHeight,
     onGroupRegions,
     onSave,
     onCalculatePlan,
@@ -118,8 +118,7 @@ export class RegionUiController {
     onCollisionVisibleChange,
     onCollisionOpacityInput,
     onNavmeshOpacityInput,
-    onClipSelectedRegionChange,
-    onClipActiveRegionsChange,
+    onClipRegionsChange,
     onRecordMissingPointsChange,
     onShowOutdoorRegionChange,
   }) {
@@ -131,6 +130,11 @@ export class RegionUiController {
     }
     this.addListener(this.byId("newBtn"), "click", onNew);
     this.addListener(this.byId("deleteBtn"), "click", onDelete);
+    this.addListener(
+      this.byId("splitRegionHeightBtn"),
+      "click",
+      onSplitRegionHeight,
+    );
     this.addListener(this.byId("groupRegionsBtn"), "click", onGroupRegions);
     this.addListener(this.byId("saveBtn"), "click", onSave);
     this.addListener(this.byId("calculatePlanBtn"), "click", onCalculatePlan);
@@ -168,11 +172,8 @@ export class RegionUiController {
       this.setNavmeshOpacity(opacity);
       onNavmeshOpacityInput?.(opacity);
     });
-    this.addListener(this.clipSelectedRegion, "change", () =>
-      onClipSelectedRegionChange?.(this.clipSelectedRegion.checked),
-    );
-    this.addListener(this.clipActiveRegions, "change", () =>
-      onClipActiveRegionsChange?.(this.clipActiveRegions.checked),
+    this.addListener(this.clipRegions, "change", () =>
+      onClipRegionsChange?.(this.clipRegions.checked),
     );
     this.addListener(this.recordMissingPoints, "change", () =>
       onRecordMissingPointsChange?.(this.recordMissingPoints.checked),
@@ -193,8 +194,7 @@ export class RegionUiController {
     const initialNavmeshOpacity = Number(this.navmeshOpacity?.value);
     this.setNavmeshOpacity(initialNavmeshOpacity);
     onNavmeshOpacityInput?.(initialNavmeshOpacity);
-    onClipSelectedRegionChange?.(this.clipSelectedRegion?.checked ?? false);
-    onClipActiveRegionsChange?.(this.clipActiveRegions?.checked ?? true);
+    onClipRegionsChange?.(this.clipRegions?.checked ?? true);
     onRecordMissingPointsChange?.(this.recordMissingPoints?.checked ?? false);
     onShowOutdoorRegionChange?.(this.showOutdoorRegion?.checked ?? true);
   }

@@ -15,7 +15,7 @@ export class RegionRenderController {
     getFollowTarget,
     getStage4Mode,
     getStage4FilterRegion,
-    getClipActiveRegions,
+    getClipRegions,
     getOutdoorEnabled,
   }) {
     this.window = window;
@@ -33,7 +33,7 @@ export class RegionRenderController {
     this.getFollowTarget = getFollowTarget;
     this.getStage4Mode = getStage4Mode;
     this.getStage4FilterRegion = getStage4FilterRegion;
-    this.getClipActiveRegions = getClipActiveRegions;
+    this.getClipRegions = getClipRegions;
     this.getOutdoorEnabled = getOutdoorEnabled;
     this.animationFrame = 0;
     this.lastFrameTime = 0;
@@ -99,7 +99,7 @@ export class RegionRenderController {
         this.renderer,
         this.leftCamera,
         leftViewport,
-        this.getClipActiveRegions?.() === false ? [] : activeRegions,
+        this.getClipRegions?.() === false ? [] : activeRegions,
         { includeOutdoor: this.getOutdoorEnabled?.() !== false },
       );
     } else if (stage4FilterRegion) {
@@ -117,7 +117,11 @@ export class RegionRenderController {
         leftViewport,
       );
     } else {
-      this.renderLeftScene(leftViewport);
+      this.regionScene.renderBase(
+        this.renderer,
+        this.leftCamera,
+        leftViewport,
+      );
     }
 
     const rightViewport = { x: width / 2, y: 0, width: width / 2, height };
@@ -139,22 +143,4 @@ export class RegionRenderController {
     this.renderer.setScissorTest(false);
   }
 
-  renderLeftScene(viewport) {
-    this.renderer.setScissorTest(true);
-    this.renderer.setViewport(
-      viewport.x,
-      viewport.y,
-      viewport.width,
-      viewport.height,
-    );
-    this.renderer.setScissor(
-      viewport.x,
-      viewport.y,
-      viewport.width,
-      viewport.height,
-    );
-    this.renderer.setClearColor(0x10151d, 1);
-    this.renderer.clear(true, true, true);
-    this.renderer.render(this.scene, this.leftCamera);
-  }
 }

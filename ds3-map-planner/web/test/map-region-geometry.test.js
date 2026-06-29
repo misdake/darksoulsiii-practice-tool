@@ -5,13 +5,14 @@ import { createRegionOverlayObjects } from "../pages/regions/overlay/region-over
 import {
   createRegionMask,
   regionClippingPlanes,
-} from "../pages/regions/runtime/region-clipped-map-mask.js";
+} from "../pages/regions/runtime/region-clipping.js";
 import {
   activeRegions,
   footprintForHeight,
   hasSelfIntersection,
   pointInPolygon,
   sceneToGame,
+  splitRegionHeight,
   validateRegions,
 } from "../pages/regions/geometry/region-geometry.js";
 import { addGapMarker } from "../pages/regions/state/region-missing-points-controller.js";
@@ -58,6 +59,17 @@ test("region geometry handles concavity, edges and invalid polygons", () => {
     true,
   );
   assert.match(validateRegions([lower, { ...lower }]), /duplicated/);
+
+  const original = {
+    ...lower,
+    polygon_xz: lower.polygon_xz.map((point) => [...point]),
+  };
+  const split = splitRegionHeight(original, "Region 1");
+  assert.deepEqual([original.ymin, original.ymax], [0, 3]);
+  assert.deepEqual([split.lower.ymin, split.lower.ymax], [0, 1.5]);
+  assert.deepEqual([split.upper.ymin, split.upper.ymax], [1.5, 3]);
+  assert.equal(split.upper.name, "Region 1");
+  assert.notEqual(split.upper.polygon_xz, original.polygon_xz);
 });
 
 test("Test mode region lookup is ordered and missing points are de-duplicated", () => {

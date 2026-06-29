@@ -1,12 +1,21 @@
 import * as THREE from "three";
-import { createObjParser } from "../../../shared/map-runtime.js";
+import {
+  createObjParser,
+} from "../../../shared/map-runtime.js";
 import { PLAYER_CAPSULE_FOOT_OFFSET } from "../../../shared/physics-system.js";
 import { RegionShotPlanSystem } from "../planning/region-shot-plan-system.js";
-import { RegionAssetLoader } from "../assets/region-asset-loader.js";
+import {
+  disposeRegionAssetTargets,
+  RegionAssetLoader,
+} from "../assets/region-asset-loader.js";
 import { RegionOverlayController } from "../overlay/region-overlay-controller.js";
 import { RegionRenderController } from "./region-render-controller.js";
-import { RegionClippedMapRenderer } from "./region-clipped-map-renderer.js";
-import { RegionStage4FilterRenderer } from "./region-stage4-filter-renderer.js";
+import {
+  createRegionLeftCamera,
+  createRegionRightCamera,
+  createRegionScene,
+  RegionSceneController,
+} from "./region-scene-controller.js";
 import { RegionTestController } from "./region-test-controller.js";
 import { RegionViewportController } from "../viewport/region-viewport-controller.js";
 
@@ -28,33 +37,30 @@ export class RegionRuntimeController {
 
     this.renderer = createRegionRenderer({ window, host });
     this.scene = createRegionScene();
+    this.leftScene = createRegionScene();
 
     this.overlay = new RegionOverlayController(this.scene);
     this.overlay.setCameraPlanVisible(false);
     this.navGroup = new THREE.Group();
     this.collisionGroup = new THREE.Group();
+    this.leftNavGroup = new THREE.Group();
+    this.leftCollisionGroup = new THREE.Group();
     this.collisionVisible = true;
     this.collisionOpacity = 0.25;
     this.navmeshOpacity = 1;
     this.stage4Mode = "regions";
-    this.clipSelectedRegion = false;
-    this.clipActiveRegions = true;
+    this.clipRegions = true;
     this.recordMissingPoints = false;
     this.stage4FilterRegion = null;
     this.outdoorRegionEnabled = true;
     this.scene.add(this.navGroup, this.collisionGroup);
+    this.leftScene.add(this.leftNavGroup, this.leftCollisionGroup);
 
     this.regionScene = new RegionSceneController({
-      scene: this.scene,
+      overlayScene: this.scene,
+      mapScene: this.leftScene,
       navGroup: this.navGroup,
       collisionGroup: this.collisionGroup,
-      overlayGroups: [
-        this.overlay.regionGroup,
-        this.overlay.vertexGroup,
-        this.overlay.uncoveredGroup,
-        this.overlay.selectedNavmeshGroup,
-        this.overlay.cameraPlanGroup,
-      ],
     });
     this.leftCamera = createRegionLeftCamera();
     this.rightCamera = createRegionRightCamera();
@@ -96,10 +102,10 @@ export class RegionRuntimeController {
       getFollowTarget: () => this.test.mapFollowTarget,
       getStage4Mode: () => this.stage4Mode,
       getStage4FilterRegion: () =>
-        this.stage4Mode === "regions" && this.clipSelectedRegion
+        this.stage4Mode === "regions" && this.clipRegions
           ? this.stage4FilterRegion
           : null,
-      getClipActiveRegions: () => this.clipActiveRegions,
+      getClipRegions: () => this.clipRegions,
       getOutdoorEnabled: () => this.outdoorRegionEnabled,
     });
 
@@ -236,34 +242,21 @@ export class RegionRuntimeController {
   setCollisionVisible(visible) {
     this.collisionVisible = Boolean(visible);
     this.applyCollisionDisplayState();
-    this.regionScene.setCollisionDisplay(
-      this.collisionVisible,
-      this.collisionOpacity,
-    );
   }
 
   setCollisionOpacity(opacity) {
     this.collisionOpacity = clampOpacity(opacity);
     this.applyCollisionDisplayState();
-    this.regionScene.setCollisionDisplay(
-      this.collisionVisible,
-      this.collisionOpacity,
-    );
   }
 
   setNavmeshOpacity(opacity) {
     this.navmeshOpacity = Math.max(0, Math.min(1, Number(opacity) || 0));
     this.applyNavmeshDisplayState();
-    this.regionScene.setNavmeshOpacity(this.navmeshOpacity);
   }
 
-  setClipSelectedRegion(enabled) {
-    this.clipSelectedRegion = Boolean(enabled);
+  setClipRegions(enabled) {
+    this.clipRegions = Boolean(enabled);
     this.updateRegionFillVisibility();
-  }
-
-  setClipActiveRegions(enabled) {
-    this.clipActiveRegions = Boolean(enabled);
   }
 
   setRecordMissingPoints(enabled) {
@@ -283,17 +276,21 @@ export class RegionRuntimeController {
       this.stage === 5 ||
       (this.stage === 4 &&
         this.stage4Mode !== "test" &&
-        !(this.stage4Mode === "regions" && this.clipSelectedRegion));
+        !(this.stage4Mode === "regions" && this.clipRegions));
     setRegionFillVisibility(this.overlay.regionGroup, visible);
   }
 
   applyCollisionDisplayState() {
-    this.collisionGroup.visible = this.collisionVisible;
-    applyGroupOpacity(this.collisionGroup, this.collisionOpacity);
+    for (const group of [this.collisionGroup, this.leftCollisionGroup]) {
+      group.visible = this.collisionVisible;
+      applyGroupOpacity(group, this.collisionOpacity);
+    }
   }
 
   applyNavmeshDisplayState() {
-    applyGroupOpacity(this.navGroup, this.navmeshOpacity);
+    for (const group of [this.navGroup, this.leftNavGroup]) {
+      applyGroupOpacity(group, this.navmeshOpacity);
+    }
   }
 
   applyDisplayState() {
@@ -305,18 +302,8 @@ export class RegionRuntimeController {
     return this.host.clientWidth / 2 / Math.max(1, this.host.clientHeight);
   }
 
-  rebuildRegionScene() {
-    this.regionScene.rebuild(this.navGroup, this.collisionGroup);
-  }
-
   rebuild(navGroup = this.navGroup, collisionGroup = this.collisionGroup) {
     this.applyDisplayState();
-    this.regionScene.rebuild(navGroup, collisionGroup);
-    this.regionScene.setCollisionDisplay(
-      this.collisionVisible,
-      this.collisionOpacity,
-    );
-    this.regionScene.setNavmeshOpacity(this.navmeshOpacity);
     this.planSystem.rebuildCollisionBvh(collisionGroup);
     this.test.rebuildPhysics();
   }
@@ -331,6 +318,13 @@ export class RegionRuntimeController {
       this.handleContextMenu,
     );
     this.objParser.dispose();
+    disposeRegionAssetTargets([{
+      navmesh: this.navGroup,
+      collision: this.collisionGroup,
+    }, {
+      navmesh: this.leftNavGroup,
+      collision: this.leftCollisionGroup,
+    }]);
     this.planSystem.dispose();
     this.renderController.dispose();
     this.regionScene.dispose();
@@ -360,72 +354,6 @@ function applyGroupOpacity(group, opacity) {
     });
 }
 
-class RegionSceneController {
-  constructor({ scene, navGroup, collisionGroup, overlayGroups }) {
-    this.stage4FilterRenderer = new RegionStage4FilterRenderer({
-      scene,
-      navGroup,
-      collisionGroup,
-      overlayGroups,
-    });
-    this.leftMapRenderer = new RegionClippedMapRenderer({
-      includeNavmesh: true,
-      manageCollisionDisplay: true,
-    });
-  }
-
-  rebuild(navmeshGroup, collisionGroup) {
-    this.stage4FilterRenderer.rebuild(navmeshGroup, collisionGroup);
-    this.leftMapRenderer.rebuild(navmeshGroup, collisionGroup);
-  }
-
-  setPlayerMesh(mesh) {
-    this.leftMapRenderer.setPlayerMesh(mesh);
-  }
-
-  setCollisionDisplay(visible, opacity) {
-    this.leftMapRenderer.setCollisionDisplay(visible, opacity);
-  }
-
-  setNavmeshOpacity(opacity) {
-    this.leftMapRenderer.setNavmeshOpacity(opacity);
-  }
-
-  renderLeftMap(
-    renderer,
-    camera,
-    viewport,
-    activeRegions,
-    { includeOutdoor = true } = {},
-  ) {
-    if (includeOutdoor) {
-      this.leftMapRenderer.renderBase(renderer, camera, viewport);
-    }
-    this.leftMapRenderer.render(renderer, camera, viewport, activeRegions, {
-      clear: !includeOutdoor,
-    });
-  }
-
-  renderStage4Filtered(renderer, camera, viewport, region, options) {
-    this.stage4FilterRenderer.render(
-      renderer,
-      camera,
-      viewport,
-      region,
-      options,
-    );
-  }
-
-  renderStage4WithoutOutdoor(renderer, camera, viewport) {
-    this.stage4FilterRenderer.renderWithoutOutdoor(renderer, camera, viewport);
-  }
-
-  dispose() {
-    this.stage4FilterRenderer.dispose();
-    this.leftMapRenderer.dispose();
-  }
-}
-
 function setRegionFillVisibility(regionGroup, visible) {
   regionGroup.traverse((object) => {
     if (object.userData?.kind === "region-fill") {
@@ -441,29 +369,4 @@ function createRegionRenderer({ window, host }) {
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   host.append(renderer.domElement);
   return renderer;
-}
-
-function createRegionScene() {
-  const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0f1115);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-  const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
-  directionalLight.position.set(120, 220, 100);
-  scene.add(directionalLight);
-  return scene;
-}
-
-function createRegionLeftCamera() {
-  const camera = new THREE.OrthographicCamera(-20, 20, 20, -20, 0.1, 1000);
-  camera.position.set(0, 100, 0);
-  camera.lookAt(0, 0, 0);
-  return camera;
-}
-
-function createRegionRightCamera() {
-  const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 1000);
-  camera.position.set(25, 25, 25);
-  camera.lookAt(0, 0, 0);
-  camera.userData.target = new THREE.Vector3(0, 0, 0);
-  return camera;
 }

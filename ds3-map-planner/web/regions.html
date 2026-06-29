@@ -309,8 +309,8 @@
                 Show outdoor region</label
               >
               <label class="inline-check"
-                ><input id="clipSelectedRegion" type="checkbox" />
-                Clip selected region</label
+                ><input id="clipRegions" type="checkbox" checked />
+                Clip regions</label
               >
             </div>
             <div id="regionEditor">
@@ -352,6 +352,7 @@
                 </div>
                 <div class="actions">
                   <button id="groupRegionsBtn">Group selected</button>
+                  <button id="splitRegionHeightBtn">Split height</button>
                   <button id="deleteBtn" class="danger">Delete selected</button>
                 </div>
                 <button id="clearBtn" class="danger">Clear regions</button>
@@ -364,12 +365,6 @@
                 <button id="newBtn">Region from selected splits</button>
               </div>
               <div id="regionTestFields" hidden>
-                <div class="field">
-                  <label class="inline-check"
-                    ><input id="clipActiveRegions" type="checkbox" checked />
-                    Clip active regions</label
-                  >
-                </div>
                 <div class="field">
                   <label class="inline-check"
                     ><input id="recordMissingPoints" type="checkbox" />

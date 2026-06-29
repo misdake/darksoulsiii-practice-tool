@@ -37,11 +37,13 @@ export class RegionPageController {
         if (stage !== 5) {
           this.graph.planController.cancel("Camera plan cancelled after leaving Stage 5.", false);
         }
-        runtime.setStage(stage);
         if (stage === 5) {
+          syncController.suspendModeSelection();
+          runtime.setStage(stage);
           syncController.ensureStage5Selection();
         } else {
-          syncController.setMode(syncController.mode);
+          runtime.setStage(stage);
+          syncController.resumeModeSelection();
         }
       },
       onStage4ModeChange: (mode) => {
@@ -54,10 +56,7 @@ export class RegionPageController {
         runtime.setCollisionOpacity(opacity),
       onNavmeshOpacityInput: (opacity) =>
         runtime.setNavmeshOpacity(opacity),
-      onClipSelectedRegionChange: (enabled) =>
-        runtime.setClipSelectedRegion(enabled),
-      onClipActiveRegionsChange: (enabled) =>
-        runtime.setClipActiveRegions(enabled),
+      onClipRegionsChange: (enabled) => runtime.setClipRegions(enabled),
       onRecordMissingPointsChange: (enabled) =>
         runtime.setRecordMissingPoints(enabled),
       onShowOutdoorRegionChange: (enabled) =>
@@ -112,7 +111,7 @@ export class RegionPageController {
     runtime.resetForMapChange();
     const token = ++this.loadToken;
     ui.beginMapLoading(mapId);
-    syncController.clearSelectedNavmesh();
+    syncController.resetModeSelections();
     const isCurrent = () => token === this.loadToken && !this.disposed;
     try {
       const loaded = await mapLoadController.load(mapId, { isCurrent });

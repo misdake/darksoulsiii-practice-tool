@@ -1,16 +1,61 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { RegionState } from "../pages/regions/state/region-state.js";
+import {
+  nextRegionName,
+  RegionState,
+} from "../pages/regions/state/region-state.js";
 import { RegionPageSyncController } from "../pages/regions/state/region-page-sync-controller.js";
 
 test("region state loads selection and replaces plans by region name", () => {
   const state = new RegionState();
-  state.load({ mapId: "m30_00_00_00", regions: [{ name: "A" }], plans: [] });
+  state.load({
+    mapId: "m30_00_00_00",
+    regions: [{ name: "A" }, { name: "B" }],
+    plans: [],
+  });
   assert.equal(state.selectedRegion.name, "A");
   state.replacePlan({ region_name: "A", plan: { points: [] } });
   state.replacePlan({ region_name: "A", plan: { points: [1] } });
   assert.equal(state.plans.length, 1);
   assert.deepEqual(state.plans[0].plan.points, [1]);
+  assert.equal(nextRegionName([{ name: "Region 2" }]), "Region 1");
+
+  const renderedNavmeshes = [];
+  const controller = new RegionPageSyncController({
+    state,
+    ui: {
+      setStage4Mode() {},
+      render() {},
+      status() {},
+    },
+    runtime: {
+      overlay: {
+        renderSelectedNavmeshes(meshes) {
+          renderedNavmeshes.push([...meshes]);
+        },
+        redraw() {},
+      },
+      setStage4FilterRegion() {},
+      setCameraPlan() {},
+      updateRegionFillVisibility() {},
+      focusNavmeshSelection() {},
+    },
+  });
+  state.toggleSelected(1);
+  controller.setMode("navmesh");
+  assert.equal(state.selectedIndex, -1);
+
+  const navmesh = { isMesh: true, parent: {} };
+  controller.selectNavmesh(navmesh);
+  controller.setMode("test");
+  assert.deepEqual(controller.getSelectedNavmeshes(), []);
+  assert.deepEqual(renderedNavmeshes.at(-1), []);
+
+  controller.setMode("regions");
+  assert.deepEqual(state.selectedIndices, [0, 1]);
+  assert.equal(state.selectedIndex, 1);
+  controller.setMode("navmesh");
+  assert.deepEqual(controller.getSelectedNavmeshes(), [navmesh]);
 });
 
 test("region groups normalize, regroup, split, rename and delete", () => {

@@ -116,6 +116,8 @@ function createMapLoadController({ runtime, state, ui }) {
     assetLoader: runtime.assetLoader,
     navGroup: runtime.navGroup,
     collisionGroup: runtime.collisionGroup,
+    leftNavGroup: runtime.leftNavGroup,
+    leftCollisionGroup: runtime.leftCollisionGroup,
     sceneController: runtime,
     state,
     setProgress: (text, ratio) => ui.setLoadProgress(text, ratio),

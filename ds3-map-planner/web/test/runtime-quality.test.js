@@ -2,14 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { normalizeStaticMeshData } from "../shared/map-runtime.js";
+import {
+  disposeRegionAssetTargets,
+  RegionAssetLoader,
+} from "../pages/regions/assets/region-asset-loader.js";
 import { RegionMapLoadController } from "../pages/regions/map/region-map-load-controller.js";
 import { RegionPlanController } from "../pages/regions/planning/region-plan-controller.js";
 import { RegionFreeCamera } from "../pages/regions/viewport/region-free-camera.js";
-import {
-  applyRegionBroadPhase,
-  cloneClippedSourceScene,
-  disposeClippedScene,
-} from "../pages/regions/runtime/region-clipped-map-scene.js";
+import { applyRegionBroadPhase } from "../pages/regions/runtime/region-clipping.js";
 import { RegionClippedMapRenderer } from "../pages/regions/runtime/region-clipped-map-renderer.js";
 import { shouldRecordTestMissing } from "../pages/regions/runtime/region-test-state.js";
 import { saveStageData } from "../shared/map-api.js";
@@ -34,36 +34,22 @@ test("regional viewport framing and Test player visuals stay synchronized", () =
   const collision = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
   navGroup.add(nav);
   collisionGroup.add(collision);
+  const mapScene = new THREE.Scene();
+  mapScene.add(navGroup, collisionGroup);
 
   const renderer = new RegionClippedMapRenderer({
-    includeNavmesh: true,
-    manageCollisionDisplay: true,
+    scene: mapScene,
   });
   const emptyPlayerScene = renderer.playerScene;
   renderer.setPlayerMesh(null);
   assert.equal(renderer.playerScene, emptyPlayerScene);
-  renderer.rebuild(navGroup, collisionGroup);
-  renderer.setCollisionDisplay(false, 0.4);
-  renderer.setNavmeshOpacity(0.6);
   renderer.setPlayerMesh(source);
   assert.equal(
     renderer.playerScene.children.filter((object) => object.isLight).length,
     2,
   );
-  assert.equal(
-    renderer.scene.children.filter((object) => object.userData.kind).length,
-    2,
-  );
-  const collisionClone = renderer.scene.children.find(
-    (object) => object.userData.kind === "collision",
-  );
-  assert.equal(collisionClone.visible, false);
-  assert.equal(collisionClone.children[0].material.opacity, 0.4);
-  assert.equal(collisionClone.children[0].material.transparent, true);
-  const navClone = renderer.scene.children.find(
-    (object) => object.userData.kind === "navmesh",
-  );
-  assert.equal(navClone.children[0].material.opacity, 0.6);
+  assert.equal(renderer.scene, mapScene);
+  assert.equal(renderer.scene.children[0], navGroup);
   assert.equal(renderer.playerMesh.children.length, 1);
   assert.equal(renderer.playerMesh.children[0].material.transparent, false);
 
@@ -101,32 +87,37 @@ test("stage saves accept an empty successful response", async () => {
   }
 });
 
-test("Clipped map broad phase hides collision outside the active region prism", () => {
-  const source = new THREE.Group();
+test("Clipped map broad phase operates directly on its dedicated scene", () => {
+  const scene = new THREE.Scene();
   const near = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
   const far = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
   far.position.set(20, 0, 20);
-  source.add(near, far);
-  const scene = cloneClippedSourceScene(null, source);
+  scene.add(near, far);
 
   applyRegionBroadPhase(scene, {
     ymin: -2,
     ymax: 2,
     polygon_xz: [[-2, -2], [2, -2], [2, 2], [-2, 2]],
   });
-  const clones = [];
-  scene.traverse((object) => {
-    if (object.isMesh) clones.push(object);
+  assert.equal(near.visible, true);
+  assert.equal(far.visible, false);
+  const cachedBounds = near.userData.worldBounds;
+  near.visible = true;
+  far.visible = true;
+  applyRegionBroadPhase(scene, {
+    ymin: -2,
+    ymax: 2,
+    polygon_xz: [[-2, -2], [2, -2], [2, 2], [-2, 2]],
   });
-  assert.equal(clones[0].visible, true);
-  assert.equal(clones[1].visible, false);
+  assert.equal(near.userData.worldBounds, cachedBounds);
 
-  disposeClippedScene(scene);
   near.geometry.dispose();
   far.geometry.dispose();
+  near.material.dispose();
+  far.material.dispose();
 });
 
-test("map assets normalize static geometry to right-handed coordinates", () => {
+test("map assets install atomically and dispose shared geometry once", async () => {
   const normalized = normalizeStaticMeshData({
     positions: [0, 1, 2, 3, 4, 5, 6, 7, 8],
     indices: [0, 1, 2],
@@ -135,6 +126,83 @@ test("map assets normalize static geometry to right-handed coordinates", () => {
     0, 1, -2, 3, 4, -5, 6, 7, -8,
   ]);
   assert.deepEqual(Array.from(normalized.indices), [0, 2, 1]);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url) => {
+    const values = {
+      "/api/maps/test/content": {
+        navmesh_manifest: { navmeshes: [{ path: "nav.obj" }] },
+      },
+      "/api/maps/test/stage1-collision-filter": {},
+      "/api/maps/test/stage2-nav-filter": {
+        nav_enabled_paths: ["nav.obj"],
+      },
+      "/api/maps/test/stage3-mark-nav": {
+        selected_nav_segments: [{ nav_name: "nav.obj", segment_index: 0 }],
+      },
+    };
+    return {
+      ok: true,
+      status: 200,
+      json: async () => values[url],
+    };
+  };
+  let parseCount = 0;
+  const loader = new RegionAssetLoader({
+    async parse() {
+      parseCount += 1;
+      return {
+        meshes: [{
+          positions: [0, 0, 0, 1, 1, 0, 0, 2, 1],
+          indices: [0, 1, 2],
+        }],
+      };
+    },
+  });
+  const liveTargets = Array.from({ length: 2 }, () => ({
+    navmesh: new THREE.Group(),
+    collision: new THREE.Group(),
+  }));
+  const oldGeometry = new THREE.BoxGeometry(1, 1, 1);
+  let oldDisposeCount = 0;
+  oldGeometry.addEventListener("dispose", () => {
+    oldDisposeCount += 1;
+  });
+  for (const target of liveTargets) {
+    target.navmesh.add(
+      new THREE.Mesh(oldGeometry, new THREE.MeshBasicMaterial()),
+    );
+  }
+  try {
+    const bundle = await loader.load("test", { targetCount: 2 });
+    assert.equal(liveTargets[0].navmesh.children.length, 1);
+    bundle.install(liveTargets);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(oldDisposeCount, 1);
+  const rightMesh = liveTargets[0].navmesh.children[0];
+  const leftMesh = liveTargets[1].navmesh.children[0];
+  assert.equal(parseCount, 1);
+  assert.notEqual(rightMesh, leftMesh);
+  assert.equal(rightMesh.geometry, leftMesh.geometry);
+  assert.notEqual(rightMesh.material, leftMesh.material);
+
+  const shader = {
+    uniforms: {},
+    vertexShader: "#include <common>\n#include <begin_vertex>",
+    fragmentShader: "#include <common>\n#include <color_fragment>",
+  };
+  rightMesh.material.onBeforeCompile(shader);
+  assert.match(shader.fragmentShader, /fract\(rawRegionT \* 2\.0/);
+  assert.equal(shader.uniforms.regionHeightBandPhase, undefined);
+
+  let disposeCount = 0;
+  rightMesh.geometry.addEventListener("dispose", () => {
+    disposeCount += 1;
+  });
+  disposeRegionAssetTargets(liveTargets);
+  assert.equal(disposeCount, 1);
 });
 
 test("RegionMapLoadController ignores stale loads before mutating state", async () => {
@@ -151,25 +219,35 @@ test("RegionMapLoadController ignores stale loads before mutating state", async 
       this.loaded = true;
     },
   };
+  let current = true;
+  let disposed = false;
   const controller = new RegionMapLoadController({
     assetLoader: {
       async load() {
-        throw new Error("asset loader should not run for stale loads");
+        current = false;
+        return {
+          dispose() {
+            disposed = true;
+          },
+        };
       },
     },
     navGroup: new THREE.Group(),
     collisionGroup: new THREE.Group(),
+    leftNavGroup: new THREE.Group(),
+    leftCollisionGroup: new THREE.Group(),
     sceneController: { rebuild() {} },
     state,
   });
 
   try {
     const loaded = await controller.load("m00_00_00_00", {
-      isCurrent: () => false,
+      isCurrent: () => current,
     });
 
     assert.equal(loaded, null);
     assert.equal(state.loaded, false);
+    assert.equal(disposed, true);
   } finally {
     globalThis.fetch = originalFetch;
   }
