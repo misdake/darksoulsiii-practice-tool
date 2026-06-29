@@ -51,11 +51,11 @@ export class NavSystem {
         const state = getSegmentState(navObj.name, seg.userData.segmentIndex);
         const baseColor = navStateColors[state] ?? navStateColors.unset;
         const color = new THREE.Color(baseColor);
-        if (getSegmentUsage(navObj.name, seg.userData.segmentIndex)) {
-          color.lerp(new THREE.Color(0x4fc3f7), 0.6);
-        }
         if (this.stage.allowSegmentHighlight && selectedTarget === seg) {
           color.lerp(new THREE.Color(highlightColor), 0.55);
+        }
+        if (navObjSelected) {
+          color.lerp(new THREE.Color(highlightColor), 0.35);
         }
         seg.material.color.copy(color);
         if (!navEnabled || this.stage.useMerged) {
@@ -76,7 +76,6 @@ export class NavSystem {
         const avg = cnt > 0
           ? new THREE.Color(r / cnt, g / cnt, b / cnt)
           : new THREE.Color(navStateColors.unset);
-        if (navObjSelected) avg.lerp(new THREE.Color(highlightColor), 0.35);
         merged.material.color.copy(avg);
         merged.visible = navEnabled && this.stage.useMerged;
       }

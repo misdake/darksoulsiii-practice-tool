@@ -10,7 +10,7 @@ export function createStage2NavFilterDefinition() {
       });
       ctx.systems.nav.setStage({
         visible: true,
-        useMerged: true,
+        useMerged: false,
         hideDeleted: false,
         allowSegmentHighlight: false,
         allowNavObjHighlight: true,

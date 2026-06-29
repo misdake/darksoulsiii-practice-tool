@@ -3,7 +3,7 @@ import * as THREE from "three";
 export const FILTER_COLORS = Object.freeze({
   collisionBase: 0x94a3b8,
   collisionHighlight: 0xc7d2e2,
-  navStates: Object.freeze({ unset: 0xef5350, selected: 0xffffff }),
+  navStates: Object.freeze({ unset: 0xef5350, selected: 0x0077b6 }),
   highlight: 0xc7d2e2,
 });
 
