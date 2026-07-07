@@ -103,6 +103,15 @@ test("worker preserves height layers and normalizes planning config", () => {
   assert.equal(normalized.density_multiplier, 1);
 });
 
+test("worker target cells do not double-count overlapping group geometry", () => {
+  const triangle = [[0, 0, 0], [2, 0, 0], [0, 0, 2]];
+  const single = calculateRegionShotCandidates(flattenTriangles([triangle]).buffer, config);
+  const duplicate = calculateRegionShotCandidates(flattenTriangles([triangle, triangle]).buffer, config);
+  const area = (result) => result.target_cells.reduce((sum, cell) => sum + cell.area, 0);
+  assert.equal(area(duplicate), area(single));
+  assert.equal(duplicate.target_cells.length, single.target_cells.length);
+});
+
 test("planner classifies rejects and keeps uncovered components local", () => {
   const system = new RegionShotPlanSystem({ getCollisionTargets: () => [] });
   const candidate = { x: 0, y_ref: 0, y: 2, z: 0, layer: 0 };
@@ -172,9 +181,18 @@ test("coverage stats and saved plans preserve the final planning result", () => 
     replenished_count: 0,
     rejected_by_reason: { clearance: 1, occlusion: 0, no_coverage: 0 },
   };
-  const plan = createRegionShotPlan({ region, config, workerResult, adjustment });
+  const target = {
+    kind: "region_group",
+    group: {
+      uuid: "11111111-1111-4111-8111-111111111111",
+      name: "Hall",
+      last_updated: "2026-06-30T00:00:00.000Z",
+    },
+  };
+  const plan = createRegionShotPlan({ target, config, workerResult, adjustment });
 
-  assert.equal(plan.region_name, "Hall");
+  assert.equal(plan.region_group_name, "Hall");
+  assert.equal(plan.kind, "region_group");
   assert.deepEqual(plan.plan.points, adjustment.points);
   assert.equal(plan.plan.target_cells, undefined);
   assert.equal(plan.coverage.target_area, 2);

@@ -48,10 +48,10 @@ export class RegionRuntimeController {
     this.collisionVisible = true;
     this.collisionOpacity = 0.25;
     this.navmeshOpacity = 1;
-    this.stage4Mode = "regions";
+    this.stage4Mode = "navmesh";
     this.clipRegions = true;
     this.recordMissingPoints = false;
-    this.stage4FilterRegion = null;
+    this.stage4FilterRegions = [];
     this.outdoorRegionEnabled = true;
     this.scene.add(this.navGroup, this.collisionGroup);
     this.leftScene.add(this.leftNavGroup, this.leftCollisionGroup);
@@ -103,7 +103,7 @@ export class RegionRuntimeController {
       getStage4Mode: () => this.stage4Mode,
       getStage4FilterRegion: () =>
         this.stage4Mode === "regions" && this.clipRegions
-          ? this.stage4FilterRegion
+          ? this.stage4FilterRegions
           : null,
       getClipRegions: () => this.clipRegions,
       getOutdoorEnabled: () => this.outdoorRegionEnabled,
@@ -149,6 +149,21 @@ export class RegionRuntimeController {
       aspect: this.leftViewportAspect(),
       ...options,
     });
+  }
+
+  focusRegions(regions, { focusRight = false } = {}) {
+    if (!regions?.length) return false;
+    const bounds = new THREE.Box3();
+    for (const region of regions) {
+      for (const [x, z] of region.polygon_xz) {
+        bounds.expandByPoint(new THREE.Vector3(x, region.ymin, z));
+        bounds.expandByPoint(new THREE.Vector3(x, region.ymax, z));
+      }
+    }
+    this.viewportController.focusBounds(bounds, this.leftCamera, {
+      aspect: this.leftViewportAspect(), focusRight,
+    });
+    return true;
   }
 
   focusGamePoint(point) {
@@ -263,8 +278,8 @@ export class RegionRuntimeController {
     this.recordMissingPoints = Boolean(enabled);
   }
 
-  setStage4FilterRegion(region) {
-    this.stage4FilterRegion = region || null;
+  setStage4FilterRegions(regions) {
+    this.stage4FilterRegions = Array.isArray(regions) ? regions : [];
   }
 
   setOutdoorRegionEnabled(enabled) {

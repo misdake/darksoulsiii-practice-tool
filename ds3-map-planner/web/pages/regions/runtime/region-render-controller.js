@@ -102,7 +102,7 @@ export class RegionRenderController {
         this.getClipRegions?.() === false ? [] : activeRegions,
         { includeOutdoor: this.getOutdoorEnabled?.() !== false },
       );
-    } else if (stage4FilterRegion) {
+    } else if (stage4FilterRegion?.length) {
       this.regionScene.renderStage4Filtered(
         this.renderer,
         this.leftCamera,

@@ -174,6 +174,7 @@ async function getMaps() {
           fs.existsSync(path.join(mapDir, fileName)),
         ]),
       );
+      stageStatus["stage5-map-region-shot-plans"] = await hasCompleteStage5Plans(mapDir);
       out.push({
         map_id: mapId,
         display_name: mapDisplayName(mapId),
@@ -251,8 +252,79 @@ async function saveStageData(mapId, stageName, data) {
   const fileName = STAGE_FILES[stageName];
   if (!fileName) throw new Error("invalid stage name");
   const mapDir = await getMapDir(mapId);
+  if (stageName === "stage4-map-regions") validateStage4Data(data);
+  if (stageName === "stage5-map-region-shot-plans") validateStage5Data(data);
   const text = JSON.stringify(data, null, 2);
   await fsp.writeFile(path.join(mapDir, fileName), text, "utf8");
+}
+
+async function hasCompleteStage5Plans(mapDir) {
+  const groupsPath = path.join(mapDir, STAGE_FILES["stage4-map-regions"]);
+  const plansPath = path.join(mapDir, STAGE_FILES["stage5-map-region-shot-plans"]);
+  if (!fs.existsSync(groupsPath) || !fs.existsSync(plansPath)) return false;
+  try {
+    const groupsData = await readJsonFile(groupsPath, "stage4-map-regions");
+    const plansData = await readJsonFile(plansPath, "stage5-map-region-shot-plans");
+    validateStage4Data(groupsData);
+    validateStage5Data(plansData);
+    const plans = plansData.plans;
+    if (!plans.some((plan) => plan.kind === "fallback")) return false;
+    return groupsData.region_groups.every((group) => plans.some((plan) =>
+      plan.kind === "region_group" &&
+      plan.region_group_uuid === group.uuid &&
+      plan.group_last_updated === group.last_updated,
+    ));
+  } catch {
+    return false;
+  }
+}
+
+function validateStage4Data(data) {
+  if (!data || Object.hasOwn(data, "regions")) {
+    throw new Error("old Stage 4 regions schema is not supported");
+  }
+  if (!Array.isArray(data.region_groups)) throw new Error("region_groups must be an array");
+  const uuids = new Set();
+  for (const group of data.region_groups) {
+    if (!isUuid(group?.uuid) || uuids.has(group.uuid)) throw new Error("region group UUIDs must be valid and unique");
+    uuids.add(group.uuid);
+    if (typeof group.name !== "string" || !group.name.trim()) throw new Error("region group name is required");
+    if (!isIsoTimestamp(group.last_updated)) throw new Error("region group last_updated must be UTC ISO 8601");
+    if (!Array.isArray(group.prisms) || !group.prisms.length) throw new Error("region group must contain at least one prism");
+    for (const prism of group.prisms) validatePrism(prism);
+  }
+}
+
+function validateStage5Data(data) {
+  if (!data || !Array.isArray(data.plans)) throw new Error("plans must be an array");
+  const keys = new Set();
+  for (const plan of data.plans) {
+    let key;
+    if (plan?.kind === "fallback") key = "fallback";
+    else if (plan?.kind === "region_group" && isUuid(plan.region_group_uuid) &&
+             typeof plan.region_group_name === "string" && plan.region_group_name.trim() &&
+             isIsoTimestamp(plan.group_last_updated)) key = `region_group:${plan.region_group_uuid}`;
+    else throw new Error("invalid Stage 5 plan target");
+    if (keys.has(key)) throw new Error(`duplicate Stage 5 plan target '${key}'`);
+    keys.add(key);
+  }
+}
+
+function validatePrism(prism) {
+  if (!prism || Object.keys(prism).sort().join(",") !== "polygon_xz,ymax,ymin" ||
+      !Number.isFinite(prism.ymin) || !Number.isFinite(prism.ymax) || prism.ymin >= prism.ymax ||
+      !Array.isArray(prism.polygon_xz) || prism.polygon_xz.length < 3 ||
+      prism.polygon_xz.some((point) => !Array.isArray(point) || point.length !== 2 || !point.every(Number.isFinite))) {
+    throw new Error("invalid region prism");
+  }
+}
+
+function isUuid(value) {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isIsoTimestamp(value) {
+  return typeof value === "string" && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 }
 
 async function readRequestJson(req) {

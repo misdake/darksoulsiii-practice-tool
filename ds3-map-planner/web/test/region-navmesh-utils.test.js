@@ -24,7 +24,7 @@ test("trianglesFromMesh returns right-handed world-space triangles", () => {
   ]);
 });
 
-test("generated regions use world bounds, padding and a union AABB", () => {
+test("generated regions use world height bounds, padding and a union XZ OBB", () => {
   const geometry = new THREE.BoxGeometry(4, 2, 6);
   geometry.translate(10, 5, -20);
   const mesh = new THREE.Mesh(geometry);
@@ -46,15 +46,26 @@ test("generated regions use world bounds, padding and a union AABB", () => {
   const second = new THREE.Mesh(new THREE.BoxGeometry(2, 4, 2));
   second.position.set(10, 2, 5);
 
-  assert.deepEqual(createRegionFromMeshes([first, second], 0), {
-    name: "Region 1",
-    ymin: -0.5,
-    ymax: 7,
-    polygon_xz: [
-      [-1, -1],
-      [11, -1],
-      [11, 6],
-      [-1, 6],
-    ],
-  });
+  const combined = createRegionFromMeshes([first, second], 0);
+  assert.equal(combined.name, "Region 1");
+  assert.equal(combined.ymin, -0.5);
+  assert.equal(combined.ymax, 7);
+  assert.deepEqual(combined.polygon_xz.map(([x, z]) => [round(x), round(z)]), [
+    [-1.8, 0.6],
+    [-0.6, -1.8],
+    [11.8, 4.4],
+    [10.6, 6.8],
+  ]);
+  assert.ok(polygonArea(combined.polygon_xz) < 12 * 7);
 });
+
+function polygonArea(points) {
+  return Math.abs(points.reduce((sum, [x, z], index) => {
+    const [nextX, nextZ] = points[(index + 1) % points.length];
+    return sum + x * nextZ - nextX * z;
+  }, 0)) / 2;
+}
+
+function round(value) {
+  return Math.round(value * 1e6) / 1e6;
+}

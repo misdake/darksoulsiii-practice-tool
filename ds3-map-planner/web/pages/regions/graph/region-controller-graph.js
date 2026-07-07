@@ -153,24 +153,17 @@ function createActionsController(graph, navigateBack) {
   } = graph;
 
   return new RegionActionsController({
+    state,
     missingPoints,
     planController,
     getMapId: () => state.mapId,
     getRegions: () => state.regions,
-    setRegions: (value) => syncController.setRegions(value),
     getRegionGroups: () => state.regionGroups,
-    setRegionGroups: (value) => state.setRegionGroups(value),
-    groupSelectedRegions: () => state.groupSelectedRegions(),
-    getSelectedIndex: () => state.selectedIndex,
-    getSelectedRegionIndices: () => syncController.getSelectedRegionIndices(),
-    setSelectedIndex: (value) => syncController.setSelectedIndex(value),
-    removeSelectedRegion: () => state.removeSelected(),
     setSelectionMode: (mode) => {
       runtime.setStage4Mode(mode);
       syncController.setMode(mode);
     },
     getSelectedNavmeshes: () => syncController.getSelectedNavmeshes(),
-    getPlans: () => state.plans,
     confirm: (message) => ui.confirm(message),
     setStatus: ui.status,
     sync: () => syncController.sync(),

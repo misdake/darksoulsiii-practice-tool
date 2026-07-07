@@ -121,20 +121,25 @@ function createTargetCells(triangles, bounds, cellSize) {
         y_ref: 0,
         z: 0,
         area: 0,
+        accumulated_area: 0,
       };
       cell.x += sample.x * sampleWeight;
       cell.y_ref += sample.y * sampleWeight;
       cell.z += sample.z * sampleWeight;
-      cell.area += sampleWeight;
+      cell.accumulated_area += sampleWeight;
+      // A cell/layer is a union target. Taking the largest contribution avoids
+      // double-counting the same surface when group prisms overlap.
+      cell.area = Math.min(cellSize * cellSize, Math.max(cell.area, sampleWeight));
       cells.set(key, cell);
     }
   }
 
   return [...cells.values()].map((cell) => ({
     ...cell,
-    x: cell.x / cell.area,
-    y_ref: cell.y_ref / cell.area,
-    z: cell.z / cell.area,
+    x: cell.x / cell.accumulated_area,
+    y_ref: cell.y_ref / cell.accumulated_area,
+    z: cell.z / cell.accumulated_area,
+    accumulated_area: undefined,
   }));
 }
 

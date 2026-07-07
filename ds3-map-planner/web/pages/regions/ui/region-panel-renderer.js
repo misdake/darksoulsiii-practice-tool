@@ -1,4 +1,4 @@
-import { displayRegionGroups } from "../state/region-state.js";
+import { flattenPrisms } from "../state/region-state.js";
 import {
   DEFAULT_REGION_SHOT_CONFIG,
   normalizeRegionShotConfig,
@@ -14,13 +14,8 @@ export class RegionPanelRenderer {
     const label = this.byId("active");
     if (!label) return;
     label.textContent = regions.length
-      ? regions
-          .map(
-            (region) =>
-              region.virtualOutdoor
-                ? region.name
-                : `${region.name} [${formatY(region.ymin)}, ${formatY(region.ymax)}]`,
-          )
+      ? [...new Map(regions.map((region) => [region.groupUuid || region.name, region])).values()]
+          .map((region) => region.name)
           .join(" -> ")
       : "No active regions.";
   }
@@ -95,78 +90,86 @@ export class RegionPanelRenderer {
   }
 
   render({
-    regions,
     regionGroups = [],
-    selectedIndex,
-    selectedIndices = [],
+    selectedPrisms = [],
+    primaryPrism = null,
     mode,
     plans,
+    planningTargetKey = "fallback",
     onSelect,
+    onSelectGroup,
   }) {
-    const selected = regions[selectedIndex] || null;
-    this.byId("name").value = selected?.name || "";
-    this.byId("ymin").value = formatY(selected?.ymin ?? 0);
-    this.byId("ymax").value = formatY(selected?.ymax ?? 3);
+    const descriptors = flattenPrisms(regionGroups);
+    const selectedDescriptor = descriptors.find(({ prism }) => prism === primaryPrism) || null;
+    this.byId("name").value = selectedDescriptor?.group.name || "";
+    this.byId("ymin").value = formatY(primaryPrism?.ymin ?? 0);
+    this.byId("ymax").value = formatY(primaryPrism?.ymax ?? 3);
     const selectionFields = this.byId("regionSelectionFields");
     if (selectionFields) {
-      selectionFields.hidden = mode !== "regions" || !selected;
+      selectionFields.hidden = mode !== "regions" || !primaryPrism;
     }
     const deleteBtn = this.byId("deleteBtn");
     if (deleteBtn) {
-      deleteBtn.disabled = !selected;
+      deleteBtn.disabled = !primaryPrism;
     }
     const splitHeightBtn = this.byId("splitRegionHeightBtn");
     if (splitHeightBtn) {
-      splitHeightBtn.disabled = !selected;
+      splitHeightBtn.disabled = !primaryPrism;
     }
     this.byId("regions").replaceChildren(
-      ...displayRegionGroups(regions, regionGroups).map((indices) =>
+      ...regionGroups.map((group) =>
         this.createRegionListGroup(
-          regions,
-          indices,
-          selectedIndex,
-          selectedIndices,
+          group,
+          descriptors,
+          new Set(selectedPrisms),
+          primaryPrism,
           onSelect,
+          onSelectGroup,
         ),
       ),
     );
-    this.renderStage5RegionOptions(regions, selectedIndex);
-    this.renderPlanInfo(plans, selected);
+    this.renderStage5RegionOptions(regionGroups, planningTargetKey);
+    this.renderPlanInfo(plans, regionGroups, planningTargetKey);
   }
 
-  renderStage5RegionOptions(regions, selectedIndex) {
+  renderStage5RegionOptions(groups, planningTargetKey) {
     const select = this.byId("stage5RegionSelect");
     if (!select) return;
     select.replaceChildren(
-      ...regions.map((region, index) => {
+      ...groups.map((group) => {
         const option = this.document.createElement("option");
-        option.value = String(index);
-        option.textContent = region.name;
-        option.selected = index === selectedIndex;
+        option.value = `region_group:${group.uuid}`;
+        option.textContent = groupDisplayName(group, groups);
+        option.selected = planningTargetKey === `region_group:${group.uuid}`;
         return option;
       }),
+      createFallbackOption(this.document, planningTargetKey === "fallback"),
     );
-    select.disabled = regions.length === 0;
+    select.disabled = false;
   }
 
   createRegionListGroup(
-    regions,
-    indices,
-    selectedIndex,
-    selectedIndices,
+    regionGroup,
+    descriptors,
+    selectedSet,
+    primaryPrism,
     onSelect,
+    onSelectGroup,
   ) {
-    const selectedSet = new Set(selectedIndices);
     const group = this.document.createElement("div");
-    group.className = `region-group ${
-      indices.some((index) => selectedSet.has(index)) ? "selected" : ""
-    }`;
+    group.className = `region-group ${regionGroup.prisms.some((prism) => selectedSet.has(prism)) ? "selected" : ""}`;
+    const header = this.document.createElement("div");
+    header.className = "region-group-header";
+    header.textContent = regionGroup.name;
+    header.addEventListener("click", () => onSelectGroup?.(regionGroup.uuid));
     group.replaceChildren(
-      ...indices.map((index) =>
+      header,
+      ...regionGroup.prisms.map((prism, prismIndex) =>
         this.createRegionListItem(
-          regions[index],
-          index,
-          selectedIndex,
+          prism,
+          prismIndex,
+          descriptors.findIndex((item) => item.prism === prism),
+          primaryPrism,
           selectedSet,
           onSelect,
         ),
@@ -175,22 +178,23 @@ export class RegionPanelRenderer {
     return group;
   }
 
-  createRegionListItem(region, index, selectedIndex, selectedSet, onSelect) {
+  createRegionListItem(prism, prismIndex, index, primaryPrism, selectedSet, onSelect) {
     const item = this.document.createElement("div");
     item.className = `region ${selectedSet.has(index) ? "selected" : ""} ${
-      index === selectedIndex ? "primary" : ""
+      prism === primaryPrism ? "primary" : ""
     }`;
-    item.textContent = `${region.name} [${formatY(region.ymin)}, ${formatY(region.ymax)}]`;
+    item.textContent = `Prism ${prismIndex + 1} [${formatY(prism.ymin)}, ${formatY(prism.ymax)}]`;
     item.addEventListener("click", (event) =>
       onSelect(index, { toggle: event.ctrlKey || event.metaKey }),
     );
     return item;
   }
 
-  renderPlanInfo(plans, selectedRegion) {
-    const plan = plans.find(
-      (item) => item.region_name === selectedRegion?.name,
-    );
+  renderPlanInfo(plans, groups, planningTargetKey) {
+    const selectedGroup = groups.find((group) => planningTargetKey === `region_group:${group.uuid}`);
+    const plan = selectedGroup
+      ? plans.find((item) => item.kind === "region_group" && item.region_group_uuid === selectedGroup.uuid && item.group_last_updated === selectedGroup.last_updated)
+      : plans.find((item) => item.kind === "fallback");
     this.setStage5Config(plan?.config || DEFAULT_REGION_SHOT_CONFIG);
     this.byId("planInfo").textContent = plan
       ? formatPlanSummary(plan)
@@ -202,7 +206,7 @@ function formatPlanSummary(plan) {
   const coverage = plan.coverage || {};
   const rejected = coverage.rejected_by_reason || {};
   return [
-    `Region: ${plan.region_name}`,
+    `Target: ${plan.kind === "fallback" ? "Fallback" : plan.region_group_name}`,
     `Cameras: ${formatMetric(coverage.final_count)}`,
     `Coverage: ${formatPercent(coverage.coverage_ratio)}`,
     `Area target / covered: ${formatArea(coverage.target_area)} / ${formatArea(coverage.covered_area)}`,
@@ -211,6 +215,20 @@ function formatPlanSummary(plan) {
     `Lowered / replenished: ${formatMetric(coverage.lowered_count)} / ${formatMetric(coverage.replenished_count)}`,
     `Rejected: ${formatMetric(coverage.rejected_count)} (clearance ${formatMetric(rejected.clearance)}, occlusion ${formatMetric(rejected.occlusion)}, no coverage ${formatMetric(rejected.no_coverage)})`,
   ].join("\n");
+}
+
+function groupDisplayName(group, groups) {
+  return groups.filter((candidate) => candidate.name === group.name).length > 1
+    ? `${group.name} (${group.uuid.slice(0, 8)})`
+    : group.name;
+}
+
+function createFallbackOption(document, selected) {
+  const option = document.createElement("option");
+  option.value = "fallback";
+  option.textContent = "Fallback";
+  option.selected = selected;
+  return option;
 }
 
 function formatMetric(value) {

@@ -1,24 +1,12 @@
 import { saveStageData } from "../../../shared/map-api.js";
-import {
-  splitRegionHeight,
-  validateRegions,
-} from "../geometry/region-geometry.js";
+import { validateRegionGroups } from "../geometry/region-geometry.js";
 import { createRegionFromMeshes } from "../assets/region-navmesh-utils.js";
-import { nextRegionName } from "../state/region-state.js";
 
 export class RegionStage4Actions {
   constructor({
+    state,
     missingPoints,
     getMapId,
-    getRegions,
-    setRegions,
-    getRegionGroups,
-    setRegionGroups,
-    groupSelectedRegions,
-    getSelectedIndex,
-    getSelectedRegionIndices,
-    setSelectedIndex,
-    removeSelectedRegion,
     setSelectionMode,
     getSelectedNavmeshes,
     confirm,
@@ -26,17 +14,9 @@ export class RegionStage4Actions {
     sync,
     applyEditorFields,
   }) {
+    this.state = state;
     this.missingPoints = missingPoints;
     this.getMapId = getMapId;
-    this.getRegions = getRegions;
-    this.setRegions = setRegions;
-    this.getRegionGroups = getRegionGroups;
-    this.setRegionGroups = setRegionGroups;
-    this.groupSelectedRegions = groupSelectedRegions;
-    this.getSelectedIndex = getSelectedIndex;
-    this.getSelectedRegionIndices = getSelectedRegionIndices;
-    this.setSelectedIndex = setSelectedIndex;
-    this.removeSelectedRegion = removeSelectedRegion;
     this.setSelectionMode = setSelectionMode;
     this.getSelectedNavmeshes = getSelectedNavmeshes;
     this.confirm = confirm;
@@ -60,29 +40,20 @@ export class RegionStage4Actions {
   createRegion() {
     const selectedNavmeshes = this.getSelectedNavmeshes();
     if (!selectedNavmeshes.length) {
-      this.setStatus(
-        "Select one or more navmesh splits in the right viewport first.",
-        true,
-      );
+      this.setStatus("Select one or more navmesh splits in the right viewport first.", true);
       return;
     }
-
-    const regions = this.getRegions();
-    const region = createRegionFromMeshes(selectedNavmeshes, regions.length);
-    region.name = nextRegionName(regions);
-    regions.push(region);
+    const prism = createRegionFromMeshes(selectedNavmeshes, this.state.regions.length);
+    delete prism.name;
+    this.state.createGroup([prism]);
     this.setSelectionMode("regions");
-    this.setSelectedIndex(regions.length - 1);
+    this.state.restorePrismSelection([prism], prism);
     this.sync();
   }
 
   deleteSelectedRegion() {
-    const selected = this.getSelectedIndex();
-    if (selected < 0) {
-      return;
-    }
-
-    this.removeSelectedRegion();
+    if (!this.state.selectedPrisms.length) return;
+    this.state.removeSelected();
     this.sync();
   }
 
@@ -91,39 +62,26 @@ export class RegionStage4Actions {
       this.sync();
       return;
     }
-    const selected = this.getSelectedIndex();
-    const regions = this.getRegions();
-    const region = regions[selected];
-    if (!region) {
-      this.setStatus("Select a region to split first.", true);
+    const result = this.state.splitSelectedHeight();
+    if (!result) {
+      this.setStatus("Select a prism to split first.", true);
       return;
     }
-
-    const newName = nextRegionName(regions);
-    const { lower, upper } = splitRegionHeight(region, newName);
-    regions.splice(selected, 1, lower, upper);
-    this.setSelectedIndex(selected + 1);
     this.sync();
-    this.setStatus(
-      `Split region at Y ${upper.ymin.toFixed(2)}. Save to persist.`,
-    );
+    this.setStatus(`Split prism at Y ${result.upper.ymin.toFixed(2)}. Save to persist.`);
   }
 
   groupSelectedRegionsAction() {
-    if (!this.getSelectedRegionIndices().length) {
-      this.setStatus("Select at least one region first.", true);
+    if (!this.state.selectedPrisms.length) {
+      this.setStatus("Select at least one prism first.", true);
       return;
     }
-    if (!this.groupSelectedRegions()) {
-      this.setStatus("Select at least one region first.", true);
+    if (!this.state.groupSelectedRegions()) {
+      this.setStatus("The selected prisms are already in the requested group.");
       return;
     }
     this.sync();
-    this.setStatus(
-      this.getSelectedRegionIndices().length > 1
-        ? "Grouped selected regions. Save to persist."
-        : "Region split into its own group. Save to persist.",
-    );
+    this.setStatus("Updated prism grouping. Save to persist.");
   }
 
   async saveRegions() {
@@ -131,39 +89,28 @@ export class RegionStage4Actions {
       this.sync();
       return;
     }
-    const regions = this.getRegions();
-    const error = validateRegions(regions);
+    const error = validateRegionGroups(this.state.regionGroups);
     if (error) {
       this.setStatus(error, true);
       return;
     }
-
     try {
       await saveStageData(this.getMapId(), "stage4-map-regions", {
-        regions,
-        region_groups: this.getRegionGroups(),
+        region_groups: this.state.regionGroups,
       });
       this.setStatus("Saved.");
-    } catch (saveError) {
-      this.setStatus(`Saving regions failed: ${saveError.message}`, true);
+    } catch (error) {
+      this.setStatus(`Saving regions failed: ${error.message}`, true);
     }
   }
 
   async clearRegions() {
-    const regions = this.getRegions();
-    if (!regions.length) {
-      return;
-    }
-    if (!(await this.confirm("Clear all unsaved map regions?"))) {
-      return;
-    }
-
-    this.setRegions([]);
-    this.setRegionGroups([]);
-    this.setSelectedIndex(-1);
+    if (!this.state.regionGroups.length) return;
+    if (!(await this.confirm("Clear all unsaved region groups?"))) return;
+    this.state.setRegionGroups([]);
     this.missingPoints.clear();
     this.sync();
-    this.setStatus("Regions cleared. Save to persist the change.");
+    this.setStatus("Region groups cleared. Save to persist the change.");
   }
 
   applyEditorChange() {

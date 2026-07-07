@@ -17,11 +17,11 @@ export class RegionStage4FilterRenderer {
     this.renderEditorOverlay(renderer, camera, viewport);
   }
 
-  render(renderer, camera, viewport, region, { includeOutdoor = true } = {}) {
+  render(renderer, camera, viewport, regions, { includeOutdoor = true } = {}) {
     if (includeOutdoor) {
       this.clippedRenderer.renderBase(renderer, camera, viewport);
     }
-    this.clippedRenderer.render(renderer, camera, viewport, [region], {
+    this.clippedRenderer.render(renderer, camera, viewport, regions, {
       clear: !includeOutdoor,
     });
     this.renderEditorOverlay(renderer, camera, viewport);

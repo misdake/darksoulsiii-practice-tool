@@ -1,26 +1,8 @@
 import { saveStageData } from "../../../shared/map-api.js";
 
 export class RegionPlanActions {
-  constructor({
-    planController,
-    getMapId,
-    getRegions,
-    getSelectedIndex,
-    getPlans,
-    setStatus,
-    applyEditorFields,
-    getPlanConfig,
-    resetPlanConfig,
-  }) {
-    this.planController = planController;
-    this.getMapId = getMapId;
-    this.getRegions = getRegions;
-    this.getSelectedIndex = getSelectedIndex;
-    this.getPlans = getPlans;
-    this.setStatus = setStatus;
-    this.applyEditorFields = applyEditorFields;
-    this.getPlanConfig = getPlanConfig;
-    this.resetPlanConfig = resetPlanConfig;
+  constructor({ state, planController, getMapId, setStatus, applyEditorFields, getPlanConfig, resetPlanConfig }) {
+    Object.assign(this, { state, planController, getMapId, setStatus, applyEditorFields, getPlanConfig, resetPlanConfig });
   }
 
   handlers() {
@@ -34,21 +16,24 @@ export class RegionPlanActions {
 
   async calculatePlan() {
     if (!this.applyEditorFields()) return;
-    await this.planController.calculate(
-      this.getRegions()[this.getSelectedIndex()],
-      this.getPlans(),
-      this.getPlanConfig(),
-    );
+    await this.planController.calculate(this.getPlanConfig());
   }
 
   async savePlans() {
+    const validPlans = this.state.plans.filter((plan) => isPlanValid(plan, this.state.regionGroups));
     try {
-      await saveStageData(this.getMapId(), "stage5-map-region-shot-plans", {
-        plans: this.getPlans(),
-      });
+      await saveStageData(this.getMapId(), "stage5-map-region-shot-plans", { plans: validPlans });
+      this.state.plans = validPlans;
       this.setStatus("Regional camera plans saved.");
     } catch (error) {
       this.setStatus(`Saving regional camera plans failed: ${error.message}`, true);
     }
   }
+}
+
+export function isPlanValid(plan, groups) {
+  if (plan?.kind === "fallback") return true;
+  if (plan?.kind !== "region_group") return false;
+  const group = groups.find((item) => item.uuid === plan.region_group_uuid);
+  return Boolean(group && group.last_updated === plan.group_last_updated);
 }

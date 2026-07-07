@@ -29,13 +29,17 @@ export class RegionShotPlanSystem {
     this.ceilingRaycaster = new THREE.Raycaster();
   }
 
-  async calculate(region, triangles, config, { signal, onProgress } = {}) {
+  async calculate(target, triangles, config, { signal, onProgress } = {}) {
     const normalizedConfig = normalizeRegionShotConfig(config);
     throwIfAborted(signal);
     reportProgress(onProgress, "target_geometry", 0, triangles.length);
-    const clippedTriangles = filterTrianglesForRegion(triangles, region);
+    const clippedTriangles = target.kind === "fallback"
+      ? triangles
+      : dedupeTriangles(target.prisms.flatMap((prism) =>
+          filterTrianglesForRegion(triangles, prism),
+        ));
     if (!clippedTriangles.length) {
-      throw new Error("This region contains no Stage 3 navmesh area.");
+      throw new Error("This planning target contains no Stage 3 navmesh area.");
     }
     reportProgress(onProgress, "target_geometry", triangles.length, triangles.length);
 
@@ -54,7 +58,7 @@ export class RegionShotPlanSystem {
     throwIfAborted(signal);
     reportProgress(onProgress, "coverage_summary", 0, 1);
     const plan = createRegionShotPlan({
-      region,
+      target,
       config: normalizedConfig,
       workerResult,
       adjustment: planning,
@@ -295,14 +299,19 @@ export function normalizeRegionShotConfig(config = {}) {
   };
 }
 
-export function createRegionShotPlan({ region, config, workerResult, adjustment }) {
+export function createRegionShotPlan({ target, config, workerResult, adjustment }) {
   const {
     target_cells: _targetCells,
     local_candidates: _localCandidates,
     ...planMetadata
   } = workerResult;
   return {
-    region_name: region.name,
+    ...(target.kind === "fallback" ? { kind: "fallback" } : {
+      kind: "region_group",
+      region_group_uuid: target.group.uuid,
+      region_group_name: target.group.name,
+      group_last_updated: target.group.last_updated,
+    }),
     config: { ...config },
     plan: {
       ...planMetadata,
@@ -314,6 +323,18 @@ export function createRegionShotPlan({ region, config, workerResult, adjustment 
       adjustment,
     }),
   };
+}
+
+function dedupeTriangles(triangles) {
+  const unique = new Map();
+  for (const triangle of triangles) {
+    const key = triangle
+      .map((vertex) => vertex.map((value) => Math.round(value * 100000) / 100000).join(","))
+      .sort()
+      .join("|");
+    if (!unique.has(key)) unique.set(key, triangle);
+  }
+  return [...unique.values()];
 }
 
 export function flattenTriangles(triangles) {

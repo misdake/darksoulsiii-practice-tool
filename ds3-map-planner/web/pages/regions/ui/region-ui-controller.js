@@ -111,6 +111,7 @@ export class RegionUiController {
     onRecheckMissing,
     onFocusMissing,
     onClearMissing,
+    onCheckOverlaps,
     onBack,
     onFitCamera,
     onStageChange,
@@ -141,7 +142,7 @@ export class RegionUiController {
     this.addListener(this.byId("cancelPlanBtn"), "click", onCancelPlan);
     this.addListener(this.byId("resetPlanConfigBtn"), "click", onResetPlanConfig);
     this.addListener(this.byId("stage5RegionSelect"), "change", () =>
-      onSelectStage5Region?.(Number(this.byId("stage5RegionSelect").value)),
+      onSelectStage5Region?.(this.byId("stage5RegionSelect").value),
     );
     this.addListener(this.byId("savePlansBtn"), "click", onSavePlans);
     this.addListener(this.byId("clearBtn"), "click", onClear);
@@ -157,6 +158,7 @@ export class RegionUiController {
     this.addListener(this.byId("recheckMissingBtn"), "click", onRecheckMissing);
     this.addListener(this.byId("focusMissingBtn"), "click", onFocusMissing);
     this.addListener(this.byId("clearMissingBtn"), "click", onClearMissing);
+    this.addListener(this.byId("checkOverlapsBtn"), "click", onCheckOverlaps);
     this.addListener(this.byId("backBtn"), "click", onBack);
     this.addListener(this.byId("fitCameraBtn"), "click", onFitCamera);
     this.addListener(this.showCollision, "change", () =>
@@ -236,7 +238,7 @@ export class RegionUiController {
       panel.hidden =
         Number(panel.getAttribute("data-region-stage-panel")) !== activeStage;
     }
-    this.sharedMapDisplayControls.hidden = activeStage === 5;
+    this.sharedMapDisplayControls.hidden = false;
     this.onStageChange?.(activeStage);
   }
 

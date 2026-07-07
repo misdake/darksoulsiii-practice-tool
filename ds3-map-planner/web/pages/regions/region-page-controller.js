@@ -61,8 +61,8 @@ export class RegionPageController {
         runtime.setRecordMissingPoints(enabled),
       onShowOutdoorRegionChange: (enabled) =>
         runtime.setOutdoorRegionEnabled(enabled),
-      onSelectStage5Region: (index) =>
-        syncController.selectStage5Region(index, { focusRight: false }),
+      onSelectStage5Region: (targetKey) =>
+        syncController.selectPlanTarget(targetKey),
     });
     runtime.createInputRouter(syncController.createInputCallbacks());
     this.window.addEventListener("beforeunload", this.dispose);
@@ -119,9 +119,10 @@ export class RegionPageController {
         return;
       }
       syncController.sync();
+      runtime.fitFilteredNavmesh();
       ui.status(
         runtime.navGroup.children.length
-          ? `Loaded ${loaded.regions.length} regions, ${loaded.assets.navmeshCount} Stage 3 splits and ${loaded.assets.collisionCount} collision meshes.`
+          ? `Loaded ${loaded.groupCount} groups / ${loaded.prismCount} prisms, ${loaded.assets.navmeshCount} Stage 3 splits and ${loaded.assets.collisionCount} collision meshes.`
           : "No Stage 3 navmesh split is selected. Return to the filter page, mark and save at least one split.",
         !runtime.navGroup.children.length,
       );

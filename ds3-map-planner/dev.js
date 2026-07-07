@@ -12,7 +12,7 @@ let stopping = false;
 let restartingApi = false;
 let restartTimer = null;
 let apiChild = startApi();
-const viteChild = spawn(process.execPath, [viteCli], {
+const viteChild = spawn(process.execPath, [viteCli, "--open", "/"], {
   cwd: webRoot,
   stdio: "inherit",
 });

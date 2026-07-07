@@ -179,6 +179,11 @@
         border-color: #eab308;
         background: #2a2410;
       }
+      .region-group-header {
+        padding: 6px 8px;
+        font-weight: 600;
+        cursor: pointer;
+      }
       .region {
         padding: 8px;
         border: 1px solid var(--line);
@@ -320,6 +325,7 @@
                     type="radio"
                     name="stage4Mode"
                     value="navmesh"
+                    checked
                   />Navmesh</label
                 >
                 <label
@@ -327,7 +333,6 @@
                     type="radio"
                     name="stage4Mode"
                     value="regions"
-                    checked
                   />Regions</label
                 >
                 <label
@@ -337,7 +342,7 @@
               <div id="regionManagementFields">
                 <div id="regionSelectionFields">
                   <div class="field">
-                    <label>Name</label><input id="name" />
+                    <label>Group name</label><input id="name" />
                   </div>
                   <div class="actions">
                     <div class="field">
@@ -378,6 +383,7 @@
                 <p id="testWarning" class="muted">No runtime warning.</p>
                 <p id="testMissingCount" class="muted">Missing markers: 0</p>
                 <div class="actions">
+                  <button id="checkOverlapsBtn">Check group overlaps</button>
                   <button id="recheckMissingBtn">Recheck missing points</button>
                   <button id="focusMissingBtn">Focus missing point</button>
                   <button id="clearMissingBtn" class="danger">
@@ -387,14 +393,14 @@
                 <p id="active" class="muted">No active regions.</p>
               </div>
             </div>
-            <h3>Regions</h3>
+            <h3>Region groups</h3>
             <div id="regions"></div>
             <button id="saveBtn">Save regions</button>
           </section>
           <section class="stage-panel" data-region-stage-panel="5" hidden>
             <h3>Stage 5 regional camera plans</h3>
             <div class="field">
-              <label>Region</label><select id="stage5RegionSelect"></select>
+              <label>Planning target</label><select id="stage5RegionSelect"></select>
             </div>
             <fieldset id="stage5ConfigFields">
               <div class="actions">

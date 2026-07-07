@@ -58,17 +58,16 @@ test("region geometry handles concavity, edges and invalid polygons", () => {
     ]),
     true,
   );
-  assert.match(validateRegions([lower, { ...lower }]), /duplicated/);
+  assert.equal(validateRegions([lower, { ...lower }]), null);
 
   const original = {
     ...lower,
     polygon_xz: lower.polygon_xz.map((point) => [...point]),
   };
-  const split = splitRegionHeight(original, "Region 1");
+  const split = splitRegionHeight(original);
   assert.deepEqual([original.ymin, original.ymax], [0, 3]);
   assert.deepEqual([split.lower.ymin, split.lower.ymax], [0, 1.5]);
   assert.deepEqual([split.upper.ymin, split.upper.ymax], [1.5, 3]);
-  assert.equal(split.upper.name, "Region 1");
   assert.notEqual(split.upper.polygon_xz, original.polygon_xz);
 });
 

@@ -20,6 +20,7 @@ export class RegionOverlayController {
     this.cameraPlanGroup = new THREE.Group();
     this.active = [];
     this.activeSignature = "";
+    this.activeGroupUuids = new Set();
 
     scene.add(
       this.regionGroup,
@@ -77,6 +78,10 @@ export class RegionOverlayController {
     }
 
     return this.active;
+  }
+
+  setActiveGroupUuids(uuids) {
+    this.activeGroupUuids = new Set(uuids);
   }
 
   renderUncovered(points) {
@@ -180,6 +185,8 @@ export class RegionOverlayController {
     if (groupedSet.has(index)) {
       return GROUPED_COLOR;
     }
-    return this.active.includes(region) ? ACTIVE_COLOR : REGION_COLOR;
+    return this.activeGroupUuids.has(region.groupUuid) || this.active.includes(region)
+      ? ACTIVE_COLOR
+      : REGION_COLOR;
   }
 }

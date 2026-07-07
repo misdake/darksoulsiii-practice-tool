@@ -1,199 +1,248 @@
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export class RegionState {
-  constructor() {
+  constructor({ now = () => new Date().toISOString(), randomUUID = defaultRandomUUID } = {}) {
     this.mapId = "";
-    this.regions = [];
     this.regionGroups = [];
-    this.selectedIndex = -1;
-    this.selectedIndices = [];
+    this.selectedPrisms = [];
+    this.primaryPrism = null;
     this.plans = [];
+    this.planningTargetKey = "fallback";
+    this.now = now;
+    this.randomUUID = randomUUID;
   }
 
-  load({ mapId, regions, regionGroups, plans }) {
+  load({ mapId, regionGroups, plans }) {
+    if (!Array.isArray(regionGroups)) {
+      throw new Error("Stage 4 data must contain region_groups[]. Old regions schema is not supported.");
+    }
     this.mapId = mapId;
-    this.regions = Array.isArray(regions) ? regions : [];
-    this.regionGroups = normalizeRegionGroups(this.regions, regionGroups);
+    this.regionGroups = regionGroups;
     this.plans = Array.isArray(plans) ? plans : [];
-    this.selectedIndex = this.regions.length ? 0 : -1;
-    this.selectedIndices = this.selectedIndex >= 0 ? [this.selectedIndex] : [];
+    this.planningTargetKey = this.regionGroups[0]
+      ? `region_group:${this.regionGroups[0].uuid}`
+      : "fallback";
+    this.selectedPrisms = [];
+    this.primaryPrism = null;
+    const first = flattenPrisms(this.regionGroups)[0]?.prism || null;
+    if (first) this.restorePrismSelection([first], first);
+  }
+
+  get regions() {
+    return flattenPrisms(this.regionGroups).map(createLegacyRegionView);
   }
 
   get selectedRegion() {
-    return this.regions[this.selectedIndex] || null;
+    const descriptor = this.descriptorForPrism(this.primaryPrism);
+    return descriptor ? createLegacyRegionView(descriptor) : null;
+  }
+
+  get selectedIndex() {
+    return flattenPrisms(this.regionGroups).findIndex(({ prism }) => prism === this.primaryPrism);
+  }
+
+  get selectedIndices() {
+    const selected = new Set(this.selectedPrisms);
+    return flattenPrisms(this.regionGroups)
+      .map(({ prism }, index) => selected.has(prism) ? index : -1)
+      .filter((index) => index >= 0);
   }
 
   select(index) {
-    this.selectedIndex = index >= 0 && index < this.regions.length ? index : -1;
-    this.selectedIndices = this.selectedIndex >= 0 ? [this.selectedIndex] : [];
+    const prism = flattenPrisms(this.regionGroups)[index]?.prism || null;
+    this.restorePrismSelection(prism ? [prism] : [], prism);
     return this.selectedRegion;
   }
 
   restoreSelection(indices, primaryIndex = indices.at(-1) ?? -1) {
-    const valid = [...new Set(indices)].filter(
-      (index) => index >= 0 && index < this.regions.length,
-    );
-    this.selectedIndices = valid;
-    this.selectedIndex = valid.includes(primaryIndex)
-      ? primaryIndex
-      : valid.at(-1) ?? -1;
+    const flattened = flattenPrisms(this.regionGroups);
+    const prisms = [...new Set(indices)].map((index) => flattened[index]?.prism).filter(Boolean);
+    return this.restorePrismSelection(prisms, flattened[primaryIndex]?.prism);
+  }
+
+  restorePrismSelection(prisms, primary = prisms.at(-1) || null) {
+    const valid = new Set(flattenPrisms(this.regionGroups).map(({ prism }) => prism));
+    this.selectedPrisms = [...new Set(prisms)].filter((prism) => valid.has(prism));
+    this.primaryPrism = this.selectedPrisms.includes(primary)
+      ? primary
+      : this.selectedPrisms.at(-1) || null;
     return this.selectedRegion;
   }
 
   toggleSelected(index) {
-    if (index < 0 || index >= this.regions.length) {
-      return this.select(-1);
-    }
+    const prism = flattenPrisms(this.regionGroups)[index]?.prism;
+    if (!prism) return this.select(-1);
+    const selected = [...this.selectedPrisms];
+    const selectedIndex = selected.indexOf(prism);
+    if (selectedIndex >= 0) selected.splice(selectedIndex, 1);
+    else selected.push(prism);
+    return this.restorePrismSelection(selected, selected.at(-1) || null);
+  }
 
-    const selected = new Set(this.selectedIndices);
-    if (selected.has(index)) {
-      selected.delete(index);
-    } else {
-      selected.add(index);
-    }
+  createGroup(prisms, name = nextRegionGroupName(this.regionGroups)) {
+    const used = new Set(this.regionGroups.map((group) => group.uuid));
+    let uuid;
+    do uuid = this.randomUUID(); while (used.has(uuid));
+    const group = {
+      uuid,
+      name,
+      last_updated: this.now(),
+      prisms,
+    };
+    this.regionGroups.push(group);
+    return group;
+  }
 
-    this.selectedIndices = [...selected];
-    this.selectedIndex = this.selectedIndices.at(-1) ?? -1;
-    return this.selectedRegion;
+  touchGroup(group) {
+    if (!group) return;
+    const next = this.now();
+    group.last_updated = next === group.last_updated
+      ? new Date(Date.parse(next) + 1).toISOString()
+      : next;
   }
 
   removeSelected() {
-    if (!this.selectedIndices.length) return [];
-    const selected = new Set(this.selectedIndices);
-    const removed = this.regions.filter((_, index) => selected.has(index));
-    const firstIndex = Math.min(...this.selectedIndices);
-    this.regions = this.regions.filter((_, index) => !selected.has(index));
-    for (const region of removed) {
-      this.regionGroups = removeRegionFromGroups(this.regionGroups, region.name);
+    if (!this.selectedPrisms.length) return [];
+    const selected = new Set(this.selectedPrisms);
+    const removed = [...this.selectedPrisms];
+    const nextGroups = [];
+    for (const group of this.regionGroups) {
+      const prisms = group.prisms.filter((prism) => !selected.has(prism));
+      if (prisms.length === group.prisms.length) {
+        nextGroups.push(group);
+      } else if (prisms.length) {
+        group.prisms = prisms;
+        this.touchGroup(group);
+        nextGroups.push(group);
+      }
     }
-    this.selectedIndex = Math.min(firstIndex, this.regions.length - 1);
-    this.selectedIndices = this.selectedIndex >= 0 ? [this.selectedIndex] : [];
+    this.regionGroups = nextGroups;
+    this.restorePrismSelection([], null);
     return removed;
   }
 
-  renameRegion(oldName, newName) {
-    if (!oldName || !newName || oldName === newName) return;
-    this.regionGroups = this.regionGroups
-      .map((group) => ({
-        regions: group.regions.map((name) =>
-          name === oldName ? newName : name,
-        ),
-      }))
-      .filter((group) => group.regions.length > 1);
-  }
-
-  setRegions(regions) {
-    this.regions = Array.isArray(regions) ? regions : [];
-    this.regionGroups = normalizeRegionGroups(this.regions, this.regionGroups);
-    if (this.selectedIndex >= this.regions.length) {
-      this.selectedIndex = this.regions.length - 1;
-    }
-    this.selectedIndices = this.selectedIndices.filter(
-      (index) => index >= 0 && index < this.regions.length,
-    );
-  }
-
-  setRegionGroups(regionGroups) {
-    this.regionGroups = normalizeRegionGroups(this.regions, regionGroups);
-  }
-
   groupSelectedRegions() {
-    const selectedNames = this.selectedIndices
-      .map((index) => this.regions[index]?.name)
-      .filter(Boolean);
-    if (!selectedNames.length) {
-      return false;
+    if (!this.selectedPrisms.length) return false;
+    const descriptors = this.selectedPrisms.map((prism) => this.descriptorForPrism(prism)).filter(Boolean);
+    const anchor = descriptors[0]?.group;
+    if (!anchor) return false;
+    if (descriptors.every(({ group }) => group === anchor)) {
+      if (descriptors.length !== 1 || anchor.prisms.length === 1) return false;
+      const prism = descriptors[0].prism;
+      anchor.prisms = anchor.prisms.filter((candidate) => candidate !== prism);
+      this.touchGroup(anchor);
+      const created = this.createGroup([prism]);
+      this.restorePrismSelection([prism], prism);
+      return Boolean(created);
     }
 
-    const selected = new Set(selectedNames);
-    const remainingGroups = this.regionGroups
-      .map((group) => ({
-        regions: group.regions.filter((name) => !selected.has(name)),
-      }))
-      .filter((group) => group.regions.length > 1);
-
-    const nextGroups =
-      selectedNames.length > 1
-        ? [...remainingGroups, { regions: selectedNames }]
-        : remainingGroups;
-    this.regionGroups = normalizeRegionGroups(this.regions, nextGroups);
+    const moving = descriptors.filter(({ group }) => group !== anchor);
+    for (const { group, prism } of moving) {
+      group.prisms = group.prisms.filter((candidate) => candidate !== prism);
+      this.touchGroup(group);
+    }
+    anchor.prisms.push(...moving.map(({ prism }) => prism));
+    this.touchGroup(anchor);
+    this.regionGroups = this.regionGroups.filter((group) => group.prisms.length);
+    this.restorePrismSelection(this.selectedPrisms, this.primaryPrism);
     return true;
   }
 
+  splitSelectedHeight() {
+    const descriptor = this.descriptorForPrism(this.primaryPrism);
+    if (!descriptor) return null;
+    const midpoint = (descriptor.prism.ymin + descriptor.prism.ymax) / 2;
+    const upper = clonePrism(descriptor.prism);
+    descriptor.prism.ymax = midpoint;
+    upper.ymin = midpoint;
+    this.touchGroup(descriptor.group);
+    const upperGroup = this.createGroup([upper]);
+    this.restorePrismSelection([upper], upper);
+    return { lower: descriptor.prism, upper, upperGroup };
+  }
+
+  setRegions() {
+    throw new Error("Set region groups instead of a flat regions array.");
+  }
+
+  setRegionGroups(regionGroups) {
+    this.regionGroups = Array.isArray(regionGroups) ? regionGroups : [];
+    this.reconcileSelection();
+  }
+
   replacePlan(plan) {
-    this.plans = this.plans.filter(
-      (item) => item.region_name !== plan.region_name,
-    );
+    const key = planTargetKey(plan);
+    this.plans = this.plans.filter((item) => planTargetKey(item) !== key);
     this.plans.push(plan);
   }
-}
 
-export function normalizeRegionGroups(regions, regionGroups = []) {
-  const validNames = new Set(
-    regions.map((region) => region?.name).filter(Boolean),
-  );
-  const used = new Set();
-  const normalized = [];
-
-  for (const group of Array.isArray(regionGroups) ? regionGroups : []) {
-    const names = Array.isArray(group?.regions) ? group.regions : group;
-    if (!Array.isArray(names)) continue;
-
-    const groupNames = [];
-    for (const name of names) {
-      if (!validNames.has(name) || used.has(name)) continue;
-      used.add(name);
-      groupNames.push(name);
-    }
-    if (groupNames.length > 1) {
-      normalized.push({ regions: groupNames });
-    }
+  descriptorForPrism(prism) {
+    return flattenPrisms(this.regionGroups).find((item) => item.prism === prism) || null;
   }
 
-  return normalized;
+  reconcileSelection() {
+    return this.restorePrismSelection(this.selectedPrisms, this.primaryPrism);
+  }
 }
 
-export function displayRegionGroups(regions, regionGroups = []) {
-  const groupedNames = new Set(regionGroups.flatMap((group) => group.regions));
-  const groups = [];
-
-  for (const group of regionGroups) {
-    const indices = group.regions
-      .map((name) => regions.findIndex((region) => region.name === name))
-      .filter((index) => index >= 0)
-      .sort((a, b) => a - b);
-    if (indices.length) groups.push(indices);
-  }
-
-  regions.forEach((region, index) => {
-    if (!groupedNames.has(region.name)) {
-      groups.push([index]);
-    }
+export function flattenPrisms(regionGroups = []) {
+  const flattened = [];
+  regionGroups.forEach((group, groupIndex) => {
+    group.prisms.forEach((prism, prismIndex) => {
+      flattened.push({ group, groupIndex, groupUuid: group.uuid, prism, prismIndex });
+    });
   });
-
-  return groups.sort((a, b) => a[0] - b[0]);
+  return flattened;
 }
 
-export function regionGroupForIndex(regions, regionGroups, index) {
-  const region = regions[index];
-  if (!region) return [];
-  const group = regionGroups.find((item) => item.regions.includes(region.name));
-  if (!group) return [index];
-  return group.regions
-    .map((name) => regions.findIndex((candidate) => candidate.name === name))
+export function nextRegionGroupName(groups) {
+  const names = new Set(groups.map((group) => group.name));
+  let index = 1;
+  while (names.has(`Region Group ${index}`)) index += 1;
+  return `Region Group ${index}`;
+}
+
+export function regionGroupForIndex(_regions, groups, index) {
+  const descriptor = flattenPrisms(groups)[index];
+  if (!descriptor) return [];
+  return flattenPrisms(groups)
+    .map((candidate, candidateIndex) => candidate.group === descriptor.group ? candidateIndex : -1)
     .filter((candidateIndex) => candidateIndex >= 0);
 }
 
-export function nextRegionName(regions) {
-  const names = new Set(regions.map((region) => region.name));
-  let index = 1;
-  while (names.has(`Region ${index}`)) index += 1;
-  return `Region ${index}`;
+export function planTargetKey(plan) {
+  return plan?.kind === "fallback" ? "fallback" : `region_group:${plan?.region_group_uuid || ""}`;
 }
 
-function removeRegionFromGroups(regionGroups, name) {
-  if (!name) return regionGroups;
-  return regionGroups
-    .map((group) => ({
-      regions: group.regions.filter((regionName) => regionName !== name),
-    }))
-    .filter((group) => group.regions.length > 1);
+export function isValidUuid(value) {
+  return typeof value === "string" && UUID_PATTERN.test(value);
+}
+
+function createLegacyRegionView(descriptor) {
+  const view = { prism: descriptor.prism, group: descriptor.group, groupUuid: descriptor.group.uuid };
+  for (const key of ["ymin", "ymax", "polygon_xz"]) {
+    Object.defineProperty(view, key, {
+      enumerable: true,
+      get: () => descriptor.prism[key],
+      set: (value) => { descriptor.prism[key] = value; },
+    });
+  }
+  Object.defineProperty(view, "name", {
+    enumerable: true,
+    get: () => descriptor.group.name,
+    set: (value) => { descriptor.group.name = value; },
+  });
+  return view;
+}
+
+function clonePrism(prism) {
+  return {
+    ymin: prism.ymin,
+    ymax: prism.ymax,
+    polygon_xz: prism.polygon_xz.map(([x, z]) => [x, z]),
+  };
+}
+
+function defaultRandomUUID() {
+  return crypto.randomUUID();
 }

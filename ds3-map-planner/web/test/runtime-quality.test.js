@@ -254,16 +254,23 @@ test("RegionMapLoadController ignores stale loads before mutating state", async 
 });
 
 test("RegionPlanController drops stale and cancelled calculation results", async () => {
+  const group = {
+    uuid: "11111111-1111-4111-8111-111111111111",
+    name: "Hall",
+    last_updated: "2026-06-30T00:00:00.000Z",
+    prisms: [{ ymin: -1, ymax: 1, polygon_xz: [[-1, -1], [2, -1], [2, 2], [-1, 2]] }],
+  };
   const state = {
     mapId: "map-a",
-    regions: [{ name: "Hall" }],
+    planningTargetKey: `region_group:${group.uuid}`,
+    regionGroups: [group],
     plans: [],
   };
   const staleController = new RegionPlanController({
     planSystem: {
       async calculate() {
         state.mapId = "map-b";
-        return { region_name: "Hall", plan: { points: [] } };
+        return { kind: "region_group", region_group_uuid: group.uuid, plan: { points: [] } };
       },
     },
     state,
@@ -281,29 +288,16 @@ test("RegionPlanController drops stale and cancelled calculation results", async
     },
   });
 
-  const currentPlans = [];
-  const result = await staleController.calculate(
-    {
-      name: "Hall",
-      ymin: -1,
-      ymax: 1,
-      polygon_xz: [
-        [-1, -1],
-        [2, -1],
-        [2, 2],
-        [-1, 2],
-      ],
-    },
-    currentPlans,
-  );
+  const result = await staleController.calculate({});
 
-  assert.equal(result, currentPlans);
+  assert.equal(result, state.plans);
   assert.deepEqual(state.plans, []);
 
   let resolveCalculation;
   const cancelState = {
     mapId: "map-a",
-    regions: [{ name: "Hall" }],
+    planningTargetKey: `region_group:${group.uuid}`,
+    regionGroups: [group],
     plans: [],
   };
   const cancelController = new RegionPlanController({
@@ -325,21 +319,11 @@ test("RegionPlanController drops stale and cancelled calculation results", async
     },
   });
 
-  const cancelPlans = [];
-  const calculation = cancelController.calculate(
-    {
-      name: "Hall",
-      ymin: -1,
-      ymax: 1,
-      polygon_xz: [[-1, -1], [2, -1], [2, 2], [-1, 2]],
-    },
-    cancelPlans,
-    {},
-  );
+  const calculation = cancelController.calculate({});
   cancelController.cancel("test cancellation", false);
-  resolveCalculation({ region_name: "Hall", plan: { points: [{}] } });
+  resolveCalculation({ kind: "region_group", region_group_uuid: group.uuid, plan: { points: [{}] } });
 
-  assert.equal(await calculation, cancelPlans);
+  assert.equal(await calculation, cancelState.plans);
   assert.deepEqual(cancelState.plans, []);
 });
 

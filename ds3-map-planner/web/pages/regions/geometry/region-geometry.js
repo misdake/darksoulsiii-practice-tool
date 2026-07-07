@@ -6,18 +6,19 @@ export * from "./region-polygon-geometry.js";
 export * from "./region-validation.js";
 export * from "./region-coverage-geometry.js";
 
-export function splitRegionHeight(region, newName) {
-  const midpoint = (region.ymin + region.ymax) / 2;
+export function splitPrismHeight(prism) {
+  const midpoint = (prism.ymin + prism.ymax) / 2;
   const lower = {
-    ...region,
+    ...prism,
     ymax: midpoint,
-    polygon_xz: region.polygon_xz.map(([x, z]) => [x, z]),
+    polygon_xz: prism.polygon_xz.map(([x, z]) => [x, z]),
   };
   const upper = {
-    ...region,
-    name: newName,
+    ...prism,
     ymin: midpoint,
-    polygon_xz: region.polygon_xz.map(([x, z]) => [x, z]),
+    polygon_xz: prism.polygon_xz.map(([x, z]) => [x, z]),
   };
   return { lower, upper };
 }
+
+export const splitRegionHeight = splitPrismHeight;

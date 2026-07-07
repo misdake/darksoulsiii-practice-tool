@@ -7,7 +7,7 @@ export const FILTER_COLORS = Object.freeze({
   highlight: 0xc7d2e2,
 });
 
-const HIDE_NAV_BY_COLLISION_HF = new Set([13, 14, 15]);
+const HIDE_NAV_BY_COLLISION_HF = new Set([13, 14, 15, 255]);
 
 export class FilterVisualController {
   constructor({

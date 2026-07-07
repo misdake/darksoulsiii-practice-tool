@@ -1,5 +1,5 @@
-import { validateRegions } from "../geometry/region-geometry.js";
-import { regionGroupForIndex } from "./region-state.js";
+import { validatePrism, validateRegionGroups, activeRegionGroups } from "../geometry/region-geometry.js";
+import { flattenPrisms, regionGroupForIndex } from "./region-state.js";
 
 export class RegionPageSyncController {
   constructor({ state, ui, runtime }) {
@@ -8,29 +8,14 @@ export class RegionPageSyncController {
     this.runtime = runtime;
     this.onRegionSelectionChange = null;
     this.selectedNavmeshes = [];
-    this.mode = "regions";
-    this.stage4FilterRegion = null;
-    this.modeSelections = {
-      navmesh: [],
-      regions: { names: [], primaryName: null },
-    };
+    this.mode = "navmesh";
+    this.modeSelections = { navmesh: [], regions: { prisms: [], primary: null } };
   }
 
-  setRegions(regions) {
-    this.state.setRegions(regions);
-  }
-
-  setSelectedIndex(index) {
-    this.state.select(index);
-  }
-
-  getSelectedRegionIndices() {
-    return [...this.state.selectedIndices];
-  }
-
-  getSelectedNavmeshes() {
-    return [...this.selectedNavmeshes];
-  }
+  setRegions() { throw new Error("Use RegionState.regionGroups."); }
+  setSelectedIndex(index) { this.state.select(index); }
+  getSelectedRegionIndices() { return [...this.state.selectedIndices]; }
+  getSelectedNavmeshes() { return [...this.selectedNavmeshes]; }
 
   clearSelectedNavmesh() {
     this.selectedNavmeshes = [];
@@ -39,120 +24,84 @@ export class RegionPageSyncController {
   }
 
   resetModeSelections() {
-    this.modeSelections.navmesh = [];
-    this.modeSelections.regions = { names: [], primaryName: null };
+    this.modeSelections = { navmesh: [], regions: { prisms: [], primary: null } };
     this.selectedNavmeshes = [];
     this.state.select(-1);
-    this.stage4FilterRegion = null;
     this.runtime.overlay.renderSelectedNavmeshes([]);
+    this.runtime.setStage4FilterRegions([]);
   }
 
   setMode(mode) {
-    const nextMode = ["navmesh", "regions", "test"].includes(mode)
-      ? mode
-      : "regions";
-    if (nextMode === this.mode) {
-      this.ui.setStage4Mode(this.mode);
-      this.sync();
-      return;
+    const nextMode = ["navmesh", "regions", "test"].includes(mode) ? mode : "regions";
+    if (nextMode !== this.mode) {
+      this.rememberModeSelection(this.mode);
+      this.clearVisibleSelection();
+      this.mode = nextMode;
+      this.restoreModeSelection(this.mode);
     }
-    this.rememberModeSelection(this.mode);
-    this.clearVisibleSelection();
-    this.mode = nextMode;
     this.ui.setStage4Mode(this.mode);
-    this.restoreModeSelection(this.mode);
     this.sync();
   }
 
-  suspendModeSelection() {
-    this.rememberModeSelection(this.mode);
-    this.clearVisibleSelection();
-    this.sync();
-  }
-
-  resumeModeSelection() {
-    this.clearVisibleSelection();
-    this.restoreModeSelection(this.mode);
-    this.sync();
-  }
+  suspendModeSelection() { this.rememberModeSelection(this.mode); this.clearVisibleSelection(); this.sync(); }
+  resumeModeSelection() { this.clearVisibleSelection(); this.restoreModeSelection(this.mode); this.sync(); }
 
   rememberModeSelection(mode) {
-    if (mode === "navmesh") {
-      this.modeSelections.navmesh = [...this.selectedNavmeshes];
-      return;
+    if (mode === "navmesh") this.modeSelections.navmesh = [...this.selectedNavmeshes];
+    if (mode === "regions") {
+      this.modeSelections.regions = {
+        prisms: [...this.state.selectedPrisms],
+        primary: this.state.primaryPrism,
+      };
     }
-    if (mode !== "regions") return;
-    this.modeSelections.regions = {
-      names: this.state.selectedIndices
-        .map((index) => this.state.regions[index]?.name)
-        .filter(Boolean),
-      primaryName: this.state.selectedRegion?.name || null,
-    };
   }
 
   clearVisibleSelection() {
     this.selectedNavmeshes = [];
     this.runtime.overlay.renderSelectedNavmeshes([]);
     this.state.select(-1);
-    this.stage4FilterRegion = null;
+    this.runtime.setStage4FilterRegions([]);
   }
 
   restoreModeSelection(mode) {
     if (mode === "navmesh") {
-      this.selectedNavmeshes = this.modeSelections.navmesh.filter(
-        (mesh) => mesh?.isMesh && mesh.parent,
-      );
+      this.selectedNavmeshes = this.modeSelections.navmesh.filter((mesh) => mesh?.isMesh && mesh.parent);
       this.runtime.overlay.renderSelectedNavmeshes(this.selectedNavmeshes);
-      return;
+    } else if (mode === "regions") {
+      const snapshot = this.modeSelections.regions;
+      this.state.restorePrismSelection(snapshot.prisms, snapshot.primary);
     }
-    if (mode !== "regions") return;
-    const snapshot = this.modeSelections.regions;
-    const indices = snapshot.names
-      .map((name) =>
-        this.state.regions.findIndex((region) => region.name === name),
-      )
-      .filter((index) => index >= 0);
-    const primaryIndex = this.state.regions.findIndex(
-      (region) => region.name === snapshot.primaryName,
-    );
-    this.state.restoreSelection(indices, primaryIndex);
-    this.stage4FilterRegion = this.state.selectedRegion;
   }
 
   createInputCallbacks() {
     return {
-      getSelectedRegion: (index = this.state.selectedIndex) =>
-        this.state.regions[index] || null,
+      getSelectedRegion: (index = this.state.selectedIndex) => this.state.regions[index] || null,
       getSelectedIndex: () => this.state.selectedIndex,
-      isEditing: () =>
-        this.mode === "regions" && this.state.selectedIndex >= 0,
+      isEditing: () => this.mode === "regions" && this.state.selectedIndex >= 0,
       onPreview: () => this.previewRegionEdit(),
-      onCommit: () => this.sync(),
+      onCommit: () => this.commitGeometryEdit(),
       onInvalid: (region, before) => this.revertInvalidEdit(region, before),
       onRegion: (index, options) => this.selectRegion(index, options),
-      onStage5Region: (index, options) =>
-        this.selectStage5Region(index, options),
+      onStage5Region: (index, options) => this.selectStage5Region(index, options),
       onNav: (mesh, options) => this.selectNavmesh(mesh, options),
       onEmpty: () => this.clearCurrentSelection(),
       getStage4Mode: () => this.mode,
-      getSelectionMode: () => (this.mode === "navmesh" ? "navmesh" : "region"),
+      getSelectionMode: () => this.mode === "navmesh" ? "navmesh" : "region",
     };
   }
 
   redraw() {
-    const groupedIndices = this.groupedSelectionIndices();
     this.runtime.overlay.redraw({
       regions: this.state.regions,
       selectedIndices: this.state.selectedIndices,
-      groupedIndices,
+      groupedIndices: this.groupedSelectionIndices(),
       primaryIndex: this.state.selectedIndex,
     });
     this.runtime.updateRegionFillVisibility();
   }
 
   previewRegionEdit() {
-    this.reconcileStage4FilterRegion();
-    this.runtime.setStage4FilterRegion(this.stage4FilterRegion);
+    this.updateFilterRegions();
     this.runtime.overlay.redrawRegion({
       region: this.state.selectedRegion,
       index: this.state.selectedIndex,
@@ -162,192 +111,181 @@ export class RegionPageSyncController {
     this.runtime.updateRegionFillVisibility();
   }
 
+  commitGeometryEdit() {
+    const descriptor = this.state.descriptorForPrism(this.state.primaryPrism);
+    if (descriptor) this.state.touchGroup(descriptor.group);
+    this.sync();
+  }
+
   groupedSelectionIndices() {
-    const groupedIndices = new Set();
+    const grouped = new Set();
     for (const index of this.state.selectedIndices) {
-      for (const groupedIndex of regionGroupForIndex(
-        this.state.regions,
-        this.state.regionGroups,
-        index,
-      )) {
-        groupedIndices.add(groupedIndex);
-      }
+      for (const groupedIndex of regionGroupForIndex(null, this.state.regionGroups, index)) grouped.add(groupedIndex);
     }
-    return [...groupedIndices];
+    return [...grouped];
   }
 
   updateActiveRegions(position) {
-    const activeRegions = this.runtime.overlay.updateActive(
-      this.state.regions,
-      position,
-      () => this.redraw(),
-    );
-    const expandedRegions = this.expandRegionsToGroups(activeRegions);
-    return expandedRegions;
+    const groups = activeRegionGroups(this.state.regionGroups, position);
+    const groupSet = new Set(groups);
+    const active = flattenPrisms(this.state.regionGroups)
+      .filter(({ group }) => groupSet.has(group))
+      .map(({ group, prism }) => ({ ...prism, name: group.name, groupUuid: group.uuid }));
+    this.runtime.overlay.setActiveGroupUuids(groups.map((group) => group.uuid));
+    this.redraw();
+    return active;
   }
 
   sync() {
-    this.reconcileStage4FilterRegion();
-    this.runtime.setStage4FilterRegion(this.stage4FilterRegion);
+    this.updateFilterRegions();
     this.ui.render({
-      regions: this.state.regions,
       regionGroups: this.state.regionGroups,
-      selectedIndex: this.state.selectedIndex,
-      selectedIndices: this.state.selectedIndices,
+      selectedPrisms: this.state.selectedPrisms,
+      primaryPrism: this.state.primaryPrism,
       mode: this.mode,
       plans: this.state.plans,
+      planningTargetKey: this.state.planningTargetKey,
       onSelect: (index, options) => this.selectRegion(index, options),
+      onSelectGroup: (uuid) => this.selectGroup(uuid),
     });
-    this.runtime.setCameraPlan(
-      this.state.plans.find(
-        (plan) => plan.region_name === this.state.selectedRegion?.name,
-      ),
-    );
+    this.runtime.setCameraPlan(this.validSelectedPlan());
     this.redraw();
   }
 
+  validSelectedPlan() {
+    if (this.state.planningTargetKey === "fallback") {
+      return this.state.plans.find((plan) => plan.kind === "fallback") || null;
+    }
+    const uuid = this.state.planningTargetKey.replace("region_group:", "");
+    const group = this.state.regionGroups.find((item) => item.uuid === uuid);
+    if (!group) return null;
+    return this.state.plans.find((plan) =>
+      plan.kind === "region_group" && plan.region_group_uuid === group.uuid &&
+      plan.group_last_updated === group.last_updated) || null;
+  }
+
   selectRegion(index, { focusRight = true, toggle = false } = {}) {
-    if (this.mode !== "regions") {
-      return;
-    }
-    const previousIndex = this.state.selectedIndex;
-    if (toggle) {
-      this.state.toggleSelected(index);
-    } else {
-      this.setSelectedIndex(index);
-    }
-    if (previousIndex !== this.state.selectedIndex) {
-      this.onRegionSelectionChange?.(this.state.selectedRegion);
-    }
-    this.stage4FilterRegion = this.state.selectedRegion;
+    if (this.mode !== "regions") return;
+    const previous = this.state.primaryPrism;
+    if (toggle) this.state.toggleSelected(index); else this.state.select(index);
+    if (previous !== this.state.primaryPrism) this.onRegionSelectionChange?.(this.state.selectedRegion);
     this.rememberModeSelection("regions");
-    if (this.state.selectedRegion) {
-      this.runtime.focusRegion(this.state.selectedRegion, { focusRight });
-    }
+    if (this.state.selectedRegion) this.runtime.focusRegion(this.state.selectedRegion, { focusRight });
+    this.sync();
+  }
+
+  selectGroup(uuid) {
+    if (this.mode !== "regions") return;
+    const group = this.state.regionGroups.find((item) => item.uuid === uuid);
+    if (!group) return;
+    this.state.restorePrismSelection(group.prisms, group.prisms.at(-1));
+    this.rememberModeSelection("regions");
+    this.runtime.focusRegions(group.prisms, { focusRight: false });
     this.sync();
   }
 
   selectNavmesh(mesh, { toggle = false } = {}) {
-    if (this.mode !== "navmesh") {
-      return;
-    }
-    this.setSelectedIndex(-1);
-    if (toggle) {
-      const index = this.selectedNavmeshes.indexOf(mesh);
-      if (index >= 0) {
-        this.selectedNavmeshes.splice(index, 1);
-      } else {
-        this.selectedNavmeshes.push(mesh);
-      }
-    } else {
-      this.selectedNavmeshes = [mesh];
-    }
+    if (this.mode !== "navmesh") return;
+    this.state.select(-1);
+    const index = this.selectedNavmeshes.indexOf(mesh);
+    if (toggle) index >= 0 ? this.selectedNavmeshes.splice(index, 1) : this.selectedNavmeshes.push(mesh);
+    else this.selectedNavmeshes = [mesh];
     this.modeSelections.navmesh = [...this.selectedNavmeshes];
-
     this.runtime.overlay.renderSelectedNavmeshes(this.selectedNavmeshes);
     this.runtime.focusNavmeshSelection(this.selectedNavmeshes);
-    this.ui.status(
-      this.selectedNavmeshes.length
-        ? `Selected ${this.selectedNavmeshes.length} navmesh split(s).`
-        : "No navmesh splits selected.",
-    );
     this.sync();
   }
 
   selectStage5Region(index, { focusRight = false } = {}) {
-    const previousIndex = this.state.selectedIndex;
-    this.state.select(index);
-    if (previousIndex !== this.state.selectedIndex) {
-      this.onRegionSelectionChange?.(this.state.selectedRegion);
+    if (index < 0) {
+      this.state.planningTargetKey = "fallback";
+      this.state.select(-1);
+    } else {
+      const descriptor = flattenPrisms(this.state.regionGroups)[index];
+      if (!descriptor) return;
+      this.state.planningTargetKey = `region_group:${descriptor.group.uuid}`;
+      this.state.restorePrismSelection(descriptor.group.prisms, descriptor.prism);
     }
-    if (this.state.selectedRegion) {
-      this.runtime.focusRegion(this.state.selectedRegion, { focusRight });
+    if (this.state.selectedRegion) this.runtime.focusRegion(this.state.selectedRegion, { focusRight });
+    this.onRegionSelectionChange?.(this.state.selectedRegion);
+    this.sync();
+  }
+
+  selectPlanTarget(key) {
+    if (key === "fallback") {
+      this.state.planningTargetKey = "fallback";
+      this.state.select(-1);
+    } else {
+      const uuid = String(key).replace("region_group:", "");
+      const group = this.state.regionGroups.find((item) => item.uuid === uuid);
+      if (!group) return;
+      this.state.planningTargetKey = `region_group:${uuid}`;
+      this.state.restorePrismSelection(group.prisms, group.prisms[0]);
     }
+    this.onRegionSelectionChange?.(this.state.selectedRegion);
     this.sync();
   }
 
   ensureStage5Selection() {
-    if (this.state.selectedIndex < 0 && this.state.regions.length) {
-      this.selectStage5Region(0, { focusRight: false });
-    }
+    const key = this.state.planningTargetKey;
+    const validKey = key === "fallback" || this.state.regionGroups.some((group) => key === `region_group:${group.uuid}`)
+      ? key
+      : this.state.regionGroups[0]
+      ? `region_group:${this.state.regionGroups[0].uuid}`
+      : "fallback";
+    this.selectPlanTarget(validKey);
   }
 
   clearCurrentSelection() {
-    if (this.mode === "navmesh") {
-      this.clearSelectedNavmesh();
-      this.ui.status("No navmesh splits selected.");
-    } else if (this.mode === "regions") {
-      this.setSelectedIndex(-1);
-      this.stage4FilterRegion = null;
-      this.rememberModeSelection("regions");
-    }
+    if (this.mode === "navmesh") this.clearSelectedNavmesh();
+    else if (this.mode === "regions") { this.state.select(-1); this.rememberModeSelection("regions"); }
     this.sync();
   }
 
   applyEditorFields() {
-    const region = this.state.selectedRegion;
-    if (!region) return true;
-    const oldName = region.name;
-    const draft = { ...region, ...this.ui.readEditor() };
-    const nextRegions = this.state.regions.map((candidate, index) =>
-      index === this.state.selectedIndex ? draft : candidate,
-    );
-    const error = validateRegions(nextRegions);
-    if (error) {
-      this.ui.status(error, true);
+    const descriptor = this.state.descriptorForPrism(this.state.primaryPrism);
+    if (!descriptor) return true;
+    const editor = this.ui.readEditor();
+    const draft = { ...descriptor.prism, ymin: editor.ymin, ymax: editor.ymax };
+    const error = validatePrism(draft);
+    if (error) { this.ui.status(error, true); return false; }
+    const nameChanged = descriptor.group.name !== editor.name;
+    const geometryChanged = descriptor.prism.ymin !== draft.ymin || descriptor.prism.ymax !== draft.ymax;
+    if (!editor.name.trim()) { this.ui.status("Region group name is required.", true); return false; }
+    const before = {
+      name: descriptor.group.name,
+      lastUpdated: descriptor.group.last_updated,
+      ymin: descriptor.prism.ymin,
+      ymax: descriptor.prism.ymax,
+    };
+    descriptor.group.name = editor.name;
+    Object.assign(descriptor.prism, draft);
+    if (nameChanged || geometryChanged) this.state.touchGroup(descriptor.group);
+    const groupError = validateRegionGroups(this.state.regionGroups);
+    if (groupError) {
+      descriptor.group.name = before.name;
+      descriptor.group.last_updated = before.lastUpdated;
+      descriptor.prism.ymin = before.ymin;
+      descriptor.prism.ymax = before.ymax;
+      this.ui.status(groupError, true);
       return false;
     }
-    Object.assign(region, draft);
-    this.state.renameRegion(oldName, draft.name);
-    this.state.setRegionGroups(this.state.regionGroups);
     return true;
   }
 
-  reconcileStage4FilterRegion() {
-    this.stage4FilterRegion =
-      this.mode === "regions" ? this.state.selectedRegion : null;
+  updateFilterRegions() {
+    const group = this.mode === "regions"
+      ? this.state.descriptorForPrism(this.state.primaryPrism)?.group
+      : null;
+    this.runtime.setStage4FilterRegions(group?.prisms || []);
   }
 
   revertInvalidEdit(region, before) {
     if (!region || !Array.isArray(before)) return false;
-    if (!validateRegions([region])) return false;
+    const validationError = validatePrism(region);
+    if (validationError === null) return false;
     region.polygon_xz = before;
-    this.ui.status("Invalid polygon edit was reverted.", true);
+    this.ui.status(`Invalid polygon edit was reverted: ${validationError}`, true);
     return true;
-  }
-
-  expandRegionsToGroups(activeRegions) {
-    const result = [];
-    const names = new Set();
-    const activeNames = new Set(activeRegions.map((region) => region.name));
-    const groupedNames = new Set(
-      this.state.regionGroups.flatMap((group) => group.regions),
-    );
-
-    for (const group of this.state.regionGroups) {
-      if (!group.regions.some((name) => activeNames.has(name))) {
-        continue;
-      }
-      for (const name of group.regions) {
-        const region = this.state.regions.find((item) => item.name === name);
-        if (region && !names.has(region.name)) {
-          names.add(region.name);
-          result.push(region);
-        }
-      }
-    }
-
-    for (const region of activeRegions) {
-      if (!groupedNames.has(region.name) && !names.has(region.name)) {
-        names.add(region.name);
-        result.push(region);
-      }
-    }
-
-    return result.sort(
-      (a, b) =>
-        a.ymin - b.ymin ||
-        this.state.regions.indexOf(a) - this.state.regions.indexOf(b),
-    );
   }
 }
