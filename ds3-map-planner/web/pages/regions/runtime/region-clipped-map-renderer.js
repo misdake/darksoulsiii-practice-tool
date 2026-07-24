@@ -56,13 +56,13 @@ export class RegionClippedMapRenderer {
     this.syncPlayerMesh();
   }
 
-  render(renderer, camera, viewport, regions, { clear = true } = {}) {
+  render(renderer, camera, viewport, regionGroups, { clear = true } = {}) {
     const previousState = captureRendererState(renderer);
     const pixelViewport = normalizePixelViewport(viewport);
 
     try {
       this.prepareViewport(renderer, pixelViewport, clear);
-      if (!regions.length) {
+      if (!regionGroups.length) {
         return;
       }
 
@@ -70,8 +70,8 @@ export class RegionClippedMapRenderer {
       renderer.localClippingEnabled = true;
       renderer.autoClear = true;
 
-      for (const region of regions) {
-        this.renderRegion(renderer, camera, pixelViewport, region);
+      for (const group of sortRegionGroupsForRendering(regionGroups)) {
+        this.renderRegionGroup(renderer, camera, pixelViewport, group.prisms);
       }
     } finally {
       restoreRendererState(renderer, previousState);
@@ -126,8 +126,7 @@ export class RegionClippedMapRenderer {
     }
   }
 
-  renderRegion(renderer, camera, viewport, region) {
-    const materialState = captureMaterialState(this.scene);
+  renderRegionGroup(renderer, camera, viewport, regions) {
     const background = this.scene.background;
     renderer.setRenderTarget(this.target);
     renderer.setViewport(0, 0, viewport.width, viewport.height);
@@ -135,25 +134,32 @@ export class RegionClippedMapRenderer {
     renderer.setClearColor(0, 0, 0, 0);
     renderer.clear(true, true, true);
 
-    disposeRenderScene(this.maskScene, { disposeGeometry: true });
-    this.maskScene.add(createRegionMask(region));
-    renderer.render(this.maskScene, camera);
-
     try {
       // The clipped pass is alpha-composited over the base map. Rendering the
       // map scene's background here would make the target opaque and erase it.
       this.scene.background = null;
-      applyRegionBroadPhase(this.scene, region);
-      applyRegionClipping(this.scene, region);
-      renderer.autoClear = false;
-      renderer.render(this.scene, camera);
-      this.syncPlayerMesh();
-      if (this.renderPlayer && this.playerMesh?.visible) {
-        renderer.render(this.playerScene, camera);
+      for (const region of [...regions].sort((left, right) => left.ymin - right.ymin)) {
+        const materialState = captureMaterialState(this.scene);
+        try {
+          renderer.clear(false, false, true);
+          disposeRenderScene(this.maskScene, { disposeGeometry: true });
+          this.maskScene.add(createRegionMask(region));
+          renderer.render(this.maskScene, camera);
+
+          applyRegionBroadPhase(this.scene, region);
+          applyRegionClipping(this.scene, region);
+          renderer.autoClear = false;
+          renderer.render(this.scene, camera);
+          this.syncPlayerMesh();
+          if (this.renderPlayer && this.playerMesh?.visible) {
+            renderer.render(this.playerScene, camera);
+          }
+        } finally {
+          restoreMaterialState(materialState);
+        }
       }
     } finally {
       this.scene.background = background;
-      restoreMaterialState(materialState);
     }
 
     renderer.setRenderTarget(null);
@@ -182,6 +188,16 @@ export class RegionClippedMapRenderer {
     }
     this.playerMesh.updateMatrixWorld(true);
   }
+}
+
+export function sortRegionGroupsForRendering(groups) {
+  return [...groups]
+    .filter((group) => Array.isArray(group?.prisms) && group.prisms.length)
+    .sort((left, right) => groupMinimumY(left) - groupMinimumY(right));
+}
+
+function groupMinimumY(group) {
+  return Math.min(...group.prisms.map((prism) => prism.ymin));
 }
 
 

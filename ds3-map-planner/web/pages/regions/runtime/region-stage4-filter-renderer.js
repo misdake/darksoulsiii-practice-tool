@@ -21,7 +21,7 @@ export class RegionStage4FilterRenderer {
     if (includeOutdoor) {
       this.clippedRenderer.renderBase(renderer, camera, viewport);
     }
-    this.clippedRenderer.render(renderer, camera, viewport, regions, {
+    this.clippedRenderer.render(renderer, camera, viewport, [{ prisms: regions }], {
       clear: !includeOutdoor,
     });
     this.renderEditorOverlay(renderer, camera, viewport);

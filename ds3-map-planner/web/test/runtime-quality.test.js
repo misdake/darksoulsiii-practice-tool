@@ -10,7 +10,10 @@ import { RegionMapLoadController } from "../pages/regions/map/region-map-load-co
 import { RegionPlanController } from "../pages/regions/planning/region-plan-controller.js";
 import { RegionFreeCamera } from "../pages/regions/viewport/region-free-camera.js";
 import { applyRegionBroadPhase } from "../pages/regions/runtime/region-clipping.js";
-import { RegionClippedMapRenderer } from "../pages/regions/runtime/region-clipped-map-renderer.js";
+import {
+  RegionClippedMapRenderer,
+  sortRegionGroupsForRendering,
+} from "../pages/regions/runtime/region-clipped-map-renderer.js";
 import { shouldRecordTestMissing } from "../pages/regions/runtime/region-test-state.js";
 import { saveStageData } from "../shared/map-api.js";
 
@@ -115,6 +118,16 @@ test("Clipped map broad phase operates directly on its dedicated scene", () => {
   far.geometry.dispose();
   near.material.dispose();
   far.material.dispose();
+});
+
+test("clipped region groups render from lower to higher Y", () => {
+  const high = { name: "high", prisms: [{ ymin: 10 }, { ymin: 20 }] };
+  const low = { name: "low", prisms: [{ ymin: -5 }] };
+  const middle = { name: "middle", prisms: [{ ymin: 3 }, { ymin: 1 }] };
+  assert.deepEqual(
+    sortRegionGroupsForRendering([high, low, middle]).map((group) => group.name),
+    ["low", "middle", "high"],
+  );
 });
 
 test("map assets install atomically and dispose shared geometry once", async () => {

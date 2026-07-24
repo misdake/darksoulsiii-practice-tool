@@ -127,13 +127,13 @@ export class RegionPageSyncController {
 
   updateActiveRegions(position) {
     const groups = activeRegionGroups(this.state.regionGroups, position);
-    const groupSet = new Set(groups);
-    const active = flattenPrisms(this.state.regionGroups)
-      .filter(({ group }) => groupSet.has(group))
-      .map(({ group, prism }) => ({ ...prism, name: group.name, groupUuid: group.uuid }));
     this.runtime.overlay.setActiveGroupUuids(groups.map((group) => group.uuid));
     this.redraw();
-    return active;
+    return groups.map((group) => ({
+      name: group.name,
+      groupUuid: group.uuid,
+      prisms: group.prisms,
+    }));
   }
 
   sync() {
